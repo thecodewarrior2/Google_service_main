@@ -30,14 +30,21 @@ gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleap
 ```
 
 ```bash
-gcloud services enable safebrowsing.googleapis.com secretmanager.googleapis.com apikeys.googleapis.com
-```
-
-```bash
 gcloud firestore databases create --location=REGION
 ```
 
-### The Safe Browsing key
+### Optional: Google Safe Browsing (off for now)
+
+Threat lookups use Cloudflare Security only. To add Safe Browsing later:
+1. Enable its APIs:
+
+   ```bash
+   gcloud services enable safebrowsing.googleapis.com secretmanager.googleapis.com apikeys.googleapis.com
+   ```
+
+2. Create a key and store it as described below.
+3. Deploy the worker with `SAFE_BROWSING=true` added to `--set-env-vars` and
+   `--set-secrets=SAFE_BROWSING_KEY=safe-browsing-key:latest`.
 
 Create an API key restricted to the Safe Browsing API and keep it in Secret Manager:
 
@@ -125,7 +132,7 @@ The push subscription is created after the worker exists (step 6).
 `spruce-invoker` may call it.
 
 ```bash
-gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --set-secrets=SAFE_BROWSING_KEY=safe-browsing-key:latest --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
+gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
 ```
 
 The first deploy prints `WORKER_URL`. Deploy again with `PUSH_AUDIENCE` set to it, then allow the
@@ -223,7 +230,7 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |
-| `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `true`, none | Google Safe Browsing for links (the key from Secret Manager) |
+| `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off for now; `true` needs the key (Secret Manager) |
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
 | `RETENTION_DAYS` | `60` | records are deleted after this |

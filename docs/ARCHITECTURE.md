@@ -22,7 +22,7 @@ Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watc
                            ──▶ worker /tasks/sync-feeds (daily; the phishing lists, for everyone)
 
 worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
-       ──▶ safebrowsing.googleapis.com    link addresses (no #part; one-time links without query)
+       ··▶ safebrowsing.googleapis.com    OFF by default (SAFE_BROWSING=true): link addresses, no #part
        ──▶ registries (RDAP, via IANA)    domain names, at most once a month each
        ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```

@@ -54,7 +54,7 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | Check | What is sent | What it adds |
 |---|---|---|
 | **Cloudflare Security DNS** | host names of link sites and the sender's domain | a blocked link is dangerous; a blocked or nonexistent sender domain is a sign |
-| **Google Safe Browsing** | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
+| **Google Safe Browsing**: off for now (`SAFE_BROWSING=true` and a key turn it on) | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
 | **Phishing lists** (OpenPhish, Phishing Army, Sefinek) | nothing: downloaded once a day, matched in the service | listed links are dangerous; a listed sender address or domain is a sign |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
 

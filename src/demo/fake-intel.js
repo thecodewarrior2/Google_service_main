@@ -13,6 +13,7 @@ const regOf = (h) => String(h || '').toLowerCase().split('.').slice(-2).join('.'
 function createFakeIntel() {
     return {
         threats: {
+            enabled: { cloudflare: true, safeBrowsing: false },        // as deployed: Cloudflare only
             async checkHosts(hosts) { return new Map(hosts.map(h => [h, CF_BLOCKS.has(regOf(h)) ? { verdict: 'unsafe', by: 'Cloudflare Security', reason: 'Cloudflare Security blocks it as malware or phishing' } : { verdict: 'clean', by: 'Cloudflare Security' }])); },
             async checkUrls(links) { return new Map(links.map(l => [l.url, SB_LISTS.some(re => re.test(l.url)) ? { verdict: 'unsafe', by: 'Google Safe Browsing', reason: 'Google Safe Browsing lists it as phishing or a deceptive site' } : { verdict: 'clean', by: 'Google Safe Browsing' }])); }
         },

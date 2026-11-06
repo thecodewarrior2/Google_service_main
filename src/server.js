@@ -68,7 +68,7 @@ function createApp({ cfg, store, service }) {
                      orgDomains: cfg.orgDomains, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
                      model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).filter(u => u.watched).length, demo: cfg.demo,
-                     checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && (!!cfg.safeBrowsingKey || cfg.demo), phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
+                     checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),

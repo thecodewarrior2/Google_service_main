@@ -1,7 +1,8 @@
 'use strict';
 // The checks that need the network (src/intel), applied to one email's links and sender:
 //   - Cloudflare Security DNS: link hosts (where the link goes, and its own host) and the sender's domain;
-//   - Google Safe Browsing: the links (no "#…"; one-time links without their query);
+//   - Google Safe Browsing, only when turned on (SAFE_BROWSING=true; off by default): the links (no "#…";
+//     one-time links without their query);
 //   - the phishing lists: link addresses and sites, the sender's domain and address;
 //   - registry dates: up to LINK_AGE_LOOKUPS unfamiliar link domains, and the sender's domain.
 // A link any of them flags becomes "dangerous" (the extension's dangerous-links weight then counts
@@ -40,7 +41,7 @@ async function networkChecks(E, intel, facts, judged, ctx) {
 
     const [hostResults, urlResults, ages, senderAge, senderOnList, senderDomainListed, linkListed] = await Promise.all([
         intel.threats ? intel.threats.checkHosts(hosts) : new Map(),
-        intel.threats ? intel.threats.checkUrls(web.map(j => ({ url: j.finalUrl && j.finalUrl !== j.url ? j.finalUrl : j.url, text: j.text })).concat(web.filter(j => j.finalUrl && j.finalUrl !== j.url).map(j => ({ url: j.url, text: j.text })))) : new Map(),
+        intel.threats && (!intel.threats.enabled || intel.threats.enabled.safeBrowsing) ? intel.threats.checkUrls(web.map(j => ({ url: j.finalUrl && j.finalUrl !== j.url ? j.finalUrl : j.url, text: j.text })).concat(web.filter(j => j.finalUrl && j.finalUrl !== j.url).map(j => ({ url: j.url, text: j.text })))) : new Map(),
         intel.rdap ? Promise.all(ageDomains.map(async d => ({ domain: d, days: await intel.rdap.ageDays(d).catch(() => null), signIn: signInOf.get(d) }))) : [],
         intel.rdap && senderReg ? intel.rdap.ageDays(senderReg).catch(() => null) : null,
         intel.feeds && facts.senderAddress ? intel.feeds.addressHit(facts.senderAddress).catch(() => null) : null,

@@ -144,7 +144,7 @@ test('an email with checks: blocked and listed links are dangerous, the sender\'
     const ctx = (intel) => ({ mailbox: 'reader@maple-schools.example', orgDomains: ['maple-schools.example'], intel });
     const store = new MemoryStore();
     const net = fakeNet();
-    const intel = createIntel({ cfg: loadConfig({ SAFE_BROWSING_KEY: 'k', STORE: 'memory' }), store, engine: E, fetch: net.fetch, log: { error() {} } });
+    const intel = createIntel({ cfg: loadConfig({ SAFE_BROWSING: 'true', SAFE_BROWSING_KEY: 'k', STORE: 'memory' }), store, engine: E, fetch: net.fetch, log: { error() {} } });
     await intel.feeds.sync();
     // A link Cloudflare blocks, on a 5-day-old site: dangerous link (5) and a young site about signing in (3).
     let r = await analyze(await readMessage(raw('billing@fine.example', '<p>Please verify your account.</p><a href="https://evil-login.example/verify">Verify now</a>')), ctx(intel));
@@ -171,18 +171,29 @@ test('an email with checks: blocked and listed links are dangerous, the sender\'
     await analyze(await readMessage(raw('billing@fine.example', '<a href="https://evil-login.example/v">x</a>')), Object.assign(ctx(intel), { trusted: true }));
     assert.equal(net.calls.length, b2, 'trusted senders: no lookups');
     // Everything down: same as offline, never safer.
-    const dead = createIntel({ cfg: loadConfig({ SAFE_BROWSING_KEY: 'k', STORE: 'memory' }), store: new MemoryStore(), engine: E, fetch: async () => { throw new Error('down'); }, log: { error() {} } });
+    const dead = createIntel({ cfg: loadConfig({ SAFE_BROWSING: 'true', SAFE_BROWSING_KEY: 'k', STORE: 'memory' }), store: new MemoryStore(), engine: E, fetch: async () => { throw new Error('down'); }, log: { error() {} } });
     const off = await analyze(await readMessage(raw('billing@fine.example', '<a href="https://evil-login.example/verify">Verify now</a>')), ctx(null));
     const failed = await analyze(await readMessage(raw('billing@fine.example', '<a href="https://evil-login.example/verify">Verify now</a>')), ctx(dead));
     assert.equal(failed.score, off.score);
     assert.ok(failed.checks.notChecked >= 1);
 });
 
-test('settings: Safe Browsing needs its key on the worker (or is turned off)', () => {
+test('settings: Cloudflare only by default; Safe Browsing only when turned on, and then with its key', async () => {
     const base = { ROLE: 'worker', STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', DELEGATED_SA: 'd@p.iam.gserviceaccount.com', PILOT_USERS: 'a@maple-schools.example', PUBSUB_TOPIC: 'projects/p/topics/t', PUSH_AUDIENCE: 'https://w', PUSH_SERVICE_ACCOUNT: 'push@p.iam.gserviceaccount.com' };
-    assert.match(configProblems(loadConfig(base)).join(' '), /SAFE_BROWSING_KEY/);
-    assert.deepEqual(configProblems(loadConfig(Object.assign({ SAFE_BROWSING_KEY: 'k' }, base))), []);
-    assert.deepEqual(configProblems(loadConfig(Object.assign({ SAFE_BROWSING: 'false' }, base))), []);
+    assert.deepEqual(configProblems(loadConfig(base)), [], 'no key needed by default');
+    assert.match(configProblems(loadConfig(Object.assign({ SAFE_BROWSING: 'true' }, base))).join(' '), /SAFE_BROWSING_KEY/);
+    assert.deepEqual(configProblems(loadConfig(Object.assign({ SAFE_BROWSING: 'true', SAFE_BROWSING_KEY: 'k' }, base))), []);
     const c = loadConfig({});
-    assert.deepEqual([c.cloudflareThreats, c.safeBrowsing, c.phishingLists, c.siteAge], [true, true, true, true]);
+    assert.deepEqual([c.cloudflareThreats, c.safeBrowsing, c.phishingLists, c.siteAge], [true, false, true, true]);
+    // By default nothing goes to Safe Browsing, even with a key set, and links aren't counted "not checked".
+    const net = fakeNet();
+    const intel = createIntel({ cfg: loadConfig({ SAFE_BROWSING_KEY: 'k', STORE: 'memory' }), store: new MemoryStore(), engine: E, fetch: net.fetch, log: { error() {} } });
+    const r = await analyze(await readMessage(Buffer.from(['From: "Billing" <billing@fine.example>', 'To: reader@maple-schools.example', 'Subject: Hi',
+        'Content-Type: text/html', '', '<a href="https://phish-page.example/x">Open</a> <a href="https://evil-login.example/v">Verify</a>'].join('\r\n'))),
+        { mailbox: 'reader@maple-schools.example', orgDomains: ['maple-schools.example'], intel });
+    assert.ok(!net.calls.some(c => /safebrowsing/.test(c.url)), 'no Safe Browsing request');
+    assert.ok(net.calls.some(c => /security\.cloudflare-dns\.com/.test(c.url)), 'Cloudflare is asked');
+    assert.equal(r.checks.safeBrowsing, 0);
+    assert.equal(r.checks.notChecked, 0);
+    assert.equal(r.links.find(l => /evil-login/.test(l.url)).severity, 'danger', 'Cloudflare still flags');
 });

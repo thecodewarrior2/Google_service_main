@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1: Cloudflare only for threat lookups (Google Safe Browsing off by default)
+
+- **Google Safe Browsing is off unless `SAFE_BROWSING=true`,** at the maintainer's request, to be on the
+  safe side about its quota and terms.
+  - The code stays, and turning it on needs its API key (`SAFE_BROWSING_KEY`).
+  - By default no link address leaves the district: threat lookups send only host names, to Cloudflare
+    Security DNS.
+  - The worker no longer needs a Safe Browsing key to start.
+  - While off, links aren't sent for that lookup at all, so they don't count as "not checked".
+- **Unchanged:** the phishing lists (downloaded, matched locally) and site age (domain names to their
+  registries).
+- **Demo mode and the mockup** now match a real deployment: no Safe Browsing findings. The fake
+  storage notice is still moved, by its failed sender check, hidden filler and brand-new domain.
+- **Tests:**
+  - By default nothing is sent to Safe Browsing, even with a key set.
+  - Cloudflare still flags links.
+  - Turning Safe Browsing on without a key is refused.
+
 ## 0.2.0: network checks (Cloudflare, Safe Browsing, phishing lists, site age)
 
 - **Cloudflare Security DNS** for link sites (where a link goes, and its own host) and the sender's
