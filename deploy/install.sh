@@ -75,7 +75,8 @@ cat <<EOF
   Also check that these groups exist: $(echo "$PILOT_GROUP;$ADMIN_GROUP" | tr ',' ';' | sed 's/;;*/;/g; s/;$//; s/;/, /g')
   and that $DIRECTORY_ADMIN has an admin role with Groups > Read (docs/INSTALL.md, step 2).
 EOF
-if [ -t 0 ]; then read -r -p "  Press Enter when that is done (it can take a few minutes to apply)... " _; fi
+if [ -n "${SPRUCE_UPGRADE:-}" ]; then echo "  (upgrade: not waiting; the entry is already there unless this version's notes say a scope was added)"
+elif [ -t 0 ]; then read -r -p "  Press Enter when that is done (it can take a few minutes to apply)... " _; fi
 
 step "5/9 Pub/Sub topic Gmail notifies"
 gcloud pubsub topics describe "$TOPIC" >/dev/null 2>&1 || gcloud pubsub topics create "$TOPIC" --quiet
@@ -110,6 +111,8 @@ WF="$(env_file worker ROLE worker "${COMMON[@]}" PILOT_GROUP "$PILOT_GROUP" DIRE
     PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD")"
 gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
     --concurrency=8 --timeout=120 --memory=1Gi --max-instances=10 --env-vars-file="$WF" --quiet
+# All traffic to this build, even after deploy/rollback.sh pinned an older one.
+gcloud run services update-traffic spruce-worker --region="$REGION" --to-latest --quiet >/dev/null
 WORKER_URL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(status.url)')"
 gcloud run services add-iam-policy-binding spruce-worker --region="$REGION" --member="serviceAccount:$SA_INVOKER" --role=roles/run.invoker --quiet >/dev/null
 
@@ -117,6 +120,7 @@ step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAI
 AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
     --memory=512Mi --max-instances=3 --env-vars-file="$AF" --quiet
+gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
 ADMIN_URL="$(gcloud run services describe spruce-admin --region="$REGION" --format='value(status.url)')"
 iap_setup() {
     gcloud beta run services update spruce-admin --region="$REGION" --iap --quiet >/dev/null || return 1
@@ -140,6 +144,9 @@ if gcloud pubsub subscriptions describe gmail-spruce-push >/dev/null 2>&1; then
 else
     gcloud pubsub subscriptions create gmail-spruce-push --topic="$TOPIC" --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --quiet >/dev/null
 fi
+# An upgrade keeps a stopped service stopped (deploy/stop.sh paused the renewal); a plain install starts it.
+STOPPED=
+if [ -n "${SPRUCE_UPGRADE:-}" ] && [ "$(gcloud scheduler jobs describe spruce-renew-watches --location="$REGION" --format='value(state)' 2>/dev/null)" = PAUSED ]; then STOPPED=1; fi
 job() { # name, schedule, path, extra flags...
     local name="$1" schedule="$2" path="$3"; shift 3
     local verb=create; gcloud scheduler jobs describe "$name" --location="$REGION" >/dev/null 2>&1 && verb=update
@@ -150,11 +157,16 @@ job() { # name, schedule, path, extra flags...
 job spruce-renew-watches "17 3 * * *" /tasks/renew-watches
 job spruce-purge "41 4 * * *" /tasks/purge
 job spruce-sync-feeds "23 5 * * *" /tasks/sync-feeds --attempt-deadline=300s
-gcloud scheduler jobs resume spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
-# Left by deploy/stop.sh: never kept around while the service is on.
-gcloud scheduler jobs delete spruce-stop-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
 gcloud scheduler jobs run spruce-sync-feeds --location="$REGION" --quiet
-gcloud scheduler jobs run spruce-renew-watches --location="$REGION" --quiet
+if [ -n "$STOPPED" ]; then
+    gcloud scheduler jobs pause spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
+    echo "  Watching stays stopped (deploy/stop.sh was run). To start it: bash deploy/install.sh"
+else
+    gcloud scheduler jobs resume spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
+    # Left by deploy/stop.sh: never kept around while the service is on.
+    gcloud scheduler jobs delete spruce-stop-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
+    gcloud scheduler jobs run spruce-renew-watches --location="$REGION" --quiet
+fi
 
 step "Done"
 cat <<EOF

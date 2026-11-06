@@ -166,10 +166,47 @@ When it finishes, it prints the **dashboard address**.
 
   Moved mail goes to Spam with the label `SPRUCE/Moved`. A user can always move it back, and the
   dashboard records that.
-- **A new version:**
-  1. Upload and unzip the new zip.
-  2. Copy your `deploy/settings.env` into its folder.
-  3. Run `bash deploy/install.sh` there.
+- **A new version:** see "Upgrading to a new version" below.
+
+## Upgrading to a new version
+
+Each version comes as a new zip. Your settings, records and the Admin console steps carry over.
+
+1. In Cloud Shell, upload the new zip, then unzip it **next to the old folder** (both in your home
+   folder):
+
+   ```bash
+   unzip spruce-mail-protection-NEW.zip
+   ```
+
+   ```bash
+   cd spruce-mail-protection-NEW
+   ```
+
+2. Run the upgrade:
+
+   ```bash
+   bash deploy/upgrade.sh
+   ```
+
+What it does:
+- **Settings:** it finds your `deploy/settings.env` in the old folder and copies it. Settings new in
+  this version are added empty, which means their defaults. To name the old folder yourself:
+  `bash deploy/upgrade.sh ../spruce-mail-protection-OLD`.
+- **Before changing anything,** it shows the installed version and the new one, what's new (from
+  `CHANGELOG.md`), and the delegation scopes this version uses. It asks before going on.
+- **Then it runs `install.sh`** without stopping at the delegation step. Mode stays as set. If
+  `deploy/stop.sh` had stopped the service, it stays stopped.
+
+**Going back:** to return both services to the build that ran before, run:
+
+```bash
+bash deploy/rollback.sh
+```
+
+- It's quick: nothing is rebuilt, and the earlier build comes back with the settings it had.
+- Run it again to go back one more.
+- The next upgrade or install moves forward again.
 
 ## Turning it off
 

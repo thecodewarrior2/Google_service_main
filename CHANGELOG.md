@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.5: Upgrade and rollback scripts
+
+- **`deploy/upgrade.sh`:** run it from the new version's unzipped folder in Cloud Shell.
+  - It finds the previous version's `deploy/settings.env` in your home folder (or takes the old folder
+    as an argument) and copies it.
+  - Settings new in this version are added empty, which means their defaults, never the example's
+    values.
+  - Before changing anything, it shows the installed version (read from the worker's image) and the
+    new one, the `CHANGELOG.md` headings in between, and the delegation scopes this version uses. It
+    asks before going on, and warns when going to an older version.
+  - It then runs `install.sh` in upgrade mode, which doesn't stop at the delegation step.
+- **`deploy/rollback.sh`:** sends all traffic on both services back to the previous ready Cloud Run
+  revision, with the settings it had. Nothing is rebuilt. Run it again to go back further.
+- **`install.sh`:**
+  - moves traffic to the new build after each deploy (`update-traffic --to-latest`), so it also undoes
+    a rollback;
+  - in upgrade mode, keeps a service stopped by `deploy/stop.sh` stopped.
+- **Docs:** `docs/INSTALL.md` has an "Upgrading to a new version" section.
+- **Checked** against a stand-in `gcloud`:
+  - an upgrade from a 0.2.3 folder (settings found and completed, no pause, traffic to the new build);
+  - an upgrade of a stopped service (it stays stopped);
+  - a rollback (it skips a revision that never became ready).
+
 ## 0.2.4: The dashboard's admins can be a group
 
 - **`ADMIN_GROUP`:** the members of a group may use the dashboard, as well as (or instead of) the
