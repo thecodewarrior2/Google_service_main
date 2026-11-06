@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mail Protection Admin</title>
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path class="tick" d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+    <div><div class="brand-name">S.P.R.U.C.E+ Mail Protection</div><div class="brand-sub" id="orgLine">Google Workspace</div></div>
+  </div>
+  <div class="top-right">
+    <span class="mode" id="modeBadge" hidden></span>
+    <span class="who" id="who"></span>
+  </div>
+</header>
+<nav class="tabs" aria-label="Sections">
+  <a href="#/overview" data-tab="overview">Overview</a>
+  <a href="#/campaigns" data-tab="campaigns">Campaigns</a>
+  <a href="#/users" data-tab="users">Users</a>
+  <a href="#/messages" data-tab="messages">Messages</a>
+  <a href="#/health" data-tab="health">Model health</a>
+  <a href="#/settings" data-tab="settings">Settings</a>
+</nav>
+<div class="filters" role="group" aria-label="Period">
+  <span class="filter-label">Period</span>
+  <button type="button" class="range" data-days="7">Last 7 days</button>
+  <button type="button" class="range" data-days="30">Last 30 days</button>
+  <button type="button" class="range" data-days="90">Last 90 days</button>
+</div>
+<main id="view" tabindex="-1"></main>
+<div class="tooltip" id="tip" role="tooltip" hidden></div>
+<footer class="foot" id="foot"></footer>
+</body>
+</html>

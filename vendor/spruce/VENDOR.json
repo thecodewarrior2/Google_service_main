@@ -1,0 +1,16 @@
+{
+  "extensionVersion": "5.94.6",
+  "commit": "402cdd1",
+  "branch": "llm_testing",
+  "model": "0.4.0",
+  "files": [
+    "shared.js",
+    "decoders.js",
+    "ai.js",
+    "models/phish-tiny/model.bin",
+    "models/phish-tiny/model.json",
+    "models/phish-tiny/vocab.txt",
+    "models/phish-tiny/MODEL_CARD.md"
+  ],
+  "synced": "2026-11-06"
+}

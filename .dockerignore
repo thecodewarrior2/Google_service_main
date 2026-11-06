@@ -1,0 +1,10 @@
+node_modules
+build
+test
+tools
+docs
+.git
+*.md
+.env
+*.key.json
+service-account*.json

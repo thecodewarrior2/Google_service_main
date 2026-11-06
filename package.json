@@ -1,0 +1,23 @@
+{
+  "name": "spruce-gmail-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "S.P.R.U.C.E+ for a whole Google Workspace domain: checks every new email with the extension's own checks and AI model, and moves suspicious ones to Spam (or only records them, in monitor mode), with an admin dashboard.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "demo": "DEMO=1 PORT=8080 node src/server.js",
+    "test": "node --test test/*.test.js",
+    "sync-engine": "node tools/sync-engine.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^9.4.0",
+    "google-auth-library": "^11.3.3",
+    "htmlparser2": "^12.0.0",
+    "mailparser": "^3.14.2"
+  }
+}

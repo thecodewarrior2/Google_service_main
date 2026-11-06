@@ -1,0 +1,21 @@
+Delivered-To: reader@maple-schools.example
+Received: from mail.brt.greenpath-example.my.id (mail.brt.greenpath-example.my.id. [203.0.113.45]) by mx.google.com with ESMTPS id x1; Mon, 02 Nov 2026 11:46:40 -0800 (PST)
+Authentication-Results: mx.google.com; dkim=none; spf=softfail (google.com: domain of transitioning bounce@brt.greenpath-example.my.id does not designate 203.0.113.45 as permitted sender) smtp.mailfrom=bounce@brt.greenpath-example.my.id; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=brt.greenpath-example.my.id
+From: reader <qzwkrtp@brt.greenpath-example.my.id>
+To: reader@maple-schools.example
+Subject: We've blocked your account! Your photos and videos will be deleted on 11-02-2026. Renew your subscription for free now!
+Date: Mon, 02 Nov 2026 19:46:39 +0000
+Message-ID: <a1b2c3@brt.greenpath-example.my.id>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<a href="https://storage.googleapis.com/bucket-x/page.html#abc123"><h1>Cloud</h1></a>
+<div>Your payment method has expired. Please update your payment information.</div>
+<div>Your photos and videos will be deleted!</div>
+<div>We were unable to renew your cloud storage.</div>
+<a href="https://storage.googleapis.com/bucket-x/page.html#def456">Update my payment information</a>
+<div>Thank you for your trust. Cloud Customer Support Team.</div>
+<div style="height:5000px"></div>
+<p>Please remember to drop your regalia back to the regalia room. This is an archived section of the community. Thank you again, it has been a pleasure doing business with you. This change was done in an effort to make the forum easier to use and to keep only the most helpful and recent content active.</p>
+</body></html>

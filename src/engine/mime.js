@@ -1,0 +1,65 @@
+'use strict';
+// A raw email (RFC 822, as the Gmail API returns it with format=raw) → the facts the checks and the
+// model use: sender, subject, the receiving server's verification results, links, the text a person
+// sees, how the email hides text, attachments (names and types only).
+const { simpleParser } = require('mailparser');
+const { readHtml } = require('./html');
+
+const MAX_RAW = 2 * 1024 * 1024;   // headerAnomalies reads at most this much of the message
+
+// The receiving server's own verdict (Gmail writes "Authentication-Results: mx.google.com; …" on
+// arrival). Results written by anyone else (the sender can add their own) are ignored.
+function receiverAuth(rawHead, receiverHost = 'mx.google.com') {
+    const lines = String(rawHead || '').replace(/\r\n/g, '\n').replace(/\n[ \t]+/g, ' ').split('\n');
+    for (const line of lines) {
+        const m = /^authentication-results:\s*(.*)$/i.exec(line);
+        if (!m) continue;
+        const v = m[1];
+        if (v.split(';')[0].trim().toLowerCase() !== receiverHost) continue;
+        const get = (k) => { const r = new RegExp(`\\b${k}=([a-z]+)`, 'i').exec(v); return r ? r[1].toLowerCase() : null; };
+        const from = /header\.from=([^\s;]+)/i.exec(v);
+        return { dmarc: get('dmarc'), spf: get('spf'), dkim: get('dkim'), arc: get('arc'), headerFrom: from ? from[1].toLowerCase() : null };
+    }
+    return null;
+}
+
+function textToHtmlish(text) {
+    // Plain-text emails: the text is what a person sees; links are the web addresses in it.
+    return { visibleText: String(text || '').slice(0, 20000), hiddenText: '', quotedText: '', preheader: '', layout: [], pictures: 0,
+             links: [...String(text || '').matchAll(/\bhttps?:\/\/[^\s<>"')\]]+/gi)].slice(0, 300).map(m => ({ text: m[0], href: m[0], hidden: false, afterGap: false })) };
+}
+
+// raw: Buffer or string. Returns the facts, or throws for a message that can't be parsed at all.
+async function readMessage(raw) {
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw || ''), 'utf8');
+    const text = buf.subarray(0, MAX_RAW).toString('utf8');
+    const headEnd = text.search(/\r?\n\r?\n/);
+    const rawHead = headEnd >= 0 ? text.slice(0, headEnd) : text;
+    const mail = await simpleParser(buf, { skipImageLinks: true, skipTextToHtml: true, skipTextLinks: true, maxHtmlLengthToParse: 2 * 1024 * 1024 });
+    const from = (mail.from && mail.from.value && mail.from.value[0]) || {};
+    const read = mail.html ? readHtml(mail.html) : textToHtmlish(mail.text);
+    // Plain-text part as well: some phishing puts different text there than in the HTML.
+    if (mail.html && mail.text && !read.visibleText.trim()) read.visibleText = String(mail.text).slice(0, 20000);
+    const to = [].concat(mail.to || []).flatMap(t => (t && t.value) || []).map(v => String(v.address || '').toLowerCase()).filter(Boolean);
+    return {
+        rawForHeaders: text,                                   // for headerAnomalies (headers + the start of the body)
+        rawHead,
+        messageIdHeader: mail.messageId || '',
+        date: mail.date ? mail.date.getTime() : null,
+        subject: String(mail.subject || ''),
+        senderName: String(from.name || ''),
+        senderAddress: String(from.address || '').toLowerCase(),
+        replyTo: ((mail.replyTo && mail.replyTo.value) || []).map(v => String(v.address || '').toLowerCase()).filter(Boolean),
+        to,
+        auth: receiverAuth(rawHead),
+        visibleText: read.visibleText,
+        hiddenText: read.hiddenText,
+        quotedText: read.quotedText,
+        layout: read.layout,
+        pictures: read.pictures,
+        links: read.links,
+        attachments: (mail.attachments || []).map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0 }))
+    };
+}
+
+module.exports = { readMessage, receiverAuth };

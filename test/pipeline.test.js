@@ -1,0 +1,179 @@
+'use strict';
+// The pipeline with a fake Gmail and the in-memory store: notifications, decisions, moves, release,
+// the brake, watches, retention. Every address is made up.
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+const { loadConfig, configProblems } = require('../src/config');
+const { decide } = require('../src/policy');
+const { Service, campaignOf } = require('../src/pipeline');
+const { MemoryStore } = require('../src/store/memory');
+const { GoogleApiError } = require('../src/gmail/client');
+
+const USER = 'reader@maple-schools.example';
+const PHISH = fs.readFileSync(path.join(__dirname, 'fixtures', 'phish-storage.eml'));
+const GENUINE = fs.readFileSync(path.join(__dirname, 'fixtures', 'genuine-newsletter.eml'));
+const DAY = 24 * 60 * 60 * 1000;
+
+function fakeGmail(messages) {
+    const g = { modified: [], watched: [], stopped: [], history: { ids: [], historyId: '200' }, ouUsers: [] };
+    Object.assign(g, {
+        addedSince: async () => g.history,
+        profile: async () => ({ historyId: '999' }),
+        raw: async (user, id) => { const m = messages[id]; if (!m) throw new GoogleApiError(404, 'gone', 'get'); return { id, threadId: `t${id}`, labelIds: m.labels || ['INBOX', 'UNREAD'], internalDate: 1, raw: m.raw }; },
+        labelId: async (u, name) => `L_${name}`,
+        modify: async (user, id, add, remove) => { g.modified.push({ user, id, add, remove }); return {}; },
+        watch: async (user) => { g.watched.push(user); return { historyId: '100', expiration: String(Date.now() + 7 * DAY) }; },
+        stop: async (user) => { g.stopped.push(user); },
+        usersInOu: async () => g.ouUsers
+    });
+    return g;
+}
+const cfgOf = (env = {}) => loadConfig(Object.assign({ STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', PILOT_USERS: USER, FIRST_SEEN_LEARNING_DAYS: '0' }, env));
+async function setup(env, messages = { m1: { raw: PHISH }, m2: { raw: GENUINE } }) {
+    const store = new MemoryStore();
+    const gmail = fakeGmail(messages);
+    const svc = new Service({ cfg: cfgOf(env), store, gmail, log: { error() {} } });
+    await store.setState('installedAt', Date.now() - 30 * DAY);
+    return { store, gmail, svc };
+}
+
+test('policy: rules or the AI move in enforce mode; monitor records; the AI alone never moves inside mail; allowlisted never', () => {
+    const enforce = cfgOf({ MODE: 'enforce' }), monitor = cfgOf({});
+    const r = (status, p, inside = false, score = 6) => ({ status, score, inside, ai: { probability: p } });
+    assert.deepEqual([decide(r('flagged', 0.1), enforce).action, decide(r('flagged', 0.1), enforce).trigger], ['move', 'rules']);
+    assert.deepEqual([decide(r('clean', 0.9), enforce).action, decide(r('clean', 0.9), enforce).trigger], ['move', 'ai']);
+    assert.equal(decide(r('flagged', 0.99), enforce).trigger, 'rules+ai');
+    assert.equal(decide(r('clean', 0.84), enforce).action, 'flag', 'below 85%: recorded as suspicious only');
+    assert.equal(decide(r('clean', 0.2), enforce).action, 'none');
+    assert.equal(decide(r('caution', 0.2, false, 3), enforce).action, 'flag');
+    assert.equal(decide(r('clean', 0.99), monitor).action, 'would-move');
+    assert.equal(decide(r('clean', 0.99, true), enforce).action, 'flag', 'the AI alone does not move inside mail');
+    assert.equal(decide(r('flagged', 0.99, true), enforce).action, 'move', 'the rules still move it (a compromised staff account)');
+    assert.equal(decide(r('clean', 0.99, true), cfgOf({ MODE: 'enforce', AI_MOVES_INSIDE: '1' })).action, 'move');
+    assert.equal(decide(r('trusted', 0.99), enforce).action, 'none');
+    assert.equal(decide(r('flagged', 0.99), enforce, { brake: true }).action, 'would-move', 'brake on');
+    assert.equal(decide(r('clean', 0.9), cfgOf({ MODE: 'enforce', AI_MOVE_THRESHOLD: '0.95' })).action, 'flag', 'the threshold is a setting');
+});
+
+test('a notification: first one only starts the history; then new Inbox messages are judged once, phishing moved, genuine left', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    assert.deepEqual(await svc.handleNotification({ emailAddress: USER, historyId: '100' }), { started: true });
+    gmail.history = { ids: ['m1', 'm2'], historyId: '150' };
+    const out = await svc.handleNotification({ emailAddress: USER, historyId: '150' });
+    assert.equal(out.processed, 2);
+    assert.deepEqual(gmail.modified, [{ user: USER, id: 'm1', add: ['SPAM', 'L_SPRUCE/Moved'], remove: ['INBOX'] }]);
+    const rec = await store.getRecord(`${USER}|m1`);
+    assert.equal(rec.action, 'move'); assert.equal(rec.state, 'moved'); assert.equal(rec.trigger, 'rules+ai');
+    assert.equal(await store.getRecord(`${USER}|m2`), null, 'clean mail is counted, not recorded');
+    assert.equal((await store.getUser(USER)).historyId, '150');
+    // The same notification again does nothing twice.
+    await svc.handleNotification({ emailAddress: USER, historyId: '150' });
+    assert.equal(gmail.modified.length, 1);
+    const stats = await store.getStats('2000-01-01', '2999-01-01');
+    assert.equal(stats.reduce((a, s) => a + (s.scanned || 0), 0), 2);
+});
+
+test('monitor mode (the default) moves nothing and records what it would move', async () => {
+    const { store, gmail, svc } = await setup({});
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['m1'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(gmail.modified.length, 0);
+    const rec = await store.getRecord(`${USER}|m1`);
+    assert.equal(rec.action, 'would-move'); assert.equal(rec.state, 'inbox'); assert.match(rec.why, /monitor mode/);
+});
+
+test('sent mail, drafts, mail already in Spam and mailboxes outside the pilot are left alone', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' }, { s: { raw: PHISH, labels: ['SENT'] }, d: { raw: PHISH, labels: ['DRAFT'] }, sp: { raw: PHISH, labels: ['SPAM'] } });
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['s', 'd', 'sp'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(gmail.modified.length, 0);
+    assert.deepEqual(await svc.handleNotification({ emailAddress: 'someone.else@maple-schools.example', historyId: '5' }), { ignored: 'not watched' });
+    assert.deepEqual(await svc.handleNotification({}), { ignored: 'malformed' });
+});
+
+test('a history id too old to use: start again from now, and say so', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    gmail.addedSince = async () => { throw new GoogleApiError(404, 'too old', 'history'); };
+    assert.deepEqual(await svc.handleNotification({ emailAddress: USER, historyId: '3' }), { resynced: true });
+    assert.equal((await store.getUser(USER)).historyId, '999');
+    assert.ok((await store.listEvents()).some(e => e.kind === 'gap'));
+});
+
+test('release puts a moved email back in the Inbox, records who did it and counts it as a false alarm', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['m1'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    const out = await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example');
+    assert.equal(out.record.state, 'released'); assert.equal(out.record.releasedBy, 'it.admin@maple-schools.example'); assert.equal(out.record.falseAlarm, true);
+    assert.deepEqual(gmail.modified[1], { user: USER, id: 'm1', add: ['INBOX', 'L_SPRUCE/Released'], remove: ['SPAM', 'L_SPRUCE/Moved'] });
+    assert.match((await svc.release(`${USER}|m1`, 'x')).error, /already released/);
+    assert.equal((await svc.release('nope', 'x')).error, 'not found');
+    assert.equal((await svc.mark(`${USER}|m1`, false, 'it.admin@maple-schools.example')).record.falseAlarm, false);
+});
+
+test('the brake: too many moves in an hour stops moving until an admin resumes', async () => {
+    const msgs = {}; for (let i = 0; i < 5; i++) msgs[`p${i}`] = { raw: PHISH };
+    const { store, gmail, svc } = await setup({ MODE: 'enforce', BRAKE_PER_HOUR: '3' }, msgs);
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: Object.keys(msgs), historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(gmail.modified.length, 3, 'three moved, then the brake');
+    const recs = await store.listRecords({});
+    assert.equal(recs.filter(r => r.action === 'would-move' && r.braked).length, 2);
+    assert.ok(await store.getState('brake'));
+    assert.ok((await store.listEvents()).some(e => e.kind === 'brake'));
+    await svc.resume('it.admin@maple-schools.example');
+    assert.equal(await store.getState('brake'), null);
+});
+
+test('first email from an address counts only after the learning period, across the whole organization', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce', FIRST_SEEN_LEARNING_DAYS: '14' });
+    await store.setState('installedAt', Date.now());                     // just installed: learning
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['m2'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(await store.getRecord(`${USER}|m2`), null);
+    const facts = await require('../src/engine/mime').readMessage(GENUINE);
+    await store.setState('installedAt', Date.now() - 30 * DAY);
+    const rec = await svc.judge(USER, { id: 'x1' }, Object.assign({}, facts, { senderAddress: 'brand.new@first-time.example' }));
+    assert.equal(rec.action, 'none', 'a genuine email from a new sender is still clean (1 + 1.5 < 3)');
+});
+
+test('watches: pilot unit users are watched, those who leave are stopped; old records are deleted', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce', PILOT_USERS: '', PILOT_OU: '/Staff/Pilot', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
+    gmail.ouUsers = ['a@maple-schools.example', 'b@maple-schools.example'];
+    assert.deepEqual(await svc.renewWatches(), { watched: 2, failed: 0 });
+    assert.equal((await store.getUser('a@maple-schools.example')).watched, true);
+    gmail.ouUsers = ['a@maple-schools.example'];
+    await svc.renewWatches();
+    assert.deepEqual(gmail.stopped, ['b@maple-schools.example']);
+    assert.equal((await store.getUser('b@maple-schools.example')).watched, false);
+    await store.saveRecord({ key: 'old', processedAt: Date.now() - 90 * DAY, action: 'move' });
+    await store.saveRecord({ key: 'new', processedAt: Date.now(), action: 'move' });
+    assert.equal(await svc.purge(), 1);
+    assert.deepEqual((await store.listRecords({})).map(r => r.key), ['new']);
+});
+
+test('campaigns: copies of one email to different people group together', () => {
+    const a = campaignOf('evil.example', 'ROWAN! Invoice 4471 overdue', 'rowan.ibarra@maple-schools.example');
+    const b = campaignOf('evil.example', 'SAM! Invoice 9920 overdue', 'sam.tanaka@maple-schools.example');
+    assert.equal(a.key, b.key);
+    assert.doesNotMatch(a.label, /rowan/i);
+    assert.notEqual(campaignOf('other.example', 'Invoice 1 overdue', 'x@y').key, a.key);
+});
+
+test('configuration: real use needs every safety setting; demo mode refuses Cloud Run', () => {
+    const p = configProblems(loadConfig({}));
+    for (const k of ['ORG_DOMAINS', 'PILOT_OU', 'DELEGATED_SA', 'PUBSUB_TOPIC', 'PUSH_AUDIENCE', 'IAP_AUDIENCE', 'ADMIN_EMAILS']) assert.ok(p.some(x => x.includes(k)), k);
+    assert.deepEqual(configProblems(loadConfig({ DEMO: '1' })), []);
+    assert.match(configProblems(loadConfig({ DEMO: '1', K_SERVICE: 'spruce' }))[0], /refuses to run on Cloud Run/);
+    const c = loadConfig({});
+    assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.85); assert.equal(c.aiMovesInside, false);
+    assert.match(configProblems(loadConfig({ AI_MOVE_THRESHOLD: '0.3' })).join(' '), /AI_MOVE_THRESHOLD/);
+});
