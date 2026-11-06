@@ -64,7 +64,9 @@ function loadConfig(env = process.env) {
         pushServiceAccount: (env.PUSH_SERVICE_ACCOUNT || '').toLowerCase(),
         taskServiceAccount: (env.TASK_SERVICE_ACCOUNT || env.PUSH_SERVICE_ACCOUNT || '').toLowerCase(),
         iapAudience: env.IAP_AUDIENCE || '',
-        adminEmails: list(env.ADMIN_EMAILS)
+        adminEmails: list(env.ADMIN_EMAILS),
+        // A group whose members may use the dashboard too (read as DIRECTORY_ADMIN; groups inside it count).
+        adminGroups: list(env.ADMIN_GROUP)
     });
 }
 
@@ -85,7 +87,8 @@ function configProblems(c) {
     }
     if (admin) {
         if (!c.iapAudience) p.push('IAP_AUDIENCE is not set: the dashboard must sit behind Identity-Aware Proxy.');
-        if (!c.adminEmails.length) p.push('ADMIN_EMAILS is not set: nobody could use the dashboard.');
+        if (!c.adminEmails.length && !c.adminGroups.length) p.push('Neither ADMIN_EMAILS nor ADMIN_GROUP is set: nobody could use the dashboard.');
+        if (c.adminGroups.length && !c.directoryAdmin) p.push('ADMIN_GROUP needs DIRECTORY_ADMIN (an admin the service may act as to check who is in the group).');
     }
     if (!(c.aiThreshold > 0.5 && c.aiThreshold <= 1)) p.push('AI_MOVE_THRESHOLD must be between 0.5 and 1.');
     return p;

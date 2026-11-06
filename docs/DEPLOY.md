@@ -170,8 +170,18 @@ gcloud run deploy spruce-admin --source . --region=REGION --service-account=spru
 ```
 
 `ADMIN_EMAILS` (like every list setting) takes commas or semicolons. Use semicolons in
-`--set-env-vars`, where commas separate the variables. Even someone IAP lets through is refused unless their
-address is in `ADMIN_EMAILS`.
+`--set-env-vars`, where commas separate the variables.
+
+**A group of admins instead:** set `ADMIN_GROUP=spruce-admins@ORG` (and `DIRECTORY_ADMIN`) on the
+dashboard service, and grant IAP to `group:spruce-admins@ORG`.
+- The service asks Google whether each signed-in address is in the group (groups inside it count). It
+  remembers the answer for 5 minutes ("no" for 1 minute).
+- Only accounts in `ORG_DOMAINS` can get in through the group.
+- If the check fails, nobody gets in through the group.
+- `ADMIN_EMAILS` and `ADMIN_GROUP` can be used together.
+
+Even someone IAP lets through is refused unless their address is in `ADMIN_EMAILS` or they are in
+`ADMIN_GROUP`.
 
 Keep `MODE` the same on both services. The admin service shows the mode; the worker acts on it.
 
@@ -240,7 +250,8 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `DELEGATED_SA` | none | the delegation service account |
 | `PUBSUB_TOPIC` | none | `projects/PROJECT/topics/gmail-spruce` |
 | `PUSH_AUDIENCE`, `PUSH_SERVICE_ACCOUNT` | none | the OIDC tokens the worker accepts (Pub/Sub and Scheduler) |
-| `IAP_AUDIENCE`, `ADMIN_EMAILS` | none | who may use the dashboard |
+| `IAP_AUDIENCE` | none | the dashboard's Identity-Aware Proxy audience |
+| `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
 | `AI_MOVE_THRESHOLD` | `0.85` | AI score that moves (outside senders) |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
 | `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization |

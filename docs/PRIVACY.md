@@ -47,7 +47,8 @@ And:
 
 ## Who sees it
 
-- **The dashboard:** only through Identity-Aware Proxy, and only for the addresses in `ADMIN_EMAILS`.
+- **The dashboard:** only through Identity-Aware Proxy, and only for the addresses in `ADMIN_EMAILS` or
+  the members of `ADMIN_GROUP` (accounts in your own domains).
   Every release and mark records who did it.
 - **The service's own accounts:** in your Cloud project, under IAM. Limit project access to the people
   who run the service.

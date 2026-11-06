@@ -15,7 +15,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 # --- Settings (read line by line: values hold semicolons, so the file is not run as shell) ---------
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
-PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= MODE=monitor
+PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
 AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
@@ -24,11 +24,13 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
-for k in PROJECT REGION ORG_DOMAINS PILOT_GROUP DIRECTORY_ADMIN ADMIN_EMAILS; do [ -n "${!k}" ] || fail "$k is empty in $SETTINGS."; done
+for k in PROJECT REGION ORG_DOMAINS PILOT_GROUP DIRECTORY_ADMIN; do [ -n "${!k}" ] || fail "$k is empty in $SETTINGS."; done
+[ -n "$ADMIN_EMAILS$ADMIN_GROUP" ] || fail "set ADMIN_GROUP or ADMIN_EMAILS in $SETTINGS (who may open the dashboard)."
+WHO="$(echo "$ADMIN_GROUP;$ADMIN_EMAILS" | tr ',' ';' | sed 's/;;*/;/g; s/^;//; s/;$//')"   # for messages
 case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
 command -v gcloud >/dev/null || fail "gcloud is not installed (use Cloud Shell)."
@@ -70,8 +72,8 @@ cat <<EOF
   Manage Domain Wide Delegation > Add new (or edit the existing entry):
       Client ID:  $CLIENT_ID
       Scopes:     https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/admin.directory.group.member.readonly
-  Also check that $PILOT_GROUP exists and that $DIRECTORY_ADMIN has an admin
-  role with Groups > Read (docs/INSTALL.md, step 2).
+  Also check that these groups exist: $(echo "$PILOT_GROUP;$ADMIN_GROUP" | tr ',' ';' | sed 's/;;*/;/g; s/;$//; s/;/, /g')
+  and that $DIRECTORY_ADMIN has an admin role with Groups > Read (docs/INSTALL.md, step 2).
 EOF
 if [ -t 0 ]; then read -r -p "  Press Enter when that is done (it can take a few minutes to apply)... " _; fi
 
@@ -111,8 +113,8 @@ gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-ac
 WORKER_URL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(status.url)')"
 gcloud run services add-iam-policy-binding spruce-worker --region="$REGION" --member="serviceAccount:$SA_INVOKER" --role=roles/run.invoker --quiet >/dev/null
 
-step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_EMAILS only)"
-AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS")"
+step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAILS only)"
+AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
     --memory=512Mi --max-instances=3 --env-vars-file="$AF" --quiet
 ADMIN_URL="$(gcloud run services describe spruce-admin --region="$REGION" --format='value(status.url)')"
@@ -120,10 +122,12 @@ iap_setup() {
     gcloud beta run services update spruce-admin --region="$REGION" --iap --quiet >/dev/null || return 1
     gcloud beta services identity create --service=iap.googleapis.com --project="$PROJECT" --quiet >/dev/null 2>&1 || true
     retry gcloud run services add-iam-policy-binding spruce-admin --region="$REGION" --member="serviceAccount:service-$NUMBER@gcp-sa-iap.iam.gserviceaccount.com" --role=roles/run.invoker --quiet >/dev/null || return 1
-    local e
-    for e in $(echo "$ADMIN_EMAILS" | tr ';,' '  '); do
+    local e members=()
+    for e in $(echo "$ADMIN_GROUP" | tr ';,' '  '); do members+=("group:$e"); done
+    for e in $(echo "$ADMIN_EMAILS" | tr ';,' '  '); do members+=("user:$e"); done
+    for e in "${members[@]}"; do
         gcloud iap web add-iam-policy-binding --resource-type=cloud-run --service=spruce-admin --region="$REGION" \
-            --member="user:$e" --role=roles/iap.httpsResourceAccessor --condition=None --quiet >/dev/null || return 1
+            --member="$e" --role=roles/iap.httpsResourceAccessor --condition=None --quiet >/dev/null || return 1
     done
 }
 if ! iap_setup; then
@@ -154,7 +158,7 @@ gcloud scheduler jobs run spruce-renew-watches --location="$REGION" --quiet
 
 step "Done"
 cat <<EOF
-  Dashboard:  $ADMIN_URL   (sign in as one of: $ADMIN_EMAILS)
+  Dashboard:  $ADMIN_URL   (for: $WHO)
   Mode:       $MODE$( [ "$MODE" = monitor ] && echo " (nothing is moved; would-be moves are recorded)")
   Watching:   members of $PILOT_GROUP. Settings in the dashboard shows how many mailboxes are watched.
 

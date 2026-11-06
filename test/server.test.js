@@ -101,3 +101,49 @@ test('aggregates: campaigns, users and model health from records', () => {
     assert.deepEqual(A.users(rs, now, 7).map(u => u.user), ['a', 'b', 'c']);
     assert.equal(A.filterRecords(rs, { q: 'C2' }).length, 1);
 });
+
+test('dashboard admins: listed addresses, or members of ADMIN_GROUP in the organization; a failed check is a no', async () => {
+    const { authorizeAdmin, adminGroupCheck } = require('../src/auth/verify');
+    const cfg = loadConfig({ ORG_DOMAINS: 'maple-schools.example', ADMIN_EMAILS: 'it.director@maple-schools.example', ADMIN_GROUP: 'spruce-admins@maple-schools.example', DIRECTORY_ADMIN: 'dir@maple-schools.example' });
+    let t = 0; const asked = [];
+    const members = new Set(['it.helpdesk@maple-schools.example', 'friend@elsewhere.example']);
+    const gmail = { hasMember: async (admin, g, e) => { asked.push([admin, g, e]); if (e === 'boom@maple-schools.example') throw new Error('HTTP 500'); return members.has(e); } };
+    const check = adminGroupCheck(cfg, gmail, () => t);
+    assert.equal((await authorizeAdmin('it.director@maple-schools.example', cfg, check)).ok, true, 'listed: no group lookup');
+    assert.equal(asked.length, 0);
+    assert.equal((await authorizeAdmin('it.helpdesk@maple-schools.example', cfg, check)).ok, true, 'a member of the group');
+    assert.deepEqual(asked[0], ['dir@maple-schools.example', 'spruce-admins@maple-schools.example', 'it.helpdesk@maple-schools.example']);
+    assert.equal((await authorizeAdmin('teacher@maple-schools.example', cfg, check)).status, 403);
+    assert.equal((await authorizeAdmin('friend@elsewhere.example', cfg, check)).status, 403, 'outside the organization: never through the group');
+    assert.ok(!asked.some(a => a[2] === 'friend@elsewhere.example'));
+    assert.equal((await authorizeAdmin('boom@maple-schools.example', cfg, check)).status, 503, 'a failed check lets nobody in');
+    // Answers are remembered: yes for 5 minutes, no for 1.
+    const n = asked.length;
+    members.add('teacher@maple-schools.example'); members.delete('it.helpdesk@maple-schools.example');
+    t = 30 * 1000;
+    assert.equal((await authorizeAdmin('it.helpdesk@maple-schools.example', cfg, check)).ok, true);
+    assert.equal((await authorizeAdmin('teacher@maple-schools.example', cfg, check)).ok, false);
+    assert.equal(asked.length, n);
+    t = 90 * 1000;
+    assert.equal((await authorizeAdmin('teacher@maple-schools.example', cfg, check)).ok, true, 'added: in after a minute');
+    t = 6 * 60 * 1000;
+    assert.equal((await authorizeAdmin('it.helpdesk@maple-schools.example', cfg, check)).ok, false, 'removed: out after 5 minutes');
+    // Without a group or its directory admin, the configuration is refused.
+    assert.match(configProblems(loadConfig({ ROLE: 'admin', ORG_DOMAINS: 'maple-schools.example', DELEGATED_SA: 'x@p.iam.gserviceaccount.com', IAP_AUDIENCE: 'a', ADMIN_GROUP: 'g@maple-schools.example' })).join(' '), /ADMIN_GROUP needs DIRECTORY_ADMIN/);
+    assert.deepEqual(configProblems(loadConfig({ ROLE: 'admin', ORG_DOMAINS: 'maple-schools.example', DELEGATED_SA: 'x@p.iam.gserviceaccount.com', IAP_AUDIENCE: 'a', ADMIN_GROUP: 'g@maple-schools.example', DIRECTORY_ADMIN: 'dir@maple-schools.example' })), []);
+});
+
+test('hasMember: nested membership from Google; an unknown address is a no, an unknown group an error', async () => {
+    const { GmailClient, GoogleApiError } = require('../src/gmail/client');
+    let reply;
+    const urls = [];
+    const fetch = async (url) => { urls.push(url); return reply; };
+    const c = new GmailClient({ tokenFor: async () => 'tok' }, { fetch });
+    reply = { ok: true, status: 200, json: async () => ({ isMember: true }) };
+    assert.equal(await c.hasMember('dir@maple-schools.example', 'spruce-admins@maple-schools.example', 'a@maple-schools.example'), true);
+    assert.equal(new URL(urls[0]).pathname, '/admin/directory/v1/groups/spruce-admins%40maple-schools.example/hasMember/a%40maple-schools.example');
+    reply = { ok: false, status: 400, text: async () => 'Invalid Input: memberKey' };
+    assert.equal(await c.hasMember('dir@maple-schools.example', 'spruce-admins@maple-schools.example', 'x@maple-schools.example'), false);
+    reply = { ok: false, status: 404, text: async () => 'Resource Not Found: groupKey' };
+    await assert.rejects(c.hasMember('dir@maple-schools.example', 'typo@maple-schools.example', 'a@maple-schools.example'), GoogleApiError);
+});

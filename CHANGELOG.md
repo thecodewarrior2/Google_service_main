@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.4: The dashboard's admins can be a group
+
+- **`ADMIN_GROUP`:** the members of a group may use the dashboard, as well as (or instead of) the
+  addresses in `ADMIN_EMAILS`. At least one of the two must be set.
+  - Identity-Aware Proxy still lets them in first (granted to `group:…`). Then the service asks Google
+    whether the signed-in address is in the group (`groups.hasMember`, which counts groups inside it).
+    It asks as `DIRECTORY_ADMIN`, with the group-member read scope the pilot group already uses.
+  - Answers are remembered for 5 minutes ("no" for 1 minute, so someone just added gets in soon).
+  - Only accounts in `ORG_DOMAINS` can get in through the group.
+  - If the check fails, nobody gets in through the group: the answer is 503 with the reason.
+  - A group Google doesn't know is an error, not a silent "no".
+- **`deploy/install.sh`:**
+  - takes `ADMIN_GROUP` (the template now uses it, with `ADMIN_EMAILS` optional);
+  - grants IAP to the group;
+  - gives the dashboard `DIRECTORY_ADMIN`;
+  - refuses to run when neither is set.
+- **Docs:** `docs/INSTALL.md` creates a second security group for the dashboard; `DEPLOY.md`,
+  `PRIVACY.md` and `README.md` updated.
+- **Tests:**
+  - listed addresses, group members, outside accounts, a failed check, and the remembered answers
+    (added and removed members);
+  - `hasMember`'s request, and an unknown address versus an unknown group;
+  - the configuration needs `DIRECTORY_ADMIN` with a group.
+
 ## 0.2.3: Install for a test, limited to a security group
 
 - **`PILOT_GROUP`: watch the members of a security group** (or several, separated by semicolons).

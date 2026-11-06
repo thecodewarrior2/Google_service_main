@@ -30,6 +30,9 @@ would rather do it by hand.
    - **Who can view members:** group managers;
    - **Allow members outside your organization:** off.
 4. Add the members: start with yourself and two or three IT staff.
+5. **For the dashboard**, create a second security group the same way, for example
+   `spruce-admins@yourdomain`. Add the people who may open the dashboard. Keep it small: they see who
+   received which suspicious email.
 
 What counts as a member:
 - **Groups inside the group count:** their members are watched too.
@@ -61,15 +64,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.3.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.4.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.3.zip
+   unzip spruce-mail-protection-0.2.4.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.3
+   cd spruce-mail-protection-0.2.4
    ```
 
 4. Make your settings file:
@@ -91,7 +94,8 @@ can only read groups. It never uses that account's password.
    | `ORG_DOMAINS` | your email domain(s), separated by semicolons |
    | `PILOT_GROUP` | the security group from step 1 |
    | `DIRECTORY_ADMIN` | the account from step 2 |
-   | `ADMIN_EMAILS` | who may open the dashboard, separated by semicolons |
+   | `ADMIN_GROUP` | the dashboard group from step 1 |
+   | `ADMIN_EMAILS` | optional: more people who may open the dashboard, separated by semicolons |
    | `MODE` | leave `monitor` |
 
 ## 5. Install
@@ -124,7 +128,7 @@ When it finishes, it prints the **dashboard address**.
 
 ## 6. Check that it works
 
-1. **Open the dashboard address** and sign in as one of the `ADMIN_EMAILS`. The first time,
+1. **Open the dashboard address** and sign in as a member of `ADMIN_GROUP`. The first time,
    Identity-Aware Proxy can take a few minutes to let you in.
 2. **Settings → Mailboxes watched** should show the number of people in the group. If it shows 0:
    - look at **Overview → Recent activity** for an error;
@@ -200,12 +204,18 @@ When it finishes, it prints the **dashboard address**.
 - **"Identity-Aware Proxy could not be set up from here" (step 8/9).** The dashboard stays closed to
   everyone until you finish it in the console:
   1. Open **Cloud Run → spruce-admin → Security** and tick **Identity-Aware Proxy (IAP)**.
-  2. In **Security → Identity-Aware Proxy**, give each admin the **IAP-secured Web App User** role on
-     `spruce-admin`.
+  2. In **Security → Identity-Aware Proxy**, give the admin group (or each admin) the **IAP-secured Web
+     App User** role on `spruce-admin`.
 
   IAP needs the project to be inside your Google Cloud organization.
-- **The dashboard says you are not an admin.** IAP let you in, but your address isn't in
-  `ADMIN_EMAILS`. Fix the setting and run `install.sh` again.
+- **The dashboard says you are not an admin.** IAP let you in, but you aren't in `ADMIN_GROUP` or
+  `ADMIN_EMAILS`.
+  - Someone just added to the group gets in within a minute.
+  - Accounts outside your domain never get in through the group.
+- **"Couldn't check the admin group".** Check:
+  - the group address in `ADMIN_GROUP`;
+  - the directory admin's **Groups → Read** role;
+  - the delegation entry's second scope (the same ones the pilot group needs).
 - **Firestore: unsupported location.** Pick another `REGION` that Firestore supports (for example
   `us-east1` or `us-central1`), then run `install.sh` again.
 - **Build errors outside Cloud Shell.** Cloud Shell has Docker. Elsewhere, the script builds with Cloud

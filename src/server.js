@@ -6,14 +6,14 @@
 //   POST /tasks/stop-watches       by hand, to switch the service off: every mailbox watch is stopped
 //   POST /tasks/sync-feeds         daily, from Cloud Scheduler: the phishing lists, downloaded once for everyone
 //   GET  /healthz                  for Cloud Run
-//   /api/*  and  /                 the admin dashboard, behind Identity-Aware Proxy, ADMIN_EMAILS only
+//   /api/*  and  /                 the admin dashboard, behind Identity-Aware Proxy, ADMIN_EMAILS / ADMIN_GROUP only
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadConfig, configProblems } = require('./config');
 const { createStore } = require('./store');
 const { Service } = require('./pipeline');
-const { verifyPush, verifyTask, verifyAdmin } = require('./auth/verify');
+const { verifyPush, verifyTask, verifyAdmin, adminGroupCheck } = require('./auth/verify');
 const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
 
@@ -41,6 +41,7 @@ const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, se
     status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
 
 function createApp({ cfg, store, service }) {
+    const groupCheck = cfg.adminGroups.length && service.gmail && service.gmail.hasMember ? adminGroupCheck(cfg, service.gmail) : null;
     const since = (q) => Date.now() - Math.min(90, Math.max(1, Number(q.get('days')) || 30)) * A.DAY;
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
     const load = async (q) => ({ records: await store.listRecords({ sinceMs: since(q) - A.DAY, limit: 20000 }), stats: await store.getStats(A.dayOf(since(q)), A.dayOf(Date.now())) });
@@ -99,7 +100,7 @@ function createApp({ cfg, store, service }) {
                 return send(res, 200, await TASKS[route]());
             }
             // Everything else is the dashboard: admins only.
-            const admin = await verifyAdmin(req, cfg);
+            const admin = await verifyAdmin(req, cfg, groupCheck);
             if (!admin.ok) return send(res, admin.status || 403, { error: admin.why });
             if (api[route]) {
                 if (req.method === 'POST' && req.headers['x-requested-with'] !== 'spruce-dashboard') return send(res, 403, { error: 'missing request header' });

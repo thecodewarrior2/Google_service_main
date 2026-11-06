@@ -74,6 +74,17 @@ class GmailClient {
         } while (pageToken);
         return out;
     }
+    // Whether an address is in a group, directly or through a group inside it (acting as a Workspace admin).
+    async hasMember(admin, groupEmail, email) {
+        try {
+            const r = await this.call(admin, 'GET', `/${encodeURIComponent(groupEmail)}/hasMember/${encodeURIComponent(email)}`, { scope: SCOPES.groupMembers, base: GROUPS });
+            return !!(r && r.isMember);
+        } catch (e) {
+            // An address Google doesn't know is not a member; a group it doesn't know is an error to show.
+            if (e instanceof GoogleApiError && (e.status === 400 || e.status === 404) && !/groupKey/i.test(e.message)) return false;
+            throw e;
+        }
+    }
     // Members of a group, with the members of groups inside it (acting as a Workspace admin). Only
     // active user accounts in the organization's own domains: a group can hold outside addresses and
     // suspended accounts, and their mail is not ours to read.

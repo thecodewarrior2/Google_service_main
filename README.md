@@ -124,7 +124,7 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `src/pipeline.js` | Notifications → messages → decisions → actions → records; release, brake, watches, retention |
 | `src/gmail/` | Keyless domain-wide delegation, Gmail and Directory API calls |
 | `src/store/` | Firestore (production) and memory (demo, tests) |
-| `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS for the dashboard |
+| `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
