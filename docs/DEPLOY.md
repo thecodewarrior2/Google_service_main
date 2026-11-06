@@ -264,5 +264,6 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
 | `RETENTION_DAYS` | `60` | records are deleted after this |
+| `BUDGET_ALERT` (installer only) | `1` | budget alert amount for the project, in the billing account's currency; `off` for none |
 | `STORE_SUBJECTS`, `STORE_AI_QUOTES` | `true` | keep subjects and the model's short quotes in records |
 | `FIRST_SEEN_LEARNING_DAYS` | `14` | "first email from this sender" only counts after this |

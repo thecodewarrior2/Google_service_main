@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.6: The installer keeps the bill at zero
+
+Google requires a billing account for Cloud Run, Cloud Scheduler, Cloud Build and Artifact Registry,
+even when nothing is charged. A pilot should stay within the free tier; the installer now makes sure
+someone hears about it if it doesn't.
+
+- **Billing check first:** `install.sh` stops at once, with what to do, when no billing account is
+  linked. Before, it failed later, partway through.
+- **Budget alert** (`BUDGET_ALERT`, 1 by default, in the billing account's currency; `off` for none).
+  - A budget for this project only, emailing the billing account's admins at 1%, 50% and 100% of the
+    amount: in practice, at the first charge.
+  - It's created once and updated on later runs.
+  - It needs the Billing Account Administrator or Costs Manager role. Without it, the installer explains
+    and carries on.
+- **Image cleanup:** Artifact Registry keeps only the newest 3 builds, within the free 0.5 GB.
+  `deploy/rollback.sh` can still go back 2 builds.
+- **Docs:** `docs/INSTALL.md` has a "Costs" section with the free allowances against a 50-mailbox
+  pilot; `DEPLOY.md` lists `BUDGET_ALERT`.
+- **Upgrades** add `BUDGET_ALERT=` (the default, 1) to older settings files.
+- **Checked** against a stand-in `gcloud`: a new budget, an existing one updated, billing missing
+  (stops), `off`, a bad value (stops), and a valid cleanup policy.
+
 ## 0.2.5: Upgrade and rollback scripts
 
 - **`deploy/upgrade.sh`:** run it from the new version's unzipped folder in Cloud Shell.

@@ -14,8 +14,8 @@ would rather do it by hand.
 - You need:
   - a **super admin** account in the Admin console;
   - permission to create a Google Cloud project with billing in your organization.
-- The cost for a small pilot is usually a few dollars a month (Cloud Run, Firestore, Pub/Sub, Cloud
-  Scheduler). Check the project's billing page after the first week.
+- **Cost: a pilot should cost nothing,** but Google requires a billing account on the project (see
+  "Costs" below).
 
 ## 1. The pilot security group (Admin console)
 
@@ -58,21 +58,22 @@ can only read groups. It never uses that account's password.
 
 1. In [console.cloud.google.com](https://console.cloud.google.com), create a **new project** in your
    organization, for example `spruce-mail-test`.
-2. Link a billing account to it.
+2. Link a billing account to it. Google requires one for Cloud Run even when nothing is charged; the
+   installer stops if none is linked. See "Costs" below.
 3. Write down its **project ID**. It's shown under the name and is not always the same as the name.
 
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.4.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.6.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.4.zip
+   unzip spruce-mail-protection-0.2.6.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.4
+   cd spruce-mail-protection-0.2.6
    ```
 
 4. Make your settings file:
@@ -97,6 +98,7 @@ can only read groups. It never uses that account's password.
    | `ADMIN_GROUP` | the dashboard group from step 1 |
    | `ADMIN_EMAILS` | optional: more people who may open the dashboard, separated by semicolons |
    | `MODE` | leave `monitor` |
+   | `BUDGET_ALERT` | leave `1`: an email at the first charge (see "Costs") |
 
 ## 5. Install
 
@@ -205,7 +207,7 @@ bash deploy/rollback.sh
 ```
 
 - It's quick: nothing is rebuilt, and the earlier build comes back with the settings it had.
-- Run it again to go back one more.
+- Run it again to go back one more. Only the newest 3 builds are kept, so you can go back 2.
 - The next upgrade or install moves forward again.
 
 ## Turning it off
@@ -216,6 +218,36 @@ bash deploy/rollback.sh
 | `bash deploy/stop.sh` | Stops watching every mailbox: no email is read from then on. Running `install.sh` starts it again |
 | Remove the domain-wide delegation entry in the Admin console | All access to mail ends at once |
 | Delete the Cloud project | Removes the service and every record |
+
+## Costs
+
+Google requires a billing account on the project before it runs Cloud Run, Cloud Scheduler, Cloud
+Build or Artifact Registry, even when nothing is charged. A pilot of a few dozen mailboxes should stay
+within the free monthly allowances. The table shows about what a 50-mailbox pilot uses (Google's free
+amounts change; check its pricing pages):
+
+| Piece | Free each month | A 50-mailbox pilot uses about |
+|---|---|---|
+| Cloud Run | 2 million requests, 180,000 CPU-seconds | 60,000 requests, 30,000 CPU-seconds |
+| Firestore | 50,000 reads and 20,000 writes a day, 1 GB | a few thousand writes a day |
+| Pub/Sub | 10 GB | well under 1 GB |
+| Cloud Scheduler | 3 jobs | 3 jobs |
+| Cloud Build (only without Docker) | 2,500 build-minutes | a few minutes per install |
+| Artifact Registry | 0.5 GB | 3 builds (the installer deletes older ones) |
+
+The installer keeps it there:
+- **A budget alert** (`BUDGET_ALERT`, 1 by default, in your billing account's currency). Google emails
+  the billing account's admins as soon as this project is charged anything, then again at half and all
+  of the amount. It warns, it doesn't stop the service.
+  - Creating it needs the **Billing Account Administrator** or **Costs Manager** role on the billing
+    account. Without that, the installer says so and carries on; ask the billing admin to add it in
+    **Billing → Budgets & alerts**, scoped to this project.
+- **Only the newest 3 builds are kept** in Artifact Registry. Google applies the cleanup about once a
+  day.
+- **Instance limits:** at most 10 workers and 3 dashboards running at once, so a burst of mail can't
+  run up the bill.
+
+To turn the alert off, set `BUDGET_ALERT=off`.
 
 ## Troubleshooting
 

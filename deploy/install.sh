@@ -16,7 +16,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
-AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR=
+AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +24,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -32,6 +32,9 @@ for k in PROJECT REGION ORG_DOMAINS PILOT_GROUP DIRECTORY_ADMIN; do [ -n "${!k}"
 [ -n "$ADMIN_EMAILS$ADMIN_GROUP" ] || fail "set ADMIN_GROUP or ADMIN_EMAILS in $SETTINGS (who may open the dashboard)."
 WHO="$(echo "$ADMIN_GROUP;$ADMIN_EMAILS" | tr ',' ';' | sed 's/;;*/;/g; s/^;//; s/;$//')"   # for messages
 case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
+BUDGET_ALERT="${BUDGET_ALERT:-1}"
+[[ "$BUDGET_ALERT" =~ ^(off|[0-9]+(\.[0-9]{1,2})?)$ ]] || fail "BUDGET_ALERT must be an amount (like 1 or 5) or off."
+KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
 command -v gcloud >/dev/null || fail "gcloud is not installed (use Cloud Shell)."
 
@@ -45,11 +48,37 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 step "Project $PROJECT ($REGION), S.P.R.U.C.E+ Mail Protection $VERSION, mode $MODE"
 gcloud config set project "$PROJECT" --quiet >/dev/null
 NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')" || fail "can't read project $PROJECT (does it exist, and are you an owner?)."
+# Google requires a billing account on the project for Cloud Run, Scheduler, Build and Artifact
+# Registry, even when the use stays within the free tier (docs/INSTALL.md, "Costs").
+[ "$(gcloud billing projects describe "$PROJECT" --format='value(billingEnabled)' 2>/dev/null)" = True ] \
+    || fail "no billing account is linked to $PROJECT. Google requires one for Cloud Run, even at no cost: link it in the Cloud console (Billing), then run this again. A pilot should stay within the free tier, and a budget alert is set up below."
+BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(billingAccountName)')"; BILLING_ACCOUNT="${BILLING_ACCOUNT#billingAccounts/}"
 
-step "1/9 APIs"
+step "1/9 APIs and the budget alert"
 gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleapis.com run.googleapis.com \
     firestore.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com iap.googleapis.com \
-    cloudbuild.googleapis.com artifactregistry.googleapis.com --quiet
+    cloudbuild.googleapis.com artifactregistry.googleapis.com billingbudgets.googleapis.com --quiet
+
+# A budget alert: Google emails the billing account's admins as soon as this project is charged at all
+# (1% of the amount), and again at half and all of it. It warns; it doesn't stop the service.
+budget() {
+    local name="SPRUCE Mail Protection ($PROJECT)" cur id
+    cur="$(gcloud billing accounts describe "$BILLING_ACCOUNT" --format='value(currencyCode)' 2>/dev/null || true)"; cur="${cur:-USD}"
+    id="$(gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --filter="displayName=\"$name\"" --format='value(name)' 2>/dev/null | head -1)" || return 1
+    if [ -n "$id" ]; then
+        gcloud billing budgets update "$id" --billing-account="$BILLING_ACCOUNT" --budget-amount="$BUDGET_ALERT$cur" --clear-threshold-rules \
+            --add-threshold-rule=percent=0.01 --add-threshold-rule=percent=0.5 --add-threshold-rule=percent=1.0 --quiet >/dev/null || return 1
+    else
+        gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" --display-name="$name" --budget-amount="$BUDGET_ALERT$cur" \
+            --filter-projects="projects/$PROJECT" --threshold-rule=percent=0.01 --threshold-rule=percent=0.5 --threshold-rule=percent=1.0 --quiet >/dev/null || return 1
+    fi
+    echo "  Budget alert: $BUDGET_ALERT $cur for this project; the billing account's admins are emailed at the first charge."
+}
+if [ "$BUDGET_ALERT" = off ]; then echo "  Budget alert: off (BUDGET_ALERT=off)."
+elif ! budget; then
+    echo "  The budget alert couldn't be set: it needs the Billing Account Administrator or Costs Manager role on"
+    echo "  billing account $BILLING_ACCOUNT. Ask its admin to add one in Billing > Budgets & alerts (docs/INSTALL.md, Costs)."
+fi
 
 step "2/9 Firestore (records, counters, state)"
 if gcloud firestore databases describe --database='(default)' >/dev/null 2>&1; then echo "  exists"
@@ -86,6 +115,16 @@ gcloud pubsub topics add-iam-policy-binding "$TOPIC" --member=serviceAccount:gma
 step "6/9 Build the image"
 gcloud artifacts repositories describe spruce --location="$REGION" >/dev/null 2>&1 \
     || gcloud artifacts repositories create spruce --repository-format=docker --location="$REGION" --description="S.P.R.U.C.E+ Mail Protection" --quiet
+# Keep only the newest builds, so stored images stay within the free 0.5 GB (Google applies it about daily).
+printf '%s\n' '[' \
+  "  { \"name\": \"keep-newest\", \"action\": { \"type\": \"Keep\" }, \"mostRecentVersions\": { \"packageNamePrefixes\": [\"mail-protection\"], \"keepCount\": $KEEP_BUILDS } }," \
+  '  { "name": "delete-older", "action": { "type": "Delete" }, "condition": { "tagState": "any", "olderThan": "1d" } }' \
+  ']' > "$TMP/cleanup.json"
+if gcloud artifacts repositories set-cleanup-policies spruce --location="$REGION" --policy="$TMP/cleanup.json" --no-dry-run --quiet >/dev/null; then
+    echo "  Keeping the newest $KEEP_BUILDS builds."
+else
+    echo "  (Couldn't set the image cleanup policy; old builds stay until deleted.)"
+fi
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-$(date -u +%Y%m%d-%H%M%S)"
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet >/dev/null
