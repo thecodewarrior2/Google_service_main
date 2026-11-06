@@ -37,7 +37,7 @@ test('real configuration: no IAP, no dashboard; no OIDC, no Pub/Sub or tasks; he
 
 test('roles: the worker has no dashboard; the admin service has no Pub/Sub or task routes; each needs only its own settings', async () => {
     const common = { STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', DELEGATED_SA: 'd@p.iam.gserviceaccount.com' };
-    const worker = loadConfig(Object.assign({ ROLE: 'worker', PILOT_USERS: 'a@maple-schools.example', PUBSUB_TOPIC: 'projects/p/topics/t', PUSH_AUDIENCE: 'https://w', PUSH_SERVICE_ACCOUNT: 'push@p.iam.gserviceaccount.com' }, common));
+    const worker = loadConfig(Object.assign({ ROLE: 'worker', SAFE_BROWSING_KEY: 'k', PILOT_USERS: 'a@maple-schools.example', PUBSUB_TOPIC: 'projects/p/topics/t', PUSH_AUDIENCE: 'https://w', PUSH_SERVICE_ACCOUNT: 'push@p.iam.gserviceaccount.com' }, common));
     const admin = loadConfig(Object.assign({ ROLE: 'admin', IAP_AUDIENCE: '/projects/1/locations/r/services/s', ADMIN_EMAILS: 'admin@maple-schools.example' }, common));
     assert.deepEqual(configProblems(worker), []); assert.deepEqual(configProblems(admin), []);
     for (const [cfg, open, closed] of [[worker, '/pubsub/push', '/api/overview'], [admin, '/api/overview', '/tasks/purge']]) {

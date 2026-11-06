@@ -182,3 +182,5 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .hbar { grid-template-columns: minmax(90px, 140px) 1fr 36px; }
   dl.kv { grid-template-columns: 100px 1fr; }
 }
+
+.spaced { margin-top: 14px; }

@@ -47,6 +47,13 @@ class MemoryStore {
     async setState(name, value) { this.state.set(name, value === null ? null : JSON.parse(JSON.stringify(value))); }
     async addEvent(ev) { this.events.push(Object.assign({ at: Date.now() }, ev)); if (this.events.length > 2000) this.events.shift(); }
     async listEvents(sinceMs = 0) { return this.events.filter(e => e.at >= sinceMs).sort((a, b) => b.at - a.at); }
+    // Files shared by every instance (the phishing lists): bytes plus a little information.
+    async putBlob(name, bytes, info) { this.blobs = this.blobs || new Map(); this.blobs.set(name, { bytes: Buffer.from(bytes), info: Object.assign({}, info) }); }
+    async getBlob(name) { const b = this.blobs && this.blobs.get(name); return b ? { bytes: Buffer.from(b.bytes), info: Object.assign({}, b.info) } : null; }
+    async blobInfo(name) { const b = this.blobs && this.blobs.get(name); return b ? Object.assign({}, b.info) : null; }
+    // Remembered answers shared by every instance (registry dates of domains).
+    async getCached(kind, key) { const m = this.cached && this.cached.get(`${kind}|${key}`); return m && m.exp > Date.now() ? m.value : null; }
+    async setCached(kind, key, value, ttlMs) { this.cached = this.cached || new Map(); this.cached.set(`${kind}|${key}`, { value, exp: Date.now() + ttlMs }); }
     async countActions(sinceMs, action) { let n = 0; for (const r of this.records.values()) if (r.processedAt >= sinceMs && r.action === action) n++; return n; }
     async purge(beforeMs) {
         let n = 0;

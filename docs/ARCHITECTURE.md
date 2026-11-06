@@ -19,6 +19,12 @@ Admins ──Identity-Aware Proxy──▶ spruce-admin (Cloud Run, ROLE=admin):
 
 Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watch lasts 7 days)
                            ──▶ worker /tasks/purge (daily; RETENTION_DAYS)
+                           ──▶ worker /tasks/sync-feeds (daily; the phishing lists, for everyone)
+
+worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
+       ──▶ safebrowsing.googleapis.com    link addresses (no #part; one-time links without query)
+       ──▶ registries (RDAP, via IANA)    domain names, at most once a month each
+       ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```
 
 ## Why these choices
@@ -36,6 +42,9 @@ Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watc
   (`iamcredentials.signJwt`). Tokens last an hour and are kept in memory.
 - **Safe to repeat.** Pub/Sub delivers at least once. Each message ID is marked as seen before it's
   judged, and a mailbox's sync position only moves forward.
+- **Lookups that never block mail.** Every lookup has its own time limit and limits on requests at once,
+  and answers are remembered (6 hours to a day; registry dates 30 days, shared). One that fails or is
+  slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
 

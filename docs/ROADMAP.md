@@ -2,13 +2,13 @@
 
 What the service doesn't do yet, roughly in the order it would help.
 
-1. **Network checks the extension has.** Each sends domain names to a third party, so each needs a
-   privacy review and the service's own rate limits (the extension's per-service limits and back-off).
-   - DNS threat resolvers (Quad9, Cloudflare Security…).
-   - Phishing lists.
-   - Short-link expansion: unshorten.me's free tier is too small at this scale; it needs a paid or
-     self-hosted lookup.
-   - Registry dates of link domains, and brand ownership.
+1. **More of the extension's network checks.** Cloudflare Security, Safe Browsing, the phishing lists and
+   site age are in (0.2.0). Still out:
+   - **Short-link expansion:** deliberately, with no outside service. A self-hosted resolver could follow
+     short links from the district's own project, at the cost of "clicking" them.
+   - **Other DNS threat resolvers** (Quad9, Control D).
+   - **Brand ownership checks.**
+   - **Safe Browsing's Update API:** local hash prefixes, so link addresses are not sent at all.
 2. **Retraining from real mail.** False alarms marked in the dashboard, de-identified and reviewed,
    become training examples for phish-tiny (the extension's `tools/ai/data/extra/`).
 3. **Campaign actions.** "Move every copy" and "release every copy" for a whole campaign, plus finding

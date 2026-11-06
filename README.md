@@ -49,8 +49,18 @@ For each new Inbox message:
 | Amber, or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious |
 | Allowlisted sender | Nothing |
 
-Not done yet (they need outside services): DNS threat lookups, phishing lists, short-link lookups,
-registry dates of link domains. See `docs/ROADMAP.md`.
+It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is sent where):
+
+| Check | What is sent | What it adds |
+|---|---|---|
+| **Cloudflare Security DNS** | host names of link sites and the sender's domain | a blocked link is dangerous; a blocked or nonexistent sender domain is a sign |
+| **Google Safe Browsing** | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
+| **Phishing lists** (OpenPhish, Phishing Army, Sefinek) | nothing: downloaded once a day, matched in the service | listed links are dangerous; a listed sender address or domain is a sign |
+| **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
+
+A lookup that fails leaves an email "not checked", never "safe". Short links are **not** looked up:
+there is no outside unshortening service. A short link is judged by its own host and by what decodes
+offline.
 
 ## The dashboard
 
@@ -102,7 +112,8 @@ See `docs/DEPLOY.md` (step by step) and `docs/PRIVACY.md` (what is read, kept an
 
 | Path | What |
 |---|---|
-| `src/engine/` | MIME and HTML reading, the extension's checks and model (`spruce.js` loads `vendor/spruce/`) |
+| `src/engine/` | MIME and HTML reading, the extension's checks and model (`spruce.js` loads `vendor/spruce/`); `network.js` applies the lookups |
+| `src/intel/` | Cloudflare Security DNS, Google Safe Browsing, the phishing lists, registry dates; request limits |
 | `src/policy.js` | What happens to an analyzed email |
 | `src/pipeline.js` | Notifications → messages → decisions → actions → records; release, brake, watches, retention |
 | `src/gmail/` | Keyless domain-wide delegation, Gmail and Directory API calls |

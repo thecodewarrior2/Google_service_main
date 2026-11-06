@@ -30,8 +30,35 @@ gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleap
 ```
 
 ```bash
+gcloud services enable safebrowsing.googleapis.com secretmanager.googleapis.com apikeys.googleapis.com
+```
+
+```bash
 gcloud firestore databases create --location=REGION
 ```
+
+### The Safe Browsing key
+
+Create an API key restricted to the Safe Browsing API and keep it in Secret Manager:
+
+```bash
+gcloud services api-keys create --display-name="SPRUCE Safe Browsing" --api-target=service=safebrowsing.googleapis.com
+```
+
+The command prints the key string. Store it as a secret, pasting the key when asked:
+
+```bash
+gcloud secrets create safe-browsing-key --replication-policy=automatic --data-file=-
+```
+
+```bash
+gcloud secrets add-iam-policy-binding safe-browsing-key --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor
+```
+
+Safe Browsing's Lookup API is for non-commercial use. A district's own protection fits; check Google's
+terms, or use the Web Risk API otherwise. Its daily quota shows in the Cloud console (APIs & Services →
+Safe Browsing API → Quotas). The worker sends up to 500 links per request and remembers answers, and a
+link the quota leaves unchecked is "not checked", never "safe".
 
 ## 2. Service accounts (no keys, ever)
 
@@ -98,7 +125,7 @@ The push subscription is created after the worker exists (step 6).
 `spruce-invoker` may call it.
 
 ```bash
-gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
+gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --set-secrets=SAFE_BROWSING_KEY=safe-browsing-key:latest --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
 ```
 
 The first deploy prints `WORKER_URL`. Deploy again with `PUSH_AUDIENCE` set to it, then allow the
@@ -138,7 +165,15 @@ gcloud scheduler jobs create http spruce-renew-watches --location=REGION --sched
 gcloud scheduler jobs create http spruce-purge --location=REGION --schedule="41 4 * * *" --uri=WORKER_URL/tasks/purge --http-method=POST --oidc-service-account-email=spruce-invoker@PROJECT.iam.gserviceaccount.com --oidc-token-audience=WORKER_URL
 ```
 
-Run the renew job once by hand to start watching:
+```bash
+gcloud scheduler jobs create http spruce-sync-feeds --location=REGION --schedule="23 5 * * *" --uri=WORKER_URL/tasks/sync-feeds --http-method=POST --oidc-service-account-email=spruce-invoker@PROJECT.iam.gserviceaccount.com --oidc-token-audience=WORKER_URL --attempt-deadline=300s
+```
+
+Run the list and renew jobs once by hand to start:
+
+```bash
+gcloud scheduler jobs run spruce-sync-feeds --location=REGION
+```
 
 ```bash
 gcloud scheduler jobs run spruce-renew-watches --location=REGION
@@ -187,6 +222,10 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `BRAKE_PER_HOUR` | `100` | more moves than this in an hour pauses moving |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
+| `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |
+| `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `true`, none | Google Safe Browsing for links (the key from Secret Manager) |
+| `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
+| `SITE_AGE` | `true` | registry dates of link and sender domains |
 | `RETENTION_DAYS` | `60` | records are deleted after this |
 | `STORE_SUBJECTS`, `STORE_AI_QUOTES` | `true` | keep subjects and the model's short quotes in records |
 | `FIRST_SEEN_LEARNING_DAYS` | `14` | "first email from this sender" only counts after this |

@@ -16,6 +16,9 @@
     function signalCategory(s) {
         const k = s.kind || '', t = String(s.text || '');
         if (k === 'dangerous-links' || /links? (is|are) flagged as dangerous/.test(t)) return 'Dangerous links';
+        if (k === 'scam-sender-list' || k === 'sender-domain-blocked' || k === 'sender-domain-listed') return 'Sender on a threat list';
+        if (k === 'young-sender-domain' || k === 'young-link-domain' || k === 'young-lookalike-sender') return 'Brand-new site or domain';
+        if (k === 'sender-domain-missing') return 'Made-up sender domain';
         if (/DMARC|sender's verification|signature/.test(t)) return 'Failed sender check';
         if (k === 'hidden-filler' || /unrelated text far below/.test(t)) return 'Hidden filler text';
         if (k === 'high-risk-request') return 'Asks for password, codes, money';

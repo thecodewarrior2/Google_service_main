@@ -22,7 +22,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
     const out = path.resolve(process.argv[2] || path.join(ROOT, 'build', 'mockup.html'));
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example', ADMIN_EMAILS: 'demo-admin@example.org' });
     const now = Date.now();
-    const { store } = await buildDemo({ cfg, now });
+    const { store, intel } = await buildDemo({ cfg, now });
     const E = spruce.load();
     const data = {
         now,
@@ -31,7 +31,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         events: await store.listEvents(0),
         settings: { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                     orgDomains: ['maple-schools.example'], pilotOu: '/Staff', pilotUsers: 0, allowDomains: [], allowAddresses: 0, retentionDays: cfg.retentionDays,
-                    storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true }
+                    storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true,
+                    checks: { cloudflare: true, safeBrowsing: true, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
     const fakeApi = `

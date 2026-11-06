@@ -33,8 +33,8 @@ function campaignOf(senderDomain, subject, user) {
 }
 
 class Service {
-    constructor({ cfg, store, gmail, now = () => Date.now(), log = console }) {
-        this.cfg = cfg; this.store = store; this.gmail = gmail; this.now = now; this.log = log;
+    constructor({ cfg, store, gmail, intel = null, now = () => Date.now(), log = console }) {
+        this.cfg = cfg; this.store = store; this.gmail = gmail; this.intel = intel; this.now = now; this.log = log;
     }
 
     async inScope(user) {
@@ -94,7 +94,7 @@ class Service {
         const installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now);
         const first = facts.senderAddress ? await this.store.senderFirstSeen(senderHash(facts.senderAddress), now) : now;
         const learning = now - installedAt < this.cfg.firstSeenLearningDays * DAY;
-        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: isAllowed(this.cfg, facts.senderAddress), firstTime: !learning && now - first < DAY });
+        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: isAllowed(this.cfg, facts.senderAddress), firstTime: !learning && now - first < DAY, intel: this.intel });
         const brake = await this.brakeOn(now);
         const decision = decide(result, this.cfg, { brake });
         if (decision.action === 'none') return { user, messageId: msg.id, action: 'none', status: result.status, ai: result.ai && result.ai.probability };
@@ -115,7 +115,7 @@ class Service {
             sender: { name: facts.senderName.slice(0, 200), address: facts.senderAddress.slice(0, 320), domain: senderDomain },
             subject: this.cfg.storeSubjects ? facts.subject.slice(0, 300) : '',
             campaign: campaign.key, campaignLabel: this.cfg.storeSubjects ? campaign.label : senderDomain,
-            status: result.status, score: result.score, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10),
+            status: result.status, score: result.score, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null,
             ai: result.ai ? { probability: result.ai.probability, model: result.ai.model,
                               reasons: this.cfg.storeAiQuotes ? (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] } : null,
             auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
@@ -209,6 +209,12 @@ class Service {
 
     // Cloud Scheduler, daily: records older than RETENTION_DAYS are deleted.
     purge() { return this.store.purge(this.now() - this.cfg.retentionDays * DAY); }
+
+    // Cloud Scheduler, daily: the phishing lists are downloaded once for everyone (src/intel/feeds.js).
+    async syncFeeds() {
+        if (!this.intel || !this.intel.feeds) return { skipped: 'phishing lists are off' };
+        return this.intel.feeds.sync();
+    }
 }
 
 module.exports = { Service, campaignOf, senderHash, recordKey, dayOf };

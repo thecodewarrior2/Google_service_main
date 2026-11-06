@@ -4,6 +4,7 @@
 //   POST /tasks/renew-watches      daily, from Cloud Scheduler (OIDC-verified)
 //   POST /tasks/purge              daily, from Cloud Scheduler: records past RETENTION_DAYS deleted
 //   POST /tasks/stop-watches       by hand, to switch the service off: every mailbox watch is stopped
+//   POST /tasks/sync-feeds         daily, from Cloud Scheduler: the phishing lists, downloaded once for everyone
 //   GET  /healthz                  for Cloud Run
 //   /api/*  and  /                 the admin dashboard, behind Identity-Aware Proxy, ADMIN_EMAILS only
 const http = require('http');
@@ -66,7 +67,9 @@ function createApp({ cfg, store, service }) {
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      orgDomains: cfg.orgDomains, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
-                     model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).filter(u => u.watched).length, demo: cfg.demo };
+                     model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).filter(u => u.watched).length, demo: cfg.demo,
+                     checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && (!!cfg.safeBrowsingKey || cfg.demo), phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
+                     lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email),
@@ -89,7 +92,7 @@ function createApp({ cfg, store, service }) {
                 await service.handleNotification(note);
                 return send(res, 204, '');
             }
-            const TASKS = { 'POST /tasks/renew-watches': () => service.renewWatches(), 'POST /tasks/purge': async () => ({ deleted: await service.purge() }), 'POST /tasks/stop-watches': () => service.stopAll() };
+            const TASKS = { 'POST /tasks/renew-watches': () => service.renewWatches(), 'POST /tasks/purge': async () => ({ deleted: await service.purge() }), 'POST /tasks/stop-watches': () => service.stopAll(), 'POST /tasks/sync-feeds': () => service.syncFeeds() };
             if (TASKS[route]) {
                 const v = await verifyTask(req, cfg);
                 if (!v.ok) return send(res, 403, { error: v.why });
@@ -122,10 +125,10 @@ async function main() {
     const cfg = loadConfig();
     const problems = configProblems(cfg);
     if (problems.length) { console.error('Not started; fix the configuration:\n - ' + problems.join('\n - ')); process.exit(1); }
-    let store, gmail;
+    let store, gmail, intel = null;
     if (cfg.demo) {
         const { buildDemo } = require('./demo/seed');
-        ({ store } = await buildDemo({ cfg, now: Date.now() }));
+        ({ store, intel } = await buildDemo({ cfg, now: Date.now() }));
         gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}) };
         console.log('DEMO mode: made-up data, no Google access.');
     } else {
@@ -133,9 +136,11 @@ async function main() {
         const { GmailClient } = require('./gmail/client');
         store = createStore(cfg);
         gmail = new GmailClient(new DelegatedAuth(cfg));
+        // The network checks run where mail is judged (the worker).
+        if (cfg.role !== 'admin') intel = require('./intel').createIntel({ cfg, store, engine: spruce.load(), version: require('../package.json').version });
     }
     spruce.load();
-    const service = new Service({ cfg, store, gmail });
+    const service = new Service({ cfg, store, gmail, intel });
     http.createServer(createApp({ cfg, store, service })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
 }
 

@@ -11,6 +11,7 @@
 const { Service } = require('../pipeline');
 const { readMessage } = require('../engine/mime');
 const { MemoryStore } = require('../store/memory');
+const { createFakeIntel } = require('./fake-intel');
 
 const DAY = 24 * 60 * 60 * 1000;
 const ORG = 'maple-schools.example';
@@ -87,10 +88,11 @@ async function buildDemo({ now = Date.now(), cfg }) {
     await store.setState('installedAt', now - 60 * DAY);
     const monitorUntil = now - 10 * DAY;              // monitor mode before, enforce after
     const templates = campaignTemplates();
+    const intel = createFakeIntel();                   // made-up lookup answers (no network in demo mode)
     for (const t of templates) {
         const when0 = now - t.daysAgo * DAY + r.int(8, 15) * 3600 * 1000 - DAY / 2;
         const mode = when0 < monitorUntil ? 'monitor' : 'enforce';
-        const svc = new Service({ cfg: Object.assign({}, cfg, { mode, orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14 }), store, gmail: fakeGmail, now: () => when0, log: { error() {} } });
+        const svc = new Service({ cfg: Object.assign({}, cfg, { mode, orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14 }), store, gmail: fakeGmail, intel, now: () => when0, log: { error() {} } });
         const recips = r.int(0, 1) ? staff.slice(0, t.recipients) : staff.slice(-t.recipients);
         const facts = await readMessage(Buffer.from(t.make(recips[0])));
         const first = await svc.judge(recips[0], { id: `demo-${t.id}-0`, threadId: `t-${t.id}-0`, internalDate: when0 }, facts);
@@ -126,7 +128,7 @@ async function buildDemo({ now = Date.now(), cfg }) {
         { at: now - 10 * DAY, kind: 'mode', text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }
     ];
-    return { store, staff };
+    return { store, staff, intel };
 }
 
 module.exports = { buildDemo, campaignTemplates, ORG };

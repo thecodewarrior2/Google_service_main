@@ -1,13 +1,14 @@
 'use strict';
 // One email → the extension's verdict (the same signals and weights: caution at 3, flagged at 5) and
-// the AI model's opinion. Pure apart from the model: no network, nothing stored.
+// the AI model's opinion. Nothing is stored here.
 //
-// Not yet here (they need the network; see docs/ROADMAP.md): the DNS threat services, the phishing
-// lists, short-link lookups, registry dates of link domains, brand ownership. A link is judged by
-// what can be read offline: the extension's decoders unwrap gateway and tracker links, and
+// Offline, as in the extension: its decoders unwrap gateway and tracker links, and
 // detectLinkProblem/linkProblemSeverity find look-alike domains, mismatched link text, raw IP
-// addresses and the like.
+// addresses and the like. With ctx.intel (src/intel; network.js applies it): Cloudflare Security DNS,
+// Google Safe Browsing, the phishing lists and registry dates. Short links are NOT looked up (no
+// unshorten.me or similar service): a short link is judged by its own host and what decodes offline.
 const spruce = require('./spruce');
+const { networkChecks } = require('./network');
 
 const MAX_LINKS = 300;
 
@@ -54,6 +55,10 @@ async function analyze(facts, ctx = {}) {
     const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
     const inside = !!senderDomain && (ctx.orgDomains || []).some(d => E.isOwnDomain(senderDomain, d));
     const judged = await judgeLinks(E, facts.links || []);
+    // The network checks (they may flag links, so they come before the link signs are counted).
+    // Allowlisted senders are never moved, so their mail costs no lookups.
+    const net = await networkChecks(E, ctx.trusted ? null : (ctx.intel || null), facts, judged, Object.assign({}, ctx, { orgDomains: ctx.orgDomains || [] }))
+        .catch(() => ({ signals: [], checks: { failed: true } }));
     const allText = `${facts.subject}\n${facts.visibleText}\n${facts.hiddenText}`;
     const safe = (f) => { try { return f() || []; } catch (e) { return []; } };
     const headerSigns = safe(() => E.headerAnomalies(facts.rawForHeaders, mailbox, E.gmailReceiver));
@@ -68,7 +73,8 @@ async function analyze(facts, ctx = {}) {
         ...safe(() => E.layoutSigns(facts.layout)),
         ...safe(() => E.highRiskRequestSigns(facts.visibleText)),
         ...safe(() => E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime)),
-        ...linkSignals(judged)
+        ...linkSignals(judged),
+        ...net.signals
     ];
     const base = { status: ctx.trusted ? 'trusted' : 'clean', reasons: [], move: false };
     const verdict = E.applyEmailSignals(base, signals) || base;
@@ -97,6 +103,7 @@ async function analyze(facts, ctx = {}) {
         signals: signals.map(s => ({ weight: s.weight, kind: s.kind || null, text: s.text })),
         links: judged.filter(j => j.severity).slice(0, 20).map(j => ({ url: j.url.slice(0, 300), finalUrl: String(j.finalUrl || '').slice(0, 300), severity: j.severity, reason: j.reason })),
         linkCount: judged.length,
+        checks: net.checks,
         inside,
         ai
     };

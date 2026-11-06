@@ -8,6 +8,8 @@
 //   senders/{hash}          firstSeen (sender addresses as a 64-bit hash only, as in the extension)
 //   state/{name}            brake, installedAt
 //   events/{auto}           alerts and errors for the dashboard
+//   blobs/{name}, ~{i}      the phishing lists (gzip, in chunks), shared by every instance
+//   cache/{kind|key}        remembered answers shared by every instance (registry dates)
 // Queries use only single-field indexes (processedAt), which Firestore creates by itself; filtering
 // by user, action or campaign is done on the (bounded) result. That is enough for a pilot and a
 // mid-sized district; a large one would add composite indexes (docs/ROADMAP.md).
@@ -57,6 +59,26 @@ class FirestoreStore {
         const q = await this.col('events').where('at', '>=', sinceMs).orderBy('at', 'desc').limit(500).get();
         return q.docs.map(d => d.data());
     }
+    // Files shared by every instance (the phishing lists), split into chunks under Firestore's 1 MiB
+    // document limit: blobs/{name} holds the information, blobs/{name}~{i} the chunks.
+    async putBlob(name, bytes, info) {
+        const buf = Buffer.from(bytes), size = 900 * 1024, n = Math.ceil(buf.length / size) || 1;
+        const old = await this.blobInfo(name);
+        for (let i = 0; i < n; i++) await this.col('blobs').doc(`${safeId(name)}~${i}`).set({ data: buf.subarray(i * size, (i + 1) * size) });
+        await this.col('blobs').doc(safeId(name)).set({ info: Object.assign({}, info, { chunks: n, bytes: buf.length }) });
+        for (let i = n; old && i < (old.chunks || 0); i++) await this.col('blobs').doc(`${safeId(name)}~${i}`).delete();
+    }
+    async blobInfo(name) { const d = await this.col('blobs').doc(safeId(name)).get(); return d.exists ? d.data().info : null; }
+    async getBlob(name) {
+        const info = await this.blobInfo(name);
+        if (!info) return null;
+        const parts = [];
+        for (let i = 0; i < info.chunks; i++) { const d = await this.col('blobs').doc(`${safeId(name)}~${i}`).get(); if (!d.exists) return null; parts.push(Buffer.from(d.data().data)); }
+        return { bytes: Buffer.concat(parts), info };
+    }
+    // Remembered answers shared by every instance (registry dates of domains): cache/{kind|key}.
+    async getCached(kind, key) { const d = await this.col('cache').doc(safeId(`${kind}|${key}`)).get(); const v = d.exists ? d.data() : null; return v && v.exp > Date.now() ? v.value : null; }
+    async setCached(kind, key, value, ttlMs) { await this.col('cache').doc(safeId(`${kind}|${key}`)).set({ value, exp: Date.now() + ttlMs }); }
     async countActions(sinceMs, action) {
         const q = await this.col('records').where('processedAt', '>=', sinceMs).orderBy('processedAt', 'desc').limit(5000).get();
         return q.docs.filter(d => d.data().action === action).length;

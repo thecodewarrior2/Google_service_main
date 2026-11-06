@@ -32,7 +32,11 @@ For emails the policy moved, would have moved, or found suspicious, it keeps:
 For every other email it keeps only a daily count (emails checked) and the message ID, so it doesn't
 judge the same email twice.
 
-It also keeps:
+It also keeps, shared by every instance:
+- **the phishing lists:** gzipped in Firestore, replaced daily;
+- **registry dates of domains:** 30 days; an unknown one, a day.
+
+And:
 - **sender history:** a hash of each sender address, to tell "first email from this sender";
 - **mailbox state:** each watched mailbox's sync position.
 
@@ -47,11 +51,28 @@ It also keeps:
 
 ## What is sent elsewhere
 
-**Nothing.**
-- The engine works offline: link decoding, the checks and the AI model all run inside the service.
-- The only network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM).
-- `docs/ROADMAP.md` lists checks that would need outside services (DNS threat lookups, phishing lists,
-  registry dates). Each would send only domain names and would get its own review first.
+Never the email itself, its text, its recipients or who received it. Only these, for the checks (each
+can be turned off):
+
+| Service | Sent | Kept there | Setting |
+|---|---|---|---|
+| **Cloudflare Security DNS** (`security.cloudflare-dns.com`, and `cloudflare-dns.com` to tell a block from a missing domain) | host names: the sites links point to, and the sender's domain. Never paths, addresses or anything else | Cloudflare's resolver privacy commitments (it doesn't sell or keep identifying query data) | `CLOUDFLARE_THREATS` |
+| **Google Safe Browsing** (Lookup API v4) | link addresses, without the `#…` part, and for one-time links (password resets, sign-in, unsubscribe) without the query string, so tokens never leave | Google's API terms. The Lookup API is for non-commercial use, as a district's own protection is; otherwise use Google's Web Risk API | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` |
+| **Phishing lists** (OpenPhish, Phishing Army, Sefinek on GitHub) | nothing about email: the lists are downloaded once a day and matched in the service | downloads only | `PHISHING_LISTS` |
+| **Domain registries** (RDAP, found through IANA's list) | domain names: up to 3 unfamiliar link domains per email and the sender's domain, each at most once a month for the whole district | public registration records | `SITE_AGE` |
+
+**Not sent:**
+- links to the organization's own domains;
+- anything for allowlisted senders.
+
+**Short links are not looked up** with any outside service.
+
+**List licenses:**
+- OpenPhish community feed: its terms of use.
+- Phishing Army: CC BY-NC 4.0 (non-commercial, as a district's own protection is).
+- Sefinek: MIT.
+
+The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM).
 
 ## What users notice
 
