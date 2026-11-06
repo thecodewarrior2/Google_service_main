@@ -117,6 +117,59 @@ test('release puts a moved email back in the Inbox, records who did it and count
     assert.equal((await svc.mark(`${USER}|m1`, false, 'it.admin@maple-schools.example')).record.falseAlarm, false);
 });
 
+test('a user who moves a moved email back to the Inbox: recorded as released by the user, once, with an alert', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['m1'], inboxed: [], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal((await store.getRecord(`${USER}|m1`)).state, 'moved');
+    // The user drags it out of Spam; an unknown message and one the service never recorded are ignored.
+    gmail.history = { ids: [], inboxed: ['m1', 'other', 'm2'], historyId: '3' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '3' });
+    const rec = await store.getRecord(`${USER}|m1`);
+    assert.equal(rec.state, 'released'); assert.equal(rec.releasedByUser, true); assert.equal(rec.releasedBy, USER); assert.equal(rec.falseAlarm, true);
+    assert.equal(gmail.modified.length, 1, 'never moved again');
+    const ev = (await store.listEvents()).find(e => e.kind === 'user-release');
+    assert.match(ev.text, /back to the Inbox, though the checks flagged it/);
+    // The same change seen again counts once; an admin can still mark it phishing.
+    await svc.handleNotification({ emailAddress: USER, historyId: '3' });
+    const stats = await store.getStats('2000-01-01', '2999-01-01');
+    assert.equal(stats.reduce((a, s) => a + (s.userReleased || 0), 0), 1);
+    assert.equal(stats.reduce((a, s) => a + (s.released || 0), 0), 1);
+    assert.equal((await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example')).error, 'it is already released');
+    assert.equal((await svc.mark(`${USER}|m1`, false, 'it.admin@maple-schools.example')).record.falseAlarm, false);
+});
+
+test('the Inbox label from an admin\'s release, or on a message judged in the same batch, is not a user rescue', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    // m1 arrives and is moved in the same batch that shows its first Inbox label.
+    gmail.history = { ids: ['m1'], inboxed: ['m1'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal((await store.getRecord(`${USER}|m1`)).state, 'moved');
+    // An admin releases it; its notification comes in while the release is still being written.
+    const modify = gmail.modify;
+    gmail.modify = async (...a) => { await modify(...a); gmail.history = { ids: [], inboxed: ['m1'], historyId: '3' }; await svc.handleNotification({ emailAddress: USER, historyId: '3' }); return {}; };
+    const out = await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example');
+    assert.equal(out.record.releasedByUser, false); assert.equal(out.record.releasedBy, 'it.admin@maple-schools.example');
+    const stats = await store.getStats('2000-01-01', '2999-01-01');
+    assert.equal(stats.reduce((a, s) => a + (s.userReleased || 0), 0), 0);
+    assert.equal(stats.reduce((a, s) => a + (s.released || 0), 0), 1);
+});
+
+test('Gmail history: new Inbox messages and Inbox labels added back, asked for as repeated parameters', async () => {
+    const { GmailClient } = require('../src/gmail/client');
+    const urls = [];
+    const fetch = async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => ({ historyId: '9', history: [
+        { messagesAdded: [{ message: { id: 'a' } }] },
+        { labelsAdded: [{ message: { id: 'b' }, labelIds: ['INBOX'] }, { message: { id: 'c' }, labelIds: ['STARRED'] }] }] }) }; };
+    const c = new GmailClient({ tokenFor: async () => 'tok' }, { fetch });
+    assert.deepEqual(await c.addedSince(USER, '5'), { ids: ['a'], inboxed: ['b'], historyId: '9' });
+    const q = new URL(urls[0]).searchParams;
+    assert.deepEqual(q.getAll('historyTypes'), ['messageAdded', 'labelAdded']);
+    assert.equal(q.get('labelId'), 'INBOX'); assert.equal(q.get('startHistoryId'), '5');
+});
+
 test('the brake: too many moves in an hour stops moving until an admin resumes', async () => {
     const msgs = {}; for (let i = 0; i < 5; i++) msgs[`p${i}`] = { raw: PHISH };
     const { store, gmail, svc } = await setup({ MODE: 'enforce', BRAKE_PER_HOUR: '3' }, msgs);

@@ -95,7 +95,8 @@ test('aggregates: campaigns, users and model health from records', () => {
     assert.deepEqual(c.map(x => [x.campaign, x.recipients, x.moved, x.released]), [['c1', 2, 2, 1], ['c2', 1, 0, 0]]);
     assert.equal(c[0].topReason, 'Hidden filler text');
     const h = A.modelHealth(rs, now, 7);
-    assert.deepEqual(h.byTrigger.find(t => t.trigger === 'ai'), { trigger: 'ai', label: 'AI score', moved: 1, released: 1, rate: 1 });
+    assert.deepEqual(h.byTrigger.find(t => t.trigger === 'ai'), { trigger: 'ai', label: 'AI score', moved: 1, released: 1, byUser: 0, rate: 1 });
+    assert.equal(h.userReleased, 0); assert.equal(s.userReleased, 0);
     assert.equal(h.buckets[9].count, 2); assert.equal(h.buckets[6].count, 1);
     assert.deepEqual(A.users(rs, now, 7).map(u => u.user), ['a', 'b', 'c']);
     assert.equal(A.filterRecords(rs, { q: 'C2' }).length, 1);

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.2: Emails a user moves back out of Spam are recorded
+
+- **A user who takes a moved email back to the Inbox** ("Not spam", or dragging it out of Spam) is now
+  seen. Before, the email stayed in the Inbox but the dashboard still showed it as in Spam.
+  - The mailbox history is read for the Inbox label added back as well as for new messages
+    (`historyTypes` messageAdded and labelAdded).
+  - The record becomes "released", marked as by the user (`releasedByUser`), and counts as a false
+    alarm unless an admin marks it phishing.
+  - The service never moves that email again.
+  - An alert says who moved it back. When the rules had flagged it (score 5+), it asks an admin to make
+    sure it's safe, since the user may be about to click it.
+- **An admin's own release** is noted on the record before Gmail is changed, so its Inbox label isn't
+  counted as the user's. A message judged in the same batch as its Inbox label is not a rescue either.
+- **Dashboard:**
+  - The overview splits moved-back emails into by admins and by users, and has a "Moved back by users"
+    figure.
+  - Model health has a "By users" column per trigger.
+  - Messages show "Moved back by user" and "Moved back to the Inbox by the user". When the checks had
+    flagged it (score 5+) and no admin has reviewed it, the box is amber and asks for a look; the
+    verdict line says it counts as a false alarm only because the user moved it back.
+  - In monitor mode, the "Moved" figure also shows how many were moved back, by admins and by users.
+- **Demo and mockup:** one staff member moved the fake storage notice back, with its alert.
+- **Tests:** a user rescue is recorded once with its alert; an admin's release (even when its
+  notification arrives mid-release) and a same-batch label are not rescues; the history request asks
+  for both kinds as repeated parameters.
+
 ## 0.2.1: Cloudflare only for threat lookups (Google Safe Browsing off by default)
 
 - **Google Safe Browsing is off unless `SAFE_BROWSING=true`,** at the maintainer's request, to be on the

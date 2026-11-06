@@ -25,7 +25,8 @@ For emails the policy moved, would have moved, or found suspicious, it keeps:
 - the AI score, and up to three short quotes (160 characters) the model weighed most (`STORE_AI_QUOTES`);
 - Gmail's DMARC, SPF and DKIM results;
 - attachment names;
-- the decision, and who released or marked it.
+- the decision, and who released or marked it (including "moved back by the user" when a user takes a
+  moved email out of Spam themselves).
 
 **Never kept:** email bodies or attachments.
 
@@ -78,6 +79,8 @@ The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Fi
 
 - A moved email lands in Spam with the label `SPRUCE/Moved`. A released one returns to the Inbox with
   `SPRUCE/Released`.
+- A user can always move a moved email back ("Not spam"). The service sees the Inbox label come back,
+  never moves that email again, and shows admins that the user took it back.
 - Monitor mode changes nothing in mailboxes (unless `MONITOR_LABEL` is set).
 - Consider telling staff before the pilot that suspicious mail may be moved to Spam, and who to ask.
 

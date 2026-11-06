@@ -110,8 +110,15 @@ async function buildDemo({ now = Date.now(), cfg }) {
             for (const x of rs) await store.updateRecord(x.key, { state: x.action === 'move' ? 'released' : x.state, releasedBy: 'it.helpdesk@maple-schools.example', releasedAt: x.processedAt + 3 * 3600 * 1000, falseAlarm: true, markedBy: 'it.helpdesk@maple-schools.example' });
         }
     }
+    // Users who moved a moved email back to the Inbox themselves.
+    const all = await store.listRecords({ sinceMs: 0 });
+    const storageMoved = all.filter(x => /greenpath/.test(x.sender.domain) && x.state === 'moved');
+    for (const x of storageMoved.slice(0, 1)) {
+        await store.updateRecord(x.key, { state: 'released', releasedBy: x.user, releasedByUser: true, releasedAt: x.processedAt + 50 * 60 * 1000, falseAlarm: true });
+        store.events.push({ at: x.processedAt + 50 * 60 * 1000, kind: 'user-release', user: x.user, key: x.key, text: `${x.user} moved an email from ${x.sender.address} back to the Inbox, though the checks flagged it (score ${x.score}). Make sure it's safe, or mark it phishing and warn them.` });
+    }
     // Some confirmed right by an admin (phishing indeed).
-    for (const x of (await store.listRecords({ sinceMs: 0 })).filter(x => /storage|micros0ft/.test(x.sender.domain)).slice(0, 20)) await store.updateRecord(x.key, { falseAlarm: false, markedBy: 'it.helpdesk@maple-schools.example' });
+    for (const x of (await store.listRecords({ sinceMs: 0 })).filter(x => /storage|micros0ft/.test(x.sender.domain) && !x.releasedByUser).slice(0, 20)) await store.updateRecord(x.key, { falseAlarm: false, markedBy: 'it.helpdesk@maple-schools.example' });
     // Daily counters: about 40 emails a day per person, fewer on weekends; the move counts come from the records.
     store.stats.clear();
     for (let d = 30; d >= 0; d--) {
@@ -123,7 +130,7 @@ async function buildDemo({ now = Date.now(), cfg }) {
         await store.incStat(day, x.action === 'move' ? 'moved' : x.action === 'would-move' ? 'wouldMove' : 'flagged');
         if (x.state === 'released') await store.incStat(new Date(x.releasedAt).toISOString().slice(0, 10), 'released');
     }
-    store.events = [
+    store.events = [...store.events,
         { at: now - 3 * DAY + 5 * 3600e3, kind: 'release', text: 'it.helpdesk@maple-schools.example released 3 emails from deals@e.gadgetdeals-shop.example (marked as false alarms).' },
         { at: now - 10 * DAY, kind: 'mode', text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }

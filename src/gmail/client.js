@@ -14,7 +14,9 @@ class GmailClient {
     constructor(auth, opts = {}) { this.auth = auth; this.fetch = opts.fetch || fetch; this.labelIds = new Map(); }
 
     async call(user, method, path, { query = {}, body, scope = SCOPES.gmail, base = `${GMAIL}/${encodeURIComponent(user)}` } = {}, tries = 3) {
-        const q = new URLSearchParams(Object.assign({ quotaUser: user }, query));
+        // A value given as a list is sent as the parameter repeated (historyTypes=a&historyTypes=b).
+        const q = new URLSearchParams();
+        for (const [k, v] of Object.entries(Object.assign({ quotaUser: user }, query))) for (const x of [].concat(v)) q.append(k, x);
         for (let i = 0; ; i++) {
             const token = await this.auth.tokenFor(user, scope);
             const res = await this.fetch(`${base}${path}?${q}`, { method, headers: Object.assign({ authorization: `Bearer ${token}` }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
@@ -25,17 +27,22 @@ class GmailClient {
         }
     }
     profile(user) { return this.call(user, 'GET', '/profile'); }
-    // New messages since a history id (messageAdded, Inbox). Throws GoogleApiError 404 when the id is too old.
+    // Since a history id: new messages in the Inbox (ids), and messages that got the Inbox label back
+    // (inboxed: the user moved them out of Spam, or "Not spam"). Throws GoogleApiError 404 when the id is
+    // too old.
     async addedSince(user, startHistoryId) {
-        const ids = new Set();
+        const ids = new Set(), inboxed = new Set();
         let pageToken, lastHistoryId = startHistoryId;
         do {
-            const r = await this.call(user, 'GET', '/history', { query: Object.assign({ startHistoryId, historyTypes: 'messageAdded', labelId: 'INBOX', maxResults: '500' }, pageToken ? { pageToken } : {}) });
-            for (const h of r.history || []) for (const m of h.messagesAdded || []) if (m.message && m.message.id) ids.add(m.message.id);
+            const r = await this.call(user, 'GET', '/history', { query: Object.assign({ startHistoryId, historyTypes: ['messageAdded', 'labelAdded'], labelId: 'INBOX', maxResults: '500' }, pageToken ? { pageToken } : {}) });
+            for (const h of r.history || []) {
+                for (const m of h.messagesAdded || []) if (m.message && m.message.id) ids.add(m.message.id);
+                for (const l of h.labelsAdded || []) if (l.message && l.message.id && (l.labelIds || []).includes('INBOX')) inboxed.add(l.message.id);
+            }
             if (r.historyId) lastHistoryId = r.historyId;
             pageToken = r.nextPageToken;
-        } while (pageToken && ids.size < 2000);
-        return { ids: [...ids], historyId: lastHistoryId };
+        } while (pageToken && ids.size + inboxed.size < 4000);
+        return { ids: [...ids], inboxed: [...inboxed], historyId: lastHistoryId };
     }
     async raw(user, id) {
         const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'raw' } });

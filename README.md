@@ -19,7 +19,9 @@ and who was affected, and lets IT release an email back to the Inbox.
     example when a staff account is compromised.
   - **Allowlisted senders and domains** are never moved.
   - **A brake** stops moving after too many moves in an hour, until an admin resumes.
-  - **Every move can be undone** from the dashboard.
+  - **Every move can be undone** from the dashboard, and by the user: an email the user moves back
+    out of Spam stays in the Inbox. It is recorded as released by the user (a false alarm unless an
+    admin marks it phishing), and an alert asks an admin to check when the checks had flagged it.
 
 ## How it decides
 
@@ -65,14 +67,15 @@ offline.
 ## The dashboard
 
 The dashboard has these pages:
-- **Overview:** emails checked, moved and released; users affected; moves per day by trigger; top
+- **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per day by trigger; top
   reasons; largest campaigns; alerts.
 - **Campaigns** and **Users:** each opens the list of emails behind it.
 - **Messages:** search and filters, opening each email's decision.
   - It shows the signs found with their weights, flagged links, the AI score with what weighed most,
     and the sender check.
   - Buttons: **Release to Inbox**, **Mark false alarm**, **Confirm phishing**.
-- **Model health:** recorded emails by AI score, and how often each kind of move was undone. This is
+- **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
+  often by users themselves). This is
   the number to tune the threshold with.
 - **Settings:** the policy in force, read-only.
 

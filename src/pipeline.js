@@ -64,6 +64,13 @@ class Service {
             throw e;
         }
         const results = [];
+        // Emails the service moved that the user took back to the Inbox. (One judged in this same batch is
+        // skipped: its Inbox label came before the move.)
+        const judgedNow = new Set(added.ids);
+        for (const id of added.inboxed || []) {
+            if (judgedNow.has(id)) continue;
+            try { await this.userReleased(user, id); } catch (e) { this.log.error(`user release ${user} ${id}:`, e); }
+        }
         for (const id of added.ids) {
             try { results.push(await this.processMessage(user, id)); }
             catch (e) {
@@ -151,13 +158,35 @@ class Service {
         if (rec.state !== 'moved') return { error: `it is ${rec.state === 'released' ? 'already released' : 'still in the Inbox'}` };
         const released = await this.gmail.labelId(rec.user, this.cfg.releasedLabel);
         const moved = await this.gmail.labelId(rec.user, this.cfg.movedLabel);
+        // Noted first: the Inbox label this adds comes back in the history, and must not read as the user's.
+        await this.store.updateRecord(key, { releasingAt: this.now() });
         await this.gmail.modify(rec.user, rec.messageId, ['INBOX', released], ['SPAM', moved]);
         const now = this.now();
-        const out = await this.store.updateRecord(key, { state: 'released', releasedBy: by, releasedAt: now, falseAlarm: rec.falseAlarm === null ? true : rec.falseAlarm, markedBy: rec.markedBy || by });
+        const out = await this.store.updateRecord(key, { state: 'released', releasedBy: by, releasedByUser: false, releasedAt: now, falseAlarm: rec.falseAlarm === null ? true : rec.falseAlarm, markedBy: rec.markedBy || by });
         await this.store.incStat(dayOf(now), 'released');
         await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} released an email from ${rec.sender.address} to ${rec.user}.` });
         return { record: out };
     }
+    // The user moved an email the service had put in Spam back to the Inbox (or marked it "Not spam"). The
+    // service never moves it again; the record says so, counts as a false alarm (an admin can still mark
+    // it phishing, which matters: a user who rescued real phishing may be about to click it).
+    async userReleased(user, messageId) {
+        const key = recordKey(user, messageId);
+        const rec = await this.store.getRecord(key);
+        if (!rec || rec.state !== 'moved') return null;
+        const now = this.now();
+        if (rec.releasingAt && now - rec.releasingAt < 10 * 60 * 1000) return null; // an admin's release under way
+        const out = await this.store.updateRecord(key, { state: 'released', releasedBy: user, releasedByUser: true, releasedAt: now,
+            falseAlarm: rec.falseAlarm === null || rec.falseAlarm === undefined ? true : rec.falseAlarm, markedBy: rec.markedBy || null });
+        await this.store.incStat(dayOf(now), 'released');
+        await this.store.incStat(dayOf(now), 'userReleased');
+        const strong = rec.score >= 5 && rec.trigger !== 'ai';
+        await this.store.addEvent({ kind: 'user-release', user, key,
+            text: strong ? `${user} moved an email from ${rec.sender.address} back to the Inbox, though the checks flagged it (score ${rec.score}). Make sure it's safe, or mark it phishing and warn them.`
+                         : `${user} moved an email from ${rec.sender.address} back to the Inbox (counted as a false alarm).` });
+        return out;
+    }
+
     // An admin's judgment of a record: a false alarm (genuine) or right (phishing or spam).
     async mark(key, falseAlarm, by) {
         const rec = await this.store.getRecord(key);

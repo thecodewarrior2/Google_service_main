@@ -5,7 +5,8 @@ Gmail (each watched mailbox)
    │  users.watch → "this mailbox changed" (historyId)
    ▼
 Pub/Sub topic gmail-spruce ──push (OIDC: spruce-invoker)──▶ spruce-worker (Cloud Run, ROLE=worker)
-                                                               │ history.list → new Inbox message ids
+                                                               │ history.list → new Inbox message ids,
+                                                               │   and the Inbox label added back (user rescues)
                                                                │ messages.get (raw)          ┐ as the mailbox's user:
                                                                │ engine: MIME → facts →       │ domain-wide delegation,
                                                                │   extension checks + model  │ token signed by IAM for
@@ -45,6 +46,11 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 - **Lookups that never block mail.** Every lookup has its own time limit and limits on requests at once,
   and answers are remembered (6 hours to a day; registry dates 30 days, shared). One that fails or is
   slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.
+- **The user has the last word.** When a user takes a moved email back to the Inbox ("Not spam", or
+  dragging it out of Spam), the history shows the Inbox label added back. The record becomes "released
+  by the user" and counts as a false alarm until an admin marks it otherwise; the service never moves
+  that email again. An admin's own release is noted on the record first, so it isn't counted as the
+  user's.
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
 

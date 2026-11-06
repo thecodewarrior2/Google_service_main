@@ -39,11 +39,12 @@
         const sum = (f) => st.reduce((a, s) => a + (s[f] || 0), 0);
         const moved = rs.filter(isMove);
         const released = moved.filter(r => r.state === 'released');
+        const userReleased = released.filter(r => r.releasedByUser);
         const users = new Set(rs.filter(r => r.action !== 'flag').map(r => r.user));
         const camps = new Set(moved.map(r => r.campaign));
         return {
             days: n, scanned: sum('scanned'), moved: moved.length, wouldMove: rs.filter(r => r.action === 'would-move').length,
-            flagged: rs.filter(r => r.action === 'flag').length, released: released.length,
+            flagged: rs.filter(r => r.action === 'flag').length, released: released.length, userReleased: userReleased.length,
             falseAlarms: rs.filter(r => r.falseAlarm === true).length, usersAffected: users.size, campaigns: camps.size,
             releaseRate: moved.length ? released.length / moved.length : 0, errors: sum('errors'),
             byTrigger: Object.fromEntries(Object.keys(TRIGGERS).map(k => [k, rs.filter(r => (r.action === 'move' || r.action === 'would-move') && r.trigger === k).length]))
@@ -131,10 +132,12 @@
         const byTrigger = Object.keys(TRIGGERS).map(k => {
             const mv = records.filter(r => r.processedAt >= since && isMove(r) && r.trigger === k);
             const rel = mv.filter(r => r.state === 'released').length;
-            return { trigger: k, label: TRIGGERS[k], moved: mv.length, released: rel, rate: mv.length ? rel / mv.length : 0 };
+            const byUser = mv.filter(r => r.state === 'released' && r.releasedByUser).length;
+            return { trigger: k, label: TRIGGERS[k], moved: mv.length, released: rel, byUser, rate: mv.length ? rel / mv.length : 0 };
         });
         const reviewed = records.filter(r => r.processedAt >= since && r.falseAlarm !== null && r.falseAlarm !== undefined);
-        return { buckets, byTrigger, reviewed: reviewed.length, confirmed: reviewed.filter(r => r.falseAlarm === false).length, falseAlarms: reviewed.filter(r => r.falseAlarm === true).length,
+        const userReleased = records.filter(r => r.processedAt >= since && r.releasedByUser).length;
+        return { buckets, byTrigger, userReleased, reviewed: reviewed.length, confirmed: reviewed.filter(r => r.falseAlarm === false).length, falseAlarms: reviewed.filter(r => r.falseAlarm === true).length,
                  model: (rs[0] && rs[0].ai.model) || '' };
     }
 

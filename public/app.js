@@ -48,6 +48,7 @@
     const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const ACTION = { move: ['Moved to Spam', 'moved'], 'would-move': ['Would be moved', 'would'], flag: ['Suspicious, not moved', 'flag'] };
     const STATE = { moved: ['In Spam', 'moved'], released: ['Released', 'released'], inbox: ['In Inbox', 'inbox'] };
+    const stateOf = (m) => (m.state === 'released' && m.releasedByUser ? ['Moved back by user', 'released'] : STATE[m.state] || [m.state, '']);
     const pill = ([label, cls]) => h('span', { class: `pill ${cls}`, text: label });
 
     function toast(msg) {
@@ -208,13 +209,14 @@
             h('button', { class: 'btn primary', type: 'button', onclick: async () => { await api('/api/resume', { method: 'POST', body: {} }); toast('Moving resumed.'); render(); } }, 'Resume moving')));
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
-        const hero = d.mode === 'enforce' ? { label: 'Moved to Spam', value: sm.moved, note: `${num(sm.released)} released by admins (${pct(sm.releaseRate, 1)})` } : { label: 'Would be moved', value: sm.wouldMove, note: 'monitor mode: recorded only' };
+        const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
+        const hero = d.mode === 'enforce' ? { label: 'Moved to Spam', value: sm.moved, note: movedBack } : { label: 'Would be moved', value: sm.wouldMove, note: 'monitor mode: recorded only' };
         out.push(h('div', { class: 'grid kpis' },
             h('div', { class: 'card kpi hero' }, h('div', { class: 'label', text: hero.label }), h('div', { class: 'value', text: num(hero.value) }), h('div', { class: 'note', text: hero.note })),
             kpi('Emails checked', compact(sm.scanned), `last ${days} days`),
             kpi('Users affected', num(sm.usersAffected), 'had mail moved or recorded'),
             kpi('Campaigns', num(sm.campaigns), 'same sender and subject'),
-            kpi(d.mode === 'enforce' ? 'Recorded, not moved' : 'Moved', num(d.mode === 'enforce' ? sm.wouldMove : sm.moved), d.mode === 'enforce' ? 'monitor phase or brake' : ''),
+            kpi(d.mode === 'enforce' ? 'Recorded, not moved' : 'Moved', num(d.mode === 'enforce' ? sm.wouldMove : sm.moved), d.mode === 'enforce' ? 'monitor phase or brake' : sm.moved ? movedBack : ''),
             kpi('Suspicious only', num(sm.flagged), 'amber, below the move rules')));
         // Trend
         const chartBox = h('div', { class: 'chart' }, stackedColumns(d.trend, TREND_SERIES));
@@ -299,7 +301,7 @@
                 { name: 'AI', num: true, get: m => (m.ai === null ? '–' : pct(m.ai)) },
                 { name: 'Score', num: true, get: m => m.score },
                 { name: 'Action', get: m => pill(ACTION[m.action] || [m.action, '']) },
-                { name: 'Now', get: m => pill(STATE[m.state] || [m.state, '']) }
+                { name: 'Now', get: m => pill(stateOf(m)) }
             ], d.messages, m => go(`#/message?${q({ key: m.key })}`), 'No messages match.'))];
     }
 
@@ -307,20 +309,24 @@
         const key = params.get('key') || '';
         const { message: m } = await api(`/api/message?${q({ key })}`);
         const ai = m.ai && typeof m.ai.probability === 'number' ? m.ai.probability : null;
-        const decisionClass = m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : 'flag';
+        // A user took back an email the checks flagged, and no admin has looked yet: worth a look.
+        const rescueToCheck = m.state === 'released' && m.releasedByUser && !m.markedBy && m.score >= 5 && m.trigger !== 'ai';
+        const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : 'flag';
         const act = async (path, body, done) => { try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } };
         const actions = h('div', { class: 'actions' },
             m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Released: back in the Inbox.') }, 'Release to Inbox') : null,
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
             m.falseAlarm !== false ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false }, 'Confirmed as phishing or spam.') }, 'Confirm phishing') : null);
-        const verdictText = m.falseAlarm === true ? 'An admin marked this a false alarm.' : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
+        const verdictText = m.falseAlarm === true && m.releasedByUser && !m.markedBy ? 'Counted as a false alarm because the user moved it back. No admin has reviewed it yet.'
+            : m.falseAlarm === true ? 'An admin marked this a false alarm.' : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
         return [h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
             h('h1', { text: m.subject || '(subject not stored)' }),
             h('p', { class: 'sub', text: `From ${m.sender.name ? `${m.sender.name} <${m.sender.address}>` : m.sender.address} to ${m.user}, ${when(m.receivedAt)}` }),
             h('div', { class: 'grid detail' },
                 h('div', { class: 'grid' },
                     h('section', { class: 'card' }, h('h2', { text: 'What happened' }),
-                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: m.state === 'released' ? `Released by ${m.releasedBy}` : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : `Because ${m.why}.` })),
+                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Released by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : `Because ${m.why}.` }),
+                            rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }), actions),
                     h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The extension's checks: score ${m.score} (amber at 3, flagged at 5).` }),
                         m.signals.length ? h('ul', { class: 'signals' }, m.signals.slice().sort((a, b) => b.weight - a.weight).map(sg => h('li', {}, h('span', { class: `weight ${sg.weight >= 3 ? 'high' : ''}`, text: String(sg.weight) }), h('span', { text: sg.text })))) : h('div', { class: 'empty', text: 'No signs.' })),
@@ -345,11 +351,11 @@
         const d = await api(`/api/health?days=${days}`);
         const reviewedRate = d.reviewed ? d.falseAlarms / d.reviewed : 0;
         return [h('h1', { text: 'Model health' }), h('p', { class: 'sub', text: 'Whether the move rules are right: how often each kind of move had to be undone. Use this to set the AI threshold.' }),
-            h('div', { class: 'grid kpis' }, kpi('Reviewed by admins', num(d.reviewed), 'released, marked or confirmed'), kpi('Confirmed phishing', num(d.confirmed), ''), kpi('False alarms', num(d.falseAlarms), d.reviewed ? `${pct(reviewedRate, 1)} of reviewed` : ''), kpi('Move threshold', pct(d.threshold), 'AI_MOVE_THRESHOLD')),
+            h('div', { class: 'grid kpis' }, kpi('Moved back by users', num(d.userReleased || 0), 'Not spam, or dragged to the Inbox'), kpi('Reviewed', num(d.reviewed), 'released, marked or confirmed'), kpi('Confirmed phishing', num(d.confirmed), ''), kpi('False alarms', num(d.falseAlarms), d.reviewed ? `${pct(reviewedRate, 1)} of reviewed` : ''), kpi('Move threshold', pct(d.threshold), 'AI_MOVE_THRESHOLD')),
             h('div', { class: 'grid two' },
                 h('section', { class: 'card' }, h('h2', { text: 'Recorded emails by AI score' }), h('div', { class: 'sub', text: 'Each column is a 10-point range of the model\'s score; hover for how many were released.' }), h('div', { class: 'chart' }, histogram(d.buckets, d.threshold))),
                 h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Released ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
-                    dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Released', num: true, get: r => num(r.released) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
+                    dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Released', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
                     h('p', { class: 'small muted', text: `Model: ${d.model || 'unknown'}.` })))];
     }
 

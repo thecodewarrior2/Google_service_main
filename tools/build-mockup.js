@@ -40,7 +40,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
   const D = window.SPRUCE_DEMO_DATA, A = window.SpruceAggregate, ADMIN = 'demo-admin@example.org';
   const DAY = A.DAY;
   const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign, status: r.status, score: r.score,
-    ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, falseAlarm: r.falseAlarm });
+    ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
   const wait = () => new Promise(r => setTimeout(r, 120));
   window.SPRUCE_API = async function (p, opts) {
     await wait();
