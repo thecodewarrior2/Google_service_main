@@ -6,13 +6,15 @@ protect.
 
 ## What it reads
 
-- **Every new message in the Inbox of each watched mailbox** (the pilot unit), through the Gmail API,
+- **Every new message in the Inbox of each watched mailbox** (the pilot group or unit), through the Gmail API,
   within seconds of delivery.
   - The whole raw message is read **in memory only** while it is judged, then discarded.
   - Attachments are listed by name and type only; their contents are not read.
 - **Not read:** sent mail, drafts, mail already in Spam, and mailboxes outside the pilot.
-- **Who is in the pilot unit,** read through the Admin SDK by an admin account with only read access to
-  users.
+- **Who is in the pilot:**
+  - read through the Admin SDK by an admin account with only read access (to groups, or to users for a
+    unit);
+  - only active accounts in the organization's own domains are watched, even if a group lists others.
 
 ## What it keeps (Firestore, in your own project and region)
 
@@ -90,7 +92,7 @@ Domain-wide delegation with `gmail.modify` can read and change every mailbox in 
 deployment keeps it as narrow as Google allows:
 - no key file exists (IAM signs for the service account, and only the Cloud Run identity may ask);
 - only two scopes are granted;
-- only the pilot unit's mailboxes are watched.
+- only the pilot group's (or unit's) mailboxes are watched.
 
 Gmail API use by the service shows in the Workspace audit logs. Removing the delegation entry in the
 Admin console switches all access off at once.

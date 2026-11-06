@@ -1,0 +1,12 @@
+# What Cloud Build uploads when deploy/install.sh builds without Docker.
+node_modules/
+build/
+test/
+tools/
+docs/
+deploy/
+.git/
+*.md
+.env
+*.key.json
+service-account*.json

@@ -374,7 +374,7 @@
                     row('Label on moved mail', d.movedLabel))),
                 h('section', { class: 'card' }, h('h2', { text: 'Scope and records' }), h('dl', { class: 'kv' },
                     row('Organization', d.orgDomains.join(', ') || '–'),
-                    row('Mailboxes watched', `${num(d.watched)}${d.pilotOu ? ` (unit ${d.pilotOu})` : ''}`),
+                    row('Mailboxes watched', `${num(d.watched)}${[...(d.pilotGroups || []).map(g => `group ${g}`), d.pilotOu ? `unit ${d.pilotOu}` : ''].filter(Boolean).map(s => ` (${s})`).join('')}`),
                     row('Records kept', `${d.retentionDays} days`),
                     row('Subjects stored', yes(d.storeSubjects)),
                     row('AI quotes stored', yes(d.storeAiQuotes)),

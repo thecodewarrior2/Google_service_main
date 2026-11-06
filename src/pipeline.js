@@ -200,7 +200,14 @@ class Service {
     // mailboxes that left the pilot.
     async renewWatches() {
         const users = new Set(this.cfg.pilotUsers);
-        if (this.cfg.pilotOu) for (const u of await this.gmail.usersInOu(this.cfg.directoryAdmin, this.cfg.pilotOu)) users.add(u);
+        // A failed directory read stops here, before any watch is stopped by mistake, and says so.
+        try {
+            for (const g of this.cfg.pilotGroups) for (const u of await this.gmail.groupMembers(this.cfg.directoryAdmin, g, this.cfg.orgDomains)) users.add(u);
+            if (this.cfg.pilotOu) for (const u of await this.gmail.usersInOu(this.cfg.directoryAdmin, this.cfg.pilotOu)) users.add(u);
+        } catch (e) {
+            await this.store.addEvent({ kind: 'error', text: `Couldn't read who is in the pilot (${[...this.cfg.pilotGroups, this.cfg.pilotOu].filter(Boolean).join(', ')}) as ${this.cfg.directoryAdmin}: ${String(e.message).slice(0, 200)}. Check the admin's role and the domain-wide delegation scopes.` });
+            throw e;
+        }
         let ok = 0, failed = 0;
         for (const user of users) {
             try {

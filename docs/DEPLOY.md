@@ -1,5 +1,8 @@
 # Deploying
 
+**For a test limited to one security group, use `docs/INSTALL.md`:** `deploy/install.sh` does every step
+below from Cloud Shell. This page explains the pieces, for doing it by hand or changing it.
+
 Everything runs in **your own Google Cloud project**, ideally one created for this service, in your
 Workspace organization. Commands use `gcloud`. Replace the placeholders in capitals:
 - `PROJECT`: the project ID;
@@ -14,10 +17,16 @@ Google's current documentation.
 
 - **Approval:** your district's approval (privacy and legal review, see `docs/PRIVACY.md`) for a
   service that reads staff and student mail.
-- **Pilot unit:** a small organizational unit for the pilot, such as `/Staff/IT Pilot`. Start with
-  the IT team's own mailboxes.
-- **Directory admin:** a dedicated admin account the service acts as to list that unit's users. Give
-  it a custom admin role with only **Users → Read**.
+- **Pilot:** who is watched. Choose one or more:
+  - a **security group** (`PILOT_GROUP`; the easiest to grow and shrink, and groups inside it count);
+  - an organizational unit, such as `/Staff/IT Pilot` (`PILOT_OU`);
+  - a list of addresses (`PILOT_USERS`).
+
+  Start with the IT team's own mailboxes.
+- **Directory admin:** a dedicated admin account the service acts as to read who is in the pilot. Give
+  it a custom admin role with only what it needs, under **Admin API privileges**:
+  - **Groups → Read** for a group;
+  - **Users → Read** for a unit.
 
 ## 1. Project and APIs
 
@@ -109,7 +118,12 @@ Consider an organization policy that forbids key creation for service accounts i
 2. In the Admin console, go to **Security → Access and data control → API controls → Manage
    Domain Wide Delegation → Add new**. Enter that client ID with exactly these scopes:
    - `https://www.googleapis.com/auth/gmail.modify`: read messages, move to Spam, labels, watch;
-   - `https://www.googleapis.com/auth/admin.directory.user.readonly`: list the pilot unit's users.
+   - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`: read the pilot group's
+     members (with `PILOT_GROUP`);
+   - `https://www.googleapis.com/auth/admin.directory.user.readonly`: list the pilot unit's users (with
+     `PILOT_OU`).
+
+   Grant only the directory scope you use.
 
 `gmail.modify` can read and change every mailbox in the domain. That is why the service account has no
 key, only `spruce-run` may sign for it, and the role can be removed at any time to switch everything off.
@@ -141,6 +155,9 @@ invoker:
 ```bash
 gcloud run services add-iam-policy-binding spruce-worker --region=REGION --member=serviceAccount:spruce-invoker@PROJECT.iam.gserviceaccount.com --role=roles/run.invoker
 ```
+
+(`deploy/install.sh` sets `PILOT_GROUP=…` instead of `PILOT_OU`, deploys from one built image with
+`--image`, and passes the settings as a file, `--env-vars-file`.)
 
 **The dashboard** (`ROLE=admin`) runs behind Identity-Aware Proxy.
 - Enable IAP on the Cloud Run service directly (check Google's current "IAP for Cloud Run" steps). Grant
@@ -197,11 +214,12 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
    Add allowlist entries (`ALLOW_DOMAINS`, `ALLOW_ADDRESSES`) for senders you trust.
 3. **Enforce.** Deploy both services with `MODE=enforce`. Keep `BRAKE_PER_HOUR` at a value just above
    your largest normal campaign.
-4. **Widen.** Grow `PILOT_OU` one unit at a time.
+4. **Widen.** Add people to the pilot group, or grow `PILOT_OU` one unit at a time.
 
 ## Switching it off
 
 - **Fast:** deploy the worker with `MODE=monitor`. Nothing is moved from then on.
+- **Stop watching:** `bash deploy/stop.sh` does the next two steps.
 - **Fully:**
   1. Pause the `spruce-renew-watches` job.
   2. Call `POST WORKER_URL/tasks/stop-watches` (with the invoker's token; for example, create a one-off
@@ -216,8 +234,9 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `ROLE` | `all` | `worker` or `admin` on Cloud Run |
 | `MODE` | `monitor` | `enforce` moves to Spam |
 | `ORG_DOMAINS` | none | your own domains, comma-separated |
-| `PILOT_OU` / `PILOT_USERS` | none | which mailboxes are watched (a unit with its sub-units, and/or addresses) |
-| `DIRECTORY_ADMIN` | none | admin the service acts as to list `PILOT_OU` |
+| `PILOT_GROUP` | none | which mailboxes are watched: the members of this group (or groups, separated by semicolons), with the groups inside it; only active accounts in `ORG_DOMAINS` |
+| `PILOT_OU` / `PILOT_USERS` | none | also watched: a unit with its sub-units, and/or addresses |
+| `DIRECTORY_ADMIN` | none | admin the service acts as to read `PILOT_GROUP` or `PILOT_OU` |
 | `DELEGATED_SA` | none | the delegation service account |
 | `PUBSUB_TOPIC` | none | `projects/PROJECT/topics/gmail-spruce` |
 | `PUSH_AUDIENCE`, `PUSH_SERVICE_ACCOUNT` | none | the OIDC tokens the worker accepts (Pub/Sub and Scheduler) |

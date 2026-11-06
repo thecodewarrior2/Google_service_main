@@ -20,7 +20,9 @@ function loadConfig(env = process.env) {
         // 'monitor': record what would be moved, move nothing. 'enforce': move to Spam.
         mode: env.MODE === 'enforce' ? 'enforce' : 'monitor',
         orgDomains: list(env.ORG_DOMAINS),
-        // Which mailboxes are watched: an organizational unit (with its sub-units), and/or a list.
+        // Which mailboxes are watched: the members of a group (a security group is best; groups inside it
+        // count too), an organizational unit (with its sub-units), and/or a list of addresses.
+        pilotGroups: list(env.PILOT_GROUP),
         pilotOu: env.PILOT_OU || '',
         pilotUsers: list(env.PILOT_USERS),
         // What moves an email: the extension's own verdict "flagged" (score 5 or more), and/or the AI
@@ -76,10 +78,10 @@ function configProblems(c) {
     if (!c.delegatedServiceAccount) p.push('DELEGATED_SA is not set (the service account with domain-wide delegation).');
     if (worker) {
         if (c.safeBrowsing && !c.safeBrowsingKey) p.push('SAFE_BROWSING=true needs SAFE_BROWSING_KEY (an API key restricted to the Safe Browsing API, from Secret Manager).');
-        if (!c.pilotOu && !c.pilotUsers.length) p.push('Neither PILOT_OU nor PILOT_USERS is set: no mailbox would be watched.');
+        if (!c.pilotGroups.length && !c.pilotOu && !c.pilotUsers.length) p.push('None of PILOT_GROUP, PILOT_OU or PILOT_USERS is set: no mailbox would be watched.');
         if (!c.pubsubTopic) p.push('PUBSUB_TOPIC is not set.');
         if (!c.pushAudience || !c.pushServiceAccount) p.push('PUSH_AUDIENCE and PUSH_SERVICE_ACCOUNT must be set, so only Pub/Sub and Cloud Scheduler can call the worker.');
-        if (c.pilotOu && !c.directoryAdmin) p.push('DIRECTORY_ADMIN is not set (an admin the service may act as to list the users of PILOT_OU).');
+        if ((c.pilotOu || c.pilotGroups.length) && !c.directoryAdmin) p.push('DIRECTORY_ADMIN is not set (an admin the service may act as to list the members of PILOT_GROUP or the users of PILOT_OU).');
     }
     if (admin) {
         if (!c.iapAudience) p.push('IAP_AUDIENCE is not set: the dashboard must sit behind Identity-Aware Proxy.');

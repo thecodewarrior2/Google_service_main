@@ -17,7 +17,7 @@ const GENUINE = fs.readFileSync(path.join(__dirname, 'fixtures', 'genuine-newsle
 const DAY = 24 * 60 * 60 * 1000;
 
 function fakeGmail(messages) {
-    const g = { modified: [], watched: [], stopped: [], history: { ids: [], historyId: '200' }, ouUsers: [] };
+    const g = { modified: [], watched: [], stopped: [], history: { ids: [], historyId: '200' }, ouUsers: [], groups: {} };
     Object.assign(g, {
         addedSince: async () => g.history,
         profile: async () => ({ historyId: '999' }),
@@ -26,7 +26,8 @@ function fakeGmail(messages) {
         modify: async (user, id, add, remove) => { g.modified.push({ user, id, add, remove }); return {}; },
         watch: async (user) => { g.watched.push(user); return { historyId: '100', expiration: String(Date.now() + 7 * DAY) }; },
         stop: async (user) => { g.stopped.push(user); },
-        usersInOu: async () => g.ouUsers
+        usersInOu: async () => g.ouUsers,
+        groupMembers: async (admin, group) => { if (!g.groups[group]) throw new GoogleApiError(404, 'no such group', 'members'); return g.groups[group]; }
     });
     return g;
 }
@@ -211,6 +212,40 @@ test('watches: pilot unit users are watched, those who leave are stopped; old re
     await store.saveRecord({ key: 'new', processedAt: Date.now(), action: 'move' });
     assert.equal(await svc.purge(), 1);
     assert.deepEqual((await store.listRecords({})).map(r => r.key), ['new']);
+});
+
+test('a security group as the pilot: its members are watched, those removed are stopped; a failed read stops nothing', async () => {
+    const { store, gmail, svc } = await setup({ PILOT_USERS: '', PILOT_GROUP: 'spruce-pilot@maple-schools.example', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
+    gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example', 'b@maple-schools.example'];
+    assert.deepEqual(await svc.renewWatches(), { watched: 2, failed: 0 });
+    assert.deepEqual(gmail.watched, ['a@maple-schools.example', 'b@maple-schools.example']);
+    assert.equal((await svc.handleNotification({ emailAddress: 'outsider@maple-schools.example', historyId: '5' })).ignored, 'not watched');
+    gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example'];
+    await svc.renewWatches();
+    assert.deepEqual(gmail.stopped, ['b@maple-schools.example']);
+    delete gmail.groups['spruce-pilot@maple-schools.example'];
+    await assert.rejects(svc.renewWatches(), /no such group/);
+    assert.equal((await store.getUser('a@maple-schools.example')).watched, true, 'still watched after a failed read');
+    assert.match((await store.listEvents()).find(e => e.kind === 'error').text, /Couldn't read who is in the pilot \(spruce-pilot@maple-schools.example\)/);
+    assert.deepEqual(gmail.stopped, ['b@maple-schools.example']);
+});
+
+test('group members: nested groups included; only active users in the organization\'s own domains', async () => {
+    const { GmailClient } = require('../src/gmail/client');
+    const calls = [];
+    const pages = [
+        { members: [{ email: 'A@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { email: 'sub@maple-schools.example', type: 'GROUP', status: 'ACTIVE' },
+                    { email: 'gone@maple-schools.example', type: 'USER', status: 'SUSPENDED' }], nextPageToken: 'p2' },
+        { members: [{ email: 'friend@elsewhere.example', type: 'USER', status: 'ACTIVE' }, { email: 'b@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { email: 'a@maple-schools.example', type: 'USER', status: 'ACTIVE' }] }];
+    const fetch = async (url, init) => { calls.push({ url, auth: init.headers.authorization }); return { ok: true, status: 200, json: async () => pages[calls.length - 1] }; };
+    const scopes = [];
+    const c = new GmailClient({ tokenFor: async (u, scope) => { scopes.push([u, scope]); return 'tok'; } }, { fetch });
+    assert.deepEqual(await c.groupMembers('admin@maple-schools.example', 'spruce-pilot@maple-schools.example', ['maple-schools.example']), ['a@maple-schools.example', 'b@maple-schools.example']);
+    const u = new URL(calls[0].url);
+    assert.equal(u.pathname, '/admin/directory/v1/groups/spruce-pilot%40maple-schools.example/members');
+    assert.equal(u.searchParams.get('includeDerivedMembership'), 'true');
+    assert.equal(new URL(calls[1].url).searchParams.get('pageToken'), 'p2');
+    assert.deepEqual(scopes[0], ['admin@maple-schools.example', 'https://www.googleapis.com/auth/admin.directory.group.member.readonly']);
 });
 
 test('campaigns: copies of one email to different people group together', () => {

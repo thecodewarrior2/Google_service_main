@@ -5,6 +5,7 @@ const { SCOPES } = require('./auth');
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users';
 const DIRECTORY = 'https://admin.googleapis.com/admin/directory/v1/users';
+const GROUPS = 'https://admin.googleapis.com/admin/directory/v1/groups';
 
 class GoogleApiError extends Error {
     constructor(status, body, what) { super(`${what}: HTTP ${status} ${String(body).slice(0, 300)}`); this.status = status; }
@@ -72,6 +73,25 @@ class GmailClient {
             pageToken = r.nextPageToken;
         } while (pageToken);
         return out;
+    }
+    // Members of a group, with the members of groups inside it (acting as a Workspace admin). Only
+    // active user accounts in the organization's own domains: a group can hold outside addresses and
+    // suspended accounts, and their mail is not ours to read.
+    async groupMembers(admin, groupEmail, orgDomains = []) {
+        const out = new Set();
+        let pageToken;
+        do {
+            const r = await this.call(admin, 'GET', `/${encodeURIComponent(groupEmail)}/members`, { scope: SCOPES.groupMembers, base: GROUPS,
+                query: Object.assign({ includeDerivedMembership: 'true', maxResults: '200' }, pageToken ? { pageToken } : {}) });
+            for (const m of r.members || []) {
+                const email = String(m.email || '').toLowerCase();
+                if (m.type !== 'USER' || (m.status && m.status !== 'ACTIVE') || !email) continue;
+                if (orgDomains.length && !orgDomains.includes(email.split('@')[1])) continue;
+                out.add(email);
+            }
+            pageToken = r.nextPageToken;
+        } while (pageToken);
+        return [...out];
     }
 }
 

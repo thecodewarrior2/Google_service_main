@@ -3,6 +3,7 @@ build
 test
 tools
 docs
+deploy
 .git
 *.md
 .env

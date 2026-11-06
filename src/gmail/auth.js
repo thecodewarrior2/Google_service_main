@@ -8,7 +8,8 @@ const { GoogleAuth } = require('google-auth-library');
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPES = {
     gmail: 'https://www.googleapis.com/auth/gmail.modify',
-    directory: 'https://www.googleapis.com/auth/admin.directory.user.readonly'
+    directory: 'https://www.googleapis.com/auth/admin.directory.user.readonly',
+    groupMembers: 'https://www.googleapis.com/auth/admin.directory.group.member.readonly'
 };
 
 class DelegatedAuth {

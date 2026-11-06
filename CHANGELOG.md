@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.3: Install for a test, limited to a security group
+
+- **`PILOT_GROUP`: watch the members of a security group** (or several, separated by semicolons).
+  - Groups inside it count (`includeDerivedMembership`).
+  - Only active user accounts in `ORG_DOMAINS` are watched: suspended accounts, outside addresses and
+    group entries are skipped.
+  - Members are read daily by `renew-watches`, as `DIRECTORY_ADMIN`, with only the
+    `admin.directory.group.member.readonly` scope. Removed members stop being watched.
+  - `PILOT_OU` and `PILOT_USERS` still work, alone or together with a group.
+- **A failed read of the pilot's members stops nothing.** Before, the error stopped the renewal
+  silently; now the dashboard's Recent activity names what to check.
+- **`deploy/install.sh`: one script, run from Cloud Shell, for the whole Google Cloud side.**
+  - It covers APIs, Firestore, the three service accounts (no keys), Pub/Sub, a single built image for
+    both services, the worker, the dashboard with Identity-Aware Proxy, the push subscription, the daily
+    jobs, and the first run.
+  - It pauses for the domain-wide delegation entry and prints the client ID and exact scopes.
+  - Settings come from `deploy/settings.env`, read as data, never run as shell. Safe to run again: it
+    updates what exists.
+- **`deploy/stop.sh`** stops every watch and pauses the renewal; `install.sh` starts it again.
+- **`docs/INSTALL.md`:** step by step for a test limited to a security group, with the Admin console
+  steps (group, read-only directory admin, delegation), a test email, and troubleshooting.
+- **The Settings page** shows the pilot group.
+- **`tools/release.js`** builds the install zip.
+- **Tests:**
+  - group members are watched, removed members are stopped, and a failed read stops nothing and says so;
+  - the members request covers nested groups, pages, the scope, and skips suspended and outside
+    accounts.
+- **Checked:**
+  - the installer, against a stand-in `gcloud`;
+  - the image, built and run in both roles: the worker refuses an unsigned push, the dashboard refuses
+    anyone without Identity-Aware Proxy.
+
 ## 0.2.2: Emails a user moves back out of Spam are recorded
 
 - **A user who takes a moved email back to the Inbox** ("Not spam", or dragging it out of Spam) is now

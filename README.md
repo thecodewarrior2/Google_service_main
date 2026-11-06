@@ -108,7 +108,10 @@ The last command writes `build/mockup.html`, a single file to share the look and
 
 ## Deploying
 
-See `docs/DEPLOY.md` (step by step) and `docs/PRIVACY.md` (what is read, kept and shown).
+**To test in your own Workspace, limited to one security group:** `docs/INSTALL.md`. A script,
+`deploy/install.sh`, sets everything up from Cloud Shell; `deploy/stop.sh` stops it.
+
+See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
 `docs/ARCHITECTURE.md` explains the pieces.
 
 ## Layout
@@ -125,5 +128,6 @@ See `docs/DEPLOY.md` (step by step) and `docs/PRIVACY.md` (what is read, kept an
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
-| `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js` |
+| `deploy/` | `install.sh` and `stop.sh` (Cloud Shell), `settings.example.env` |
+| `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip) |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |
