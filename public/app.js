@@ -178,7 +178,17 @@
             h('tbody', {}, rows.map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => open(r), onkeydown: (e) => { if (e.key === 'Enter') open(r); } },
                 cols.map(c => h('td', { class: `${c.num ? 'num' : ''} ${c.cls || ''}` }, c.get(r))))))));
     }
-    const go = (hash) => { location.hash = hash; };
+    // Where the page is: the address bar's #/route, or, in the clickable mockup (which runs inside a frame
+    // that keeps the address bar to itself), a route kept in the page with its own Back stack.
+    const MEMORY = !!window.SPRUCE_MEMORY_ROUTER;
+    let memRoute = '#/overview';
+    const memStack = [];
+    const currentHash = () => (MEMORY ? memRoute : location.hash);
+    const go = (hash) => {
+        if (!MEMORY) { location.hash = hash; return; }
+        memStack.push(memRoute); memRoute = hash; render(); window.scrollTo(0, 0);
+    };
+    const back = () => { if (!MEMORY) { history.back(); return; } memRoute = memStack.pop() || '#/overview'; render(); };
     const q = (o) => Object.entries(o).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 
     // --- Views -----------------------------------------------------------------------------------
@@ -304,7 +314,7 @@
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
             m.falseAlarm !== false ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false }, 'Confirmed as phishing or spam.') }, 'Confirm phishing') : null);
         const verdictText = m.falseAlarm === true ? 'An admin marked this a false alarm.' : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
-        return [h('button', { class: 'linkbtn back', type: 'button', onclick: () => history.back() }, '← Back'),
+        return [h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
             h('h1', { text: m.subject || '(subject not stored)' }),
             h('p', { class: 'sub', text: `From ${m.sender.name ? `${m.sender.name} <${m.sender.address}>` : m.sender.address} to ${m.user}, ${when(m.receivedAt)}` }),
             h('div', { class: 'grid detail' },
@@ -369,7 +379,7 @@
     const ROUTES = { overview, campaigns, users, messages, message, health, settings };
     let rendering = 0;
     async function render() {
-        const [path, query] = (location.hash.replace(/^#\/?/, '') || 'overview').split('?');
+        const [path, query] = (currentHash().replace(/^#\/?/, '') || 'overview').split('?');
         const name = ROUTES[path] ? path : 'overview';
         const tab = name === 'message' ? 'messages' : name;
         for (const a of document.querySelectorAll('.tabs a')) { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
@@ -391,7 +401,8 @@
 
     async function boot() {
         for (const b of document.querySelectorAll('.range')) b.addEventListener('click', () => { days = Number(b.dataset.days); try { localStorage.setItem('spruce.days', String(days)); } catch (e) { /* not kept */ } render(); });
-        window.addEventListener('hashchange', render);
+        if (MEMORY) document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href^="#/"]'); if (a) { e.preventDefault(); go(a.getAttribute('href')); } });
+        else window.addEventListener('hashchange', render);
         window.addEventListener('scroll', hideTip, { passive: true });
         try {
             const st = await api('/api/settings');

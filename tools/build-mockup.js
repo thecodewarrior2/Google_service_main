@@ -5,6 +5,9 @@
 // the marks change only the page's own copy of the data.
 //
 //     node tools/build-mockup.js [out.html]
+//
+// Also writes <out>-artifact.html: the same page without its own <html>/<head>/<body> (for publishing as
+// a claude.ai artifact, which adds those).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -72,8 +75,13 @@ const sh=Math.round(d/86400000);if(sh)for(const s of D.stats){s.day=day(Date.par
     html = html.replace('<title>Mail Protection Admin</title>', '<title>Mail Protection Admin</title>\n<meta name="description" content="Clickable mockup of the S.P.R.U.C.E+ Mail Protection admin dashboard, with made-up data.">');
     html = html.replace('<link rel="stylesheet" href="app.css">', `<style>\n${read('public/app.css')}\n</style>`);
     html = html.replace('<script src="app.js" defer></script>', '');
-    html = html.replace('</body>', `<script>window.SPRUCE_DEMO_DATA = ${json};</script>\n<script>${shift}</script>\n<script>\n${read('src/dashboard/aggregate.js')}\n</script>\n<script>${fakeApi}</script>\n<script>\n${read('public/app.js')}\n</script>\n</body>`);
+    html = html.replace('</body>', `<script>window.SPRUCE_MEMORY_ROUTER = true; window.SPRUCE_DEMO_DATA = ${json};</script>\n<script>${shift}</script>\n<script>\n${read('src/dashboard/aggregate.js')}\n</script>\n<script>${fakeApi}</script>\n<script>\n${read('public/app.js')}\n</script>\n</body>`);
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, html);
-    console.log(`Mockup: ${out} (${Math.round(html.length / 1024)} KB, ${data.records.length} made-up records)`);
+    // The artifact version: the head's title, description and style, then the body's content.
+    const head = /<head>([\s\S]*?)<\/head>/.exec(html)[1].replace(/<meta charset="utf-8">\s*/, '').replace(/<meta name="viewport"[^>]*>\s*/, '');
+    const body = /<body>([\s\S]*)<\/body>/.exec(html)[1];
+    const art = out.replace(/\.html$/, '') + '-artifact.html';
+    fs.writeFileSync(art, `${head.trim()}\n${body.trim()}\n`);
+    console.log(`Mockup: ${out} (${Math.round(html.length / 1024)} KB, ${data.records.length} made-up records); artifact version: ${art}`);
 })().catch((e) => { console.error(e); process.exit(1); });
