@@ -163,6 +163,16 @@ IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR")
 
 step "7/9 Worker (reads the pilot mailboxes; only Pub/Sub and Scheduler may call it)"
+# Never behind Identity-Aware Proxy: Pub/Sub and Cloud Scheduler can't sign in through it, so every
+# notification and job would be refused (401) before reaching the service. (Easy to tick by mistake in the
+# console's Security tab; the dashboard, spruce-admin, keeps it.)
+if gcloud run services describe spruce-worker --region="$REGION" --format=json 2>/dev/null | grep -Eq '"run.googleapis.com/iap-enabled": "?true'; then
+    echo "  Identity-Aware Proxy was on for spruce-worker: Gmail's notifications and the daily jobs can't pass it."
+    echo "  Turning it off there (the dashboard keeps it)."
+    gcloud beta run services update spruce-worker --region="$REGION" --no-iap --quiet >/dev/null
+fi
+gcloud run services remove-iam-policy-binding spruce-worker --region="$REGION" --member="serviceAccount:service-$NUMBER@gcp-sa-iap.iam.gserviceaccount.com" \
+    --role=roles/run.invoker --quiet >/dev/null 2>&1 || true
 WF="$(env_file worker ROLE worker "${COMMON[@]}" PILOT_GROUP "$PILOT_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
     PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD")"
 gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
@@ -210,6 +220,19 @@ job() { # name, schedule, path, extra flags...
         --oidc-service-account-email="$SA_INVOKER" --oidc-token-audience="$WORKER_AUD" "$@" --quiet >/dev/null
     echo "  $name ($schedule UTC)"
 }
+# Whether the job's run since $2 (UTC) reached the worker: waits up to a minute, then stops with the reason.
+job_reached_worker() {
+    local name="$1" since="$2" i t code why
+    for i in $(seq 1 12); do
+        sleep 5
+        t="$(gcloud scheduler jobs describe "$name" --location="$REGION" --format='value(lastAttemptTime)' 2>/dev/null || true)"
+        code="$(gcloud scheduler jobs describe "$name" --location="$REGION" --format='value(status.code)' 2>/dev/null || true)"
+        if [[ "$t" > "$since" ]] && { [ -z "$code" ] || [ "$code" = 0 ]; }; then echo "  $name reached the service."; return 0; fi
+    done
+    [[ "$t" > "$since" ]] || { echo "  ($name hasn't run yet; check it later: docs/INSTALL.md, Troubleshooting.)"; return 0; }
+    why="$(gcloud logging read "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"$name\" AND severity>=ERROR" --freshness=10m --limit=1 --format='value[separator=": "](jsonPayload.status,jsonPayload.debugInfo)' 2>/dev/null || true)"
+    fail "$name couldn't reach the worker (${why:-status code $code}). Gmail's notifications can't either, so no mail is checked. A 401 or 403 means a sign-in problem in front of the service: docs/INSTALL.md, Troubleshooting, \"The jobs and notifications are refused\"."
+}
 job spruce-renew-watches "17 3 * * *" /tasks/renew-watches
 job spruce-purge "41 4 * * *" /tasks/purge
 job spruce-sync-feeds "23 5 * * *" /tasks/sync-feeds --attempt-deadline=300s
@@ -221,7 +244,10 @@ else
     gcloud scheduler jobs resume spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
     # Left by deploy/stop.sh: never kept around while the service is on.
     gcloud scheduler jobs delete spruce-stop-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
+    # Checked: the job must reach the worker (a refused job means Gmail's notifications are refused too).
+    STARTED="$(date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%S)"
     gcloud scheduler jobs run spruce-renew-watches --location="$REGION" --quiet
+    job_reached_worker spruce-renew-watches "$STARTED"
 fi
 
 step "Done"

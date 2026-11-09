@@ -167,6 +167,9 @@ gcloud run services add-iam-policy-binding spruce-worker --region=REGION --membe
 **The dashboard** (`ROLE=admin`) runs behind Identity-Aware Proxy.
 - Enable IAP on the Cloud Run service directly (check Google's current "IAP for Cloud Run" steps). Grant
   **IAP-secured Web App User** only to your admin group.
+- **Never on `spruce-worker`.** Pub/Sub and Cloud Scheduler can't sign in through IAP, so every
+  notification and job would be refused (401) before reaching the service. `deploy/install.sh` turns it
+  off there if it finds it on.
 - Set `IAP_AUDIENCE` to the audience the IAP settings show for the service. For IAP on Cloud Run it has
   the form `/projects/PROJECT_NUMBER/locations/REGION/services/spruce-admin`.
 

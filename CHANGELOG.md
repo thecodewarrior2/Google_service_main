@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.11: The installer keeps Identity-Aware Proxy off the worker, and checks the jobs get through
+
+In a pilot, Identity-Aware Proxy got turned on for `spruce-worker` (it belongs on the dashboard,
+`spruce-admin`, only). Pub/Sub and Cloud Scheduler can't sign in through it, so from then on every
+Gmail notification and every group re-read was refused with 401 before reaching the service. That leaves
+nothing in the worker's log. The dashboard showed one mailbox watched and one email checked, the state
+before IAP went on.
+
+- **Step 7/9:** if IAP is on for `spruce-worker`, `install.sh` says so and turns it off there (the
+  dashboard keeps it). It also removes the IAP service agent's permission to call the worker, which only
+  the dashboard needs.
+- **Step 9/9:** after starting the group re-read, `install.sh` waits up to a minute for the job to reach
+  the worker. If the job was refused, it stops with the reason from Cloud Scheduler's log ("UNAUTHENTICATED
+  … 401") and where to look. Before, it reported success whatever happened.
+- **Docs:** `docs/INSTALL.md` (Troubleshooting: "The jobs and notifications are refused", and the IAP
+  steps now say "never on `spruce-worker`"), `docs/DEPLOY.md` (the same).
+- **Checked** against a stand-in `gcloud`: IAP on (turned off, install goes on), job refused (stops with
+  the 401), job not run yet (says so, goes on). The real `gcloud` accepts the commands' options.
+
 ## 0.2.10: No known vulnerabilities in the dependencies
 
 The build printed "6 moderate severity vulnerabilities". `npm audit --omit=dev` now finds none.

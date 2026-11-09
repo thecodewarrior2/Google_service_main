@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.10.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.11.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.10.zip
+   unzip spruce-mail-protection-0.2.11.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.10
+   cd spruce-mail-protection-0.2.11
    ```
 
 4. Make your settings file:
@@ -298,11 +298,28 @@ To turn the alert off, set `BUDGET_ALERT=off`.
   - Or the delegation entry lacks `gmail.modify`.
 - **"Identity-Aware Proxy could not be set up from here" (step 8/9).** The dashboard stays closed to
   everyone until you finish it in the console:
-  1. Open **Cloud Run → spruce-admin → Security** and tick **Identity-Aware Proxy (IAP)**.
+  1. Open **Cloud Run → spruce-admin → Security** and tick **Identity-Aware Proxy (IAP)**. Only on
+     `spruce-admin`, **never on `spruce-worker`**: Gmail's notifications and the daily jobs can't sign
+     in through IAP, so nothing would reach the worker (see "The jobs and notifications are refused").
   2. In **Security → Identity-Aware Proxy**, give the admin group (or each admin) the **IAP-secured Web
      App User** role on `spruce-admin`.
 
   IAP needs the project to be inside your Google Cloud organization.
+- **The jobs and notifications are refused.** `install.sh` stops with "spruce-renew-watches couldn't
+  reach the worker (UNAUTHENTICATED … 401)". Or Settings → Mailboxes watched shows a "Watch renews by"
+  date that doesn't move after a re-read, and an old "Last notification".
+  - **Identity-Aware Proxy is on for `spruce-worker`.** This is the usual cause. `install.sh` turns it
+    off there (from 0.2.11). By hand:
+
+    ```bash
+    gcloud beta run services update spruce-worker --region=REGION --no-iap
+    ```
+
+  - **Otherwise:** `gcloud run services get-iam-policy spruce-worker --region=REGION` must list
+    `spruce-invoker` with `roles/run.invoker`. Run `install.sh` again to add it.
+
+  Gmail's notifications refused meanwhile are delivered again by Pub/Sub (it keeps them 7 days), so the
+  mail in between is checked once they get through.
 - **The dashboard says you are not an admin.** IAP let you in, but you aren't in `ADMIN_GROUP` or
   `ADMIN_EMAILS`.
   - Someone just added to the group gets in within a minute.
