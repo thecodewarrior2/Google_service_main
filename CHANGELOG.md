@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.7: The install goes on when Docker can't upload
+
+In Cloud Shell, `docker push` to Artifact Registry can fail with `dial tcp …:443: connect: connection
+refused` (a Cloud Shell network problem). `install.sh` stopped there, at step 6/9.
+
+- **Cloud Build instead:** when Docker built the image but can't upload it, `install.sh` says so and
+  builds it with Cloud Build, inside Google Cloud. Without Docker, it uses Cloud Build as before.
+- **`spruce-build`:** a new service account with the Cloud Build Service Account role, created in step
+  3/9. Cloud Build runs as it, not as the project's default build account, whose roles differ between
+  projects (in newer organizations it may have none, and builds then fail).
+  - The uploaded source and the build logs go to buckets in this project's `REGION`. In `us-east1`,
+    `us-central1` and `us-west1` they are within Cloud Storage's free 5 GB.
+- **A failed Docker build stops the install.** Before, a failed `docker build` was missed and the
+  install went on to deploy an image that didn't exist.
+- **Settings files with spaces:** `stop.sh`, `rollback.sh` and `upgrade.sh` read `PROJECT = x` and
+  values with trailing spaces the way `install.sh` does. Before, `stop.sh` refused such a file.
+- **Docs:** `docs/INSTALL.md` (Troubleshooting for this error and for Cloud Build; the Costs table),
+  `docs/DEPLOY.md` (the fourth service account).
+- **Checked** against a stand-in `gcloud` and `docker`: push refused (Cloud Build used, deploy goes
+  on), push works (no Cloud Build), no Docker, `docker build` failing (stops), Cloud Build failing
+  (stops with what to do). The real `gcloud` accepts the new build flags.
+
 ## 0.2.6: The installer keeps the bill at zero
 
 Google requires a billing account for Cloud Run, Cloud Scheduler, Cloud Build and Artifact Registry,

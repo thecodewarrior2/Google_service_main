@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.6.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.7.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.6.zip
+   unzip spruce-mail-protection-0.2.7.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.6
+   cd spruce-mail-protection-0.2.7
    ```
 
 4. Make your settings file:
@@ -107,7 +107,9 @@ bash deploy/install.sh
 ```
 
 It goes through nine steps and can be run again at any time. It builds the service from the files you
-uploaded and deploys two Cloud Run services:
+uploaded and deploys two Cloud Run services. (It builds with Docker in Cloud Shell. If Docker can't
+upload the result, which sometimes happens in Cloud Shell, it says so and builds with Cloud Build
+instead, which takes a few minutes.)
 - **`spruce-worker`** reads the pilot mailboxes. Only Gmail's notifications and the daily jobs can
   reach it.
 - **`spruce-admin`** is the dashboard, behind Identity-Aware Proxy.
@@ -232,7 +234,8 @@ amounts change; check its pricing pages):
 | Firestore | 50,000 reads and 20,000 writes a day, 1 GB | a few thousand writes a day |
 | Pub/Sub | 10 GB | well under 1 GB |
 | Cloud Scheduler | 3 jobs | 3 jobs |
-| Cloud Build (only without Docker) | 2,500 build-minutes | a few minutes per install |
+| Cloud Build (only when Docker can't upload) | 2,500 build-minutes | a few minutes per install |
+| Cloud Storage (only with Cloud Build) | 5 GB in `us-east1`, `us-central1` and `us-west1` | about 5 MB per install (the uploaded source) |
 | Artifact Registry | 0.5 GB | 3 builds (the installer deletes older ones) |
 
 The installer keeps it there:
@@ -287,5 +290,10 @@ To turn the alert off, set `BUDGET_ALERT=off`.
   - the delegation entry's second scope (the same ones the pilot group needs).
 - **Firestore: unsupported location.** Pick another `REGION` that Firestore supports (for example
   `us-east1` or `us-central1`), then run `install.sh` again.
-- **Build errors outside Cloud Shell.** Cloud Shell has Docker. Elsewhere, the script builds with Cloud
-  Build, whose service account may need the **Cloud Build Service Account** role in a new project.
+- **Step 6/9: "dial tcp …:443: connect: connection refused"** after `The push refers to repository`.
+  Docker in Cloud Shell couldn't reach Artifact Registry. This is a Cloud Shell network problem, not
+  your settings. The installer goes on with Cloud Build by itself. Versions before 0.2.7 stopped here.
+- **Step 6/9: Cloud Build fails.** Its log is printed above the message.
+  - **A permission error about `spruce-build`** right after it was created: new permissions take a
+    minute or two to apply. Run `install.sh` again.
+  - **A region error:** Cloud Build runs in `REGION`. Pick a region it supports, for example `us-east1`.

@@ -45,7 +45,7 @@ while IFS= read -r line; do
 done < <(grep -E '^[A-Z_]+=' deploy/settings.example.env)
 [ ${#added[@]} -eq 0 ] || echo "New settings in $VERSION, added empty (defaults): ${added[*]}"
 
-get() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$SETTINGS" | tr -d '\r' | tail -1; }
+get() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$SETTINGS" | tr -d '\r' | tail -1 | sed 's/[[:space:]]*$//'; }
 PROJECT="$(get PROJECT)"; REGION="$(get REGION)"
 [ -n "$PROJECT" ] && [ -n "$REGION" ] || fail "PROJECT and REGION must be set in $SETTINGS."
 

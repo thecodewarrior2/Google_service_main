@@ -42,6 +42,7 @@ VERSION="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -1)"
 SA_RUN="spruce-run@$PROJECT.iam.gserviceaccount.com"
 SA_DELEGATE="spruce-delegate@$PROJECT.iam.gserviceaccount.com"
 SA_INVOKER="spruce-invoker@$PROJECT.iam.gserviceaccount.com"
+SA_BUILD="spruce-build@$PROJECT.iam.gserviceaccount.com"
 TOPIC=gmail-spruce
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -89,10 +90,14 @@ mk_sa() { gcloud iam service-accounts describe "$1@$PROJECT.iam.gserviceaccount.
 mk_sa spruce-run "SPRUCE Mail Protection (Cloud Run)"
 mk_sa spruce-delegate "SPRUCE Mail Protection (Gmail delegation)"
 mk_sa spruce-invoker "SPRUCE Mail Protection (Pub/Sub and Scheduler)"
+mk_sa spruce-build "SPRUCE Mail Protection (Cloud Build)"
 retry gcloud iam service-accounts add-iam-policy-binding "$SA_DELEGATE" --member="serviceAccount:$SA_RUN" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/datastore.user --condition=None --quiet >/dev/null
 # Pub/Sub signs its push requests as spruce-invoker (needed explicitly in older projects).
 retry gcloud iam service-accounts add-iam-policy-binding "$SA_INVOKER" --member="serviceAccount:service-$NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
+# What Cloud Build runs as when it builds the image (step 6), instead of a default account whose roles
+# differ from project to project.
+retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_BUILD" --role=roles/cloudbuild.builds.builder --condition=None --quiet >/dev/null
 CLIENT_ID="$(gcloud iam service-accounts describe "$SA_DELEGATE" --format='value(oauth2ClientId)')"
 
 step "4/9 Domain-wide delegation (Admin console; you do this part)"
@@ -126,11 +131,23 @@ else
     echo "  (Couldn't set the image cleanup policy; old builds stay until deleted.)"
 fi
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-$(date -u +%Y%m%d-%H%M%S)"
+# Cloud Build builds and stores the image inside Google Cloud, so it works where Docker can't upload.
+# It runs as spruce-build; its source and logs go to buckets in this project and region.
+cloud_build() {
+    gcloud builds submit --tag "$IMAGE" --region="$REGION" --service-account="projects/$PROJECT/serviceAccounts/$SA_BUILD" \
+        --default-buckets-behavior=regional-user-owned-bucket --quiet . \
+        || fail "Cloud Build couldn't build the image (its log is above). If it says spruce-build lacks a permission, wait a minute (new permissions take a moment to apply) and run this again."
+}
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet >/dev/null
-    docker build -t "$IMAGE" . && docker push "$IMAGE"
+    docker build -t "$IMAGE" . || fail "the image didn't build (the error is above)."
+    if ! docker push "$IMAGE"; then
+        echo "  Docker couldn't upload the image from here (Cloud Shell can't always reach Artifact Registry)."
+        echo "  Building it with Cloud Build instead (a few minutes)."
+        cloud_build
+    fi
 else
-    gcloud builds submit --tag "$IMAGE" --quiet .
+    cloud_build
 fi
 echo "  $IMAGE"
 

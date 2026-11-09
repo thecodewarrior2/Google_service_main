@@ -84,6 +84,11 @@ The project uses three service accounts:
   IAM to sign for it, so **no key file exists**.
 - `spruce-invoker`: what Pub/Sub and Cloud Scheduler use to call the worker.
 
+`deploy/install.sh` adds a fourth, `spruce-build`, with the **Cloud Build Service Account** role
+(`roles/cloudbuild.builds.builder`). Cloud Build runs as it when the installer builds the image there,
+instead of the project's default build account, whose roles differ between projects. It never touches
+mail. (`gcloud run deploy --source`, below, uses the default build account.)
+
 ```bash
 gcloud iam service-accounts create spruce-run --display-name="SPRUCE Mail Protection (Cloud Run)"
 ```

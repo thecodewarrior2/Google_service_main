@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || { echo "No $SETTINGS: run this from the folder you installed from." >&2; exit 1; }
-get() { sed -n "s/^[[:space:]]*$1=[[:space:]]*//p" "$SETTINGS" | tr -d '\r' | tail -1; }
+get() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$SETTINGS" | tr -d '\r' | tail -1 | sed 's/[[:space:]]*$//'; }
 PROJECT="$(get PROJECT)"; REGION="$(get REGION)"
 [ -n "$PROJECT" ] && [ -n "$REGION" ] || { echo "PROJECT and REGION must be set in $SETTINGS." >&2; exit 1; }
 gcloud config set project "$PROJECT" --quiet >/dev/null
