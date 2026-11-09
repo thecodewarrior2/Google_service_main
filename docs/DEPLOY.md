@@ -193,7 +193,7 @@ Keep `MODE` the same on both services. The admin service shows the mode; the wor
 ## 6. Notifications and daily jobs
 
 ```bash
-gcloud pubsub subscriptions create gmail-spruce-push --topic=gmail-spruce --push-endpoint=WORKER_URL/pubsub/push --push-auth-service-account=spruce-invoker@PROJECT.iam.gserviceaccount.com --push-auth-token-audience=WORKER_URL --ack-deadline=120
+gcloud pubsub subscriptions create gmail-spruce-push --topic=gmail-spruce --push-endpoint=WORKER_URL/pubsub/push --push-auth-service-account=spruce-invoker@PROJECT.iam.gserviceaccount.com --push-auth-token-audience=WORKER_URL --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s
 ```
 
 ```bash

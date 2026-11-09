@@ -2,7 +2,8 @@
 // Records in Firestore (native mode), in the organization's own Google Cloud project. Same interface
 // as MemoryStore. Collections:
 //   users/{email}           historyId, watchExpiration, lastNotification
-//   seen/{user|messageId}   messages already analyzed (so a repeated notification does nothing)
+//   seen/{user|messageId}   messages being or already analyzed: state working (claimed by one instance),
+//                           retry (a try failed) or done (also an older document with no state)
 //   records/{key}           see store/memory.js
 //   stats/{yyyy-mm-dd}      counters: scanned, moved, wouldMove, flagged, released, falseAlarms, errors
 //   senders/{hash}          firstSeen (sender addresses as a 64-bit hash only, as in the extension)
@@ -14,6 +15,7 @@
 // by user, action or campaign is done on the (bounded) result. That is enough for a pilot and a
 // mid-sized district; a large one would add composite indexes (docs/ROADMAP.md).
 const { Firestore, FieldValue } = require('@google-cloud/firestore');
+const { movesForward } = require('./history');
 
 const safeId = (s) => String(s).replace(/[/\s]/g, '_').slice(0, 1400);
 
@@ -23,8 +25,36 @@ class FirestoreStore {
     async getUser(email) { const d = await this.col('users').doc(safeId(email)).get(); return d.exists ? d.data() : null; }
     async putUser(email, patch) { await this.col('users').doc(safeId(email)).set(Object.assign({ email }, patch), { merge: true }); }
     async listUsers() { return (await this.col('users').get()).docs.map(d => d.data()); }
-    async seen(user, id) { return (await this.col('seen').doc(safeId(`${user}|${id}`)).get()).exists; }
-    async markSeen(user, id) { await this.col('seen').doc(safeId(`${user}|${id}`)).set({ at: Date.now() }); }
+    // The mailbox's sync position, only ever moved forward (two notifications can finish in any order).
+    async raiseHistoryId(email, historyId) {
+        const ref = this.col('users').doc(safeId(email));
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const cur = d.exists ? d.data().historyId : null;
+            if (!movesForward(historyId, cur)) return cur;
+            t.set(ref, { email, historyId: String(historyId) }, { merge: true });
+            return String(historyId);
+        });
+    }
+    seenRef(user, id) { return this.col('seen').doc(safeId(`${user}|${id}`)); }
+    async seen(user, id) { const d = await this.seenRef(user, id).get(); return d.exists && (d.data().state || 'done') === 'done'; }
+    // One instance at a time judges a message: { tries } when this one has it, { done } when it was
+    // judged, { busy } when another instance took it less than leaseMs ago (a claim older than that was
+    // left by an instance that stopped, and is taken over).
+    async claim(user, id, now, leaseMs) {
+        const ref = this.seenRef(user, id);
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const v = d.exists ? d.data() : null;
+            if (v && (v.state || 'done') === 'done') return { done: true };
+            if (v && v.state === 'working' && now - v.at < leaseMs) return { busy: true };
+            const tries = ((v && v.tries) || 0) + 1;
+            t.set(ref, { at: now, state: 'working', tries });
+            return { tries };
+        });
+    }
+    async unclaim(user, id) { await this.seenRef(user, id).set({ state: 'retry' }, { merge: true }); }
+    async markSeen(user, id, extra = {}) { await this.seenRef(user, id).set(Object.assign({ at: Date.now(), state: 'done' }, extra), { merge: true }); }
     async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(rec); }
     async getRecord(key) { const d = await this.col('records').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
     async updateRecord(key, patch) {

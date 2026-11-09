@@ -1,4 +1,5 @@
 'use strict';
+const { movesForward } = require('./history');
 // Records kept in memory: demo mode and tests. Same interface as the Firestore store.
 //
 // A record (one analyzed email the policy acted on or found suspicious; clean mail is only counted):
@@ -8,16 +9,38 @@
 //     state: 'moved'|'inbox'|'released', releasedBy, releasedAt, falseAlarm, markedBy }
 class MemoryStore {
     constructor() {
-        this.users = new Map(); this.seenIds = new Set(); this.records = new Map(); this.stats = new Map();
+        this.users = new Map(); this.seenIds = new Map(); this.records = new Map(); this.stats = new Map();
         this.senders = new Map(); this.state = new Map(); this.events = [];
     }
     async getUser(email) { return this.users.get(email) || null; }
     async putUser(email, patch) { this.users.set(email, Object.assign({}, this.users.get(email) || { email }, patch)); }
     async listUsers() { return [...this.users.values()]; }
-    async seen(user, id) { return this.seenIds.has(`${user}|${id}`); }
-    async markSeen(user, id) {
-        if (this.seenIds.size > 200000) this.seenIds.delete(this.seenIds.values().next().value);
-        this.seenIds.add(`${user}|${id}`);
+    // The mailbox's sync position, only ever moved forward. Returns the position kept.
+    async raiseHistoryId(email, historyId) {
+        const u = this.users.get(email);
+        if (u && !movesForward(historyId, u.historyId)) return u.historyId;
+        await this.putUser(email, { historyId: String(historyId) });
+        return String(historyId);
+    }
+    // Messages: claimed by one instance while it judges them ({ tries }), or { done } / { busy } (another
+    // instance has had it for less than leaseMs). See store/firestore.js.
+    async seen(user, id) { const v = this.seenIds.get(`${user}|${id}`); return !!v && v.state === 'done'; }
+    async claim(user, id, now, leaseMs) {
+        const k = `${user}|${id}`, v = this.seenIds.get(k);
+        if (v && v.state === 'done') return { done: true };
+        if (v && v.state === 'working' && now - v.at < leaseMs) return { busy: true };
+        const tries = ((v && v.tries) || 0) + 1;
+        this.setSeen(k, { at: now, state: 'working', tries });
+        return { tries };
+    }
+    async unclaim(user, id) { const v = this.seenIds.get(`${user}|${id}`); if (v) v.state = 'retry'; }
+    async markSeen(user, id, extra = {}) {
+        const k = `${user}|${id}`, v = this.seenIds.get(k);
+        this.setSeen(k, Object.assign({ at: Date.now(), state: 'done' }, v && v.tries ? { tries: v.tries } : {}, extra));
+    }
+    setSeen(k, v) {
+        if (!this.seenIds.has(k) && this.seenIds.size > 200000) this.seenIds.delete(this.seenIds.keys().next().value);
+        this.seenIds.set(k, v);
     }
     async saveRecord(rec) { this.records.set(rec.key, JSON.parse(JSON.stringify(rec))); }
     async getRecord(key) { const r = this.records.get(key); return r ? JSON.parse(JSON.stringify(r)) : null; }

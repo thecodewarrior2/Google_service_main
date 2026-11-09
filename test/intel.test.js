@@ -39,8 +39,8 @@ function fakeNet(opts = {}) {
             const entries = JSON.parse(init.body).threatInfo.threatEntries;
             return json({ matches: entries.filter(e => /phish-page/.test(e.url)).map(e => ({ threatType: 'SOCIAL_ENGINEERING', threat: { url: e.url } })) });
         }
-        if (u.host === 'openphish.com') return text(['https://listed-site.example/login', ...Array.from({ length: 30 }, (_, i) => `https://other${i}.example/x`)].join('\n'));
-        if (u.host === 'phishing.army') return text(['# comment', 'phish-domain.example', 'paypal.com', 'storage.googleapis.com', ...Array.from({ length: 30 }, (_, i) => `bad${i}.example`)].join('\n'));
+        if (u.host === 'openphish.com') return text(['https://listed-site.example/login', 'https://www.maple-schools.example/hacked/login.php', ...Array.from({ length: 30 }, (_, i) => `https://other${i}.example/x`)].join('\n'));
+        if (u.host === 'phishing.army') return text(['# comment', 'phish-domain.example', 'maple-schools.example', 'paypal.com', 'storage.googleapis.com', ...Array.from({ length: 30 }, (_, i) => `bad${i}.example`)].join('\n'));
         if (u.host === 'raw.githubusercontent.com') return text(['Scammer@Freemail.example', 'service@paypal.com', ...Array.from({ length: 30 }, (_, i) => `s${i}@scam.example`)].join('\n'));
         if (u.host === 'data.iana.org') return json({ services: [[['example'], ['https://rdap.registry.example/']]] });
         if (u.host === 'rdap.registry.example') {
@@ -165,8 +165,15 @@ test('an email with checks: blocked and listed links are dangerous, the sender\'
     assert.ok(r.signals.some(s => s.kind === 'young-sender-domain' && s.weight === 2));
     // Own organization's links and trusted senders cost no lookups.
     const before = net.calls.length;
-    await analyze(await readMessage(raw('it@maple-schools.example', '<a href="https://portal.maple-schools.example/x">Portal</a>', 'pass')), ctx(intel));
+    const own = await analyze(await readMessage(raw('it@maple-schools.example', '<a href="https://portal.maple-schools.example/x">Portal</a>', 'pass')), ctx(intel));
     assert.ok(!net.calls.slice(before).some(c => /maple-schools/.test(c.url)), 'our own sites are not looked up');
+    // A list that has the organization's whole domain (a hacked school site) flags neither its mail nor
+    // links to its sites; an exact address listed on one of its sites still counts.
+    assert.ok(!own.signals.some(s => s.kind === 'sender-domain-listed' || s.kind === 'dangerous-links'), JSON.stringify(own.signals));
+    assert.equal(own.status, 'clean');
+    const hacked = await analyze(await readMessage(raw('it@maple-schools.example', '<a href="https://www.maple-schools.example/hacked/login.php">Sign in</a>', 'pass')), ctx(intel));
+    assert.equal(hacked.links[0].severity, 'danger'); assert.match(hacked.links[0].reason, /OpenPhish/);
+    assert.equal(await intel.feeds.urlHit('https://portal.maple-schools.example/x'), 'Phishing Army (extended)', 'the list does have the domain');
     const b2 = net.calls.length;
     await analyze(await readMessage(raw('billing@fine.example', '<a href="https://evil-login.example/v">x</a>')), Object.assign(ctx(intel), { trusted: true }));
     assert.equal(net.calls.length, b2, 'trusted senders: no lookups');

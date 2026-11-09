@@ -51,6 +51,21 @@ test('roles: the worker has no dashboard; the admin service has no Pub/Sub or ta
     }
 });
 
+test('Pub/Sub push: a notification with something left to do is asked again later (503); otherwise acknowledged', async () => {
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: 'maple-schools.example' });
+    const store = new MemoryStore();
+    let answer = { processed: 1, results: [] };
+    const service = { handleNotification: async () => answer };
+    const { base, close } = await serve(createApp({ cfg, store, service }));
+    const push = () => fetch(`${base}/pubsub/push`, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: { data: Buffer.from(JSON.stringify({ emailAddress: 'a@maple-schools.example', historyId: '5' })).toString('base64') } }) });
+    try {
+        assert.equal((await push()).status, 204);
+        answer = { processed: 0, results: [], held: true };
+        assert.equal((await push()).status, 503);
+    } finally { await close(); }
+});
+
 test('demo dashboard API: numbers agree with the records; release and marks work; POST needs the dashboard header; no path tricks', async () => {
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
     const { store } = await buildDemo({ cfg, now: Date.now() });

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.8: Fixes from a code review
+
+None of these could move mail in monitor mode, the default. They matter before enforce mode.
+
+- **Your own domains and the phishing lists:** a list that names your organization's whole domain or
+  website (a hacked school site, say) no longer flags staff mail, or links to your own sites. Your
+  domains count only as exact listed links and addresses, as in the extension, and as the Cloudflare
+  check already did. Before, one such listing scored every internal email with a link to your site as
+  dangerous; in enforce mode they would have been moved until the brake stopped it.
+- **A failed check is tried again.** Before, a message was marked as seen before it was judged, and
+  the mailbox's place moved on even when its check failed. So a phish whose move Gmail refused once
+  stayed in the Inbox with no record.
+  - Now a message is marked done only after it is judged and recorded.
+  - Until every message in a notification is done, the mailbox's place stays, and the worker asks
+    Pub/Sub to deliver the notification again (503). `install.sh` gives the subscription a retry delay
+    of 30 s to 10 min.
+  - After 3 failed tries the message is left where it is, with an alert, and the mailbox moves on.
+  - A move whose record then failed: the next try sees the `SPRUCE/Moved` label and writes the record
+    without moving the email again. Before, such an email sat in Spam with no record, and couldn't be
+    released from the dashboard.
+  - Gmail's "slow down" answers (403 `rateLimitExceeded`, `userRateLimitExceeded`) are tried again like
+    429. A message deleted before it was read is skipped without an error.
+- **Two notifications at once:** one instance at a time judges a message (a claim in Firestore; one
+  left by an instance that stopped is taken over after 5 minutes). Before, both judged it, counted it
+  twice, and the mailbox's place could go back. The place now only moves forward.
+- **A user's rescue when history is read again:** told from the label an email arrived with by their
+  history IDs (records keep the message's history ID when read). Before, a rescue in a stretch of
+  history read a second time was ignored.
+- **The brake:** after an admin resumes, the count starts again. Before, the moves that tripped it
+  still counted, so the next move tripped it again, for up to an hour.
+- **A backlog over 4,000 messages** in one mailbox is read in parts. Before, the rest was skipped with
+  no alert.
+- **Not changed:** the allowlist and the "inside the organization" exemption still trust the From
+  address without DMARC. That is a policy decision, left for the maintainer.
+- **Tests:** 44 (10 new), each failing on 0.2.7.
+- **Docs:** `README.md` (lists, brake), `docs/ARCHITECTURE.md` ("Safe to repeat", the user's rescue),
+  `docs/DEPLOY.md` (the subscription's retry delay), `docs/INSTALL.md` (Troubleshooting).
+
 ## 0.2.7: The install goes on when Docker can't upload
 
 In Cloud Shell, `docker push` to Artifact Registry can fail with `dial tcp …:443: connect: connection

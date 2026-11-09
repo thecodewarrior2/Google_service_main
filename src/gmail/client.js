@@ -6,6 +6,7 @@ const { SCOPES } = require('./auth');
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users';
 const DIRECTORY = 'https://admin.googleapis.com/admin/directory/v1/users';
 const GROUPS = 'https://admin.googleapis.com/admin/directory/v1/groups';
+const MAX_LISTED = 4000;   // messages listed from a mailbox's history at a time (the rest, next time)
 
 class GoogleApiError extends Error {
     constructor(status, body, what) { super(`${what}: HTTP ${status} ${String(body).slice(0, 300)}`); this.status = status; }
@@ -23,31 +24,37 @@ class GmailClient {
             const res = await this.fetch(`${base}${path}?${q}`, { method, headers: Object.assign({ authorization: `Bearer ${token}` }, body ? { 'content-type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
             if (res.ok) return res.status === 204 ? null : res.json();
             const text = await res.text();
-            if ((res.status === 429 || res.status >= 500) && i < tries - 1) { await new Promise(r => setTimeout(r, 1000 * 2 ** i + Math.random() * 500)); continue; }
+            // Busy or rate-limited (Gmail answers 403 rateLimitExceeded / userRateLimitExceeded too): wait, try again.
+            const busy = res.status === 429 || res.status >= 500 || (res.status === 403 && /rateLimitExceeded/i.test(text));
+            if (busy && i < tries - 1) { await new Promise(r => setTimeout(r, 1000 * 2 ** i + Math.random() * 500)); continue; }
             throw new GoogleApiError(res.status, text, `${method} ${path}`);
         }
     }
     profile(user) { return this.call(user, 'GET', '/profile'); }
     // Since a history id: new messages in the Inbox (ids), and messages that got the Inbox label back
-    // (inboxed: the user moved them out of Spam, or "Not spam"). Throws GoogleApiError 404 when the id is
-    // too old.
+    // (inboxed: the user moved them out of Spam, or "Not spam"; inboxedAt: the history id of that
+    // change). historyId: where the next call starts. Throws GoogleApiError 404 when the id is too old.
+    // At most about MAX_LISTED messages at a time: past that, historyId is the last change read (not the
+    // mailbox's newest), so the rest is read next time instead of skipped (more: true).
     async addedSince(user, startHistoryId) {
-        const ids = new Set(), inboxed = new Set();
-        let pageToken, lastHistoryId = startHistoryId;
+        const ids = new Set(), inboxed = new Set(), inboxedAt = {};
+        let pageToken, lastHistoryId = startHistoryId, lastRead = null;
         do {
             const r = await this.call(user, 'GET', '/history', { query: Object.assign({ startHistoryId, historyTypes: ['messageAdded', 'labelAdded'], labelId: 'INBOX', maxResults: '500' }, pageToken ? { pageToken } : {}) });
             for (const h of r.history || []) {
                 for (const m of h.messagesAdded || []) if (m.message && m.message.id) ids.add(m.message.id);
-                for (const l of h.labelsAdded || []) if (l.message && l.message.id && (l.labelIds || []).includes('INBOX')) inboxed.add(l.message.id);
+                for (const l of h.labelsAdded || []) if (l.message && l.message.id && (l.labelIds || []).includes('INBOX')) { inboxed.add(l.message.id); if (h.id) inboxedAt[l.message.id] = String(h.id); }
+                if (h.id) lastRead = String(h.id);
             }
             if (r.historyId) lastHistoryId = r.historyId;
             pageToken = r.nextPageToken;
-        } while (pageToken && ids.size + inboxed.size < 4000);
-        return { ids: [...ids], inboxed: [...inboxed], historyId: lastHistoryId };
+        } while (pageToken && ids.size + inboxed.size < MAX_LISTED);
+        const more = !!pageToken;
+        return Object.assign({ ids: [...ids], inboxed: [...inboxed], inboxedAt, historyId: more ? (lastRead || startHistoryId) : lastHistoryId }, more ? { more } : {});
     }
     async raw(user, id) {
         const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'raw' } });
-        return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], internalDate: Number(r.internalDate) || null, raw: Buffer.from(String(r.raw || ''), 'base64url') };
+        return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], historyId: r.historyId ? String(r.historyId) : null, internalDate: Number(r.internalDate) || null, raw: Buffer.from(String(r.raw || ''), 'base64url') };
     }
     modify(user, id, add = [], remove = []) { return this.call(user, 'POST', `/messages/${encodeURIComponent(id)}/modify`, { body: { addLabelIds: add, removeLabelIds: remove } }); }
     // The id of a label of ours ("SPRUCE/Moved"), made if the mailbox doesn't have it yet.

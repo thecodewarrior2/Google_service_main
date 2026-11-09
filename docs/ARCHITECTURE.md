@@ -41,16 +41,28 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   an email the same way. A fix in the extension reaches the service with `tools/sync-engine.js`.
 - **No key files.** `spruce-run` asks IAM to sign each delegation token for `spruce-delegate`
   (`iamcredentials.signJwt`). Tokens last an hour and are kept in memory.
-- **Safe to repeat.** Pub/Sub delivers at least once. Each message ID is marked as seen before it's
-  judged, and a mailbox's sync position only moves forward.
+- **Safe to repeat.** Pub/Sub delivers at least once, and Gmail often sends several notifications for
+  one email.
+  - **One instance at a time judges a message.** It claims the message ID in Firestore first, and marks
+    it done afterwards. A claim left by an instance that stopped is taken over after 5 minutes.
+  - **A failed check is tried again, 3 times in all.** Until every message in a mailbox's notification is
+    done, the mailbox's sync position stays where it was. The worker answers Pub/Sub with 503, and Pub/Sub
+    delivers the notification again 30 s to 10 min later. After the third failed try the message is
+    left where it is, with an alert, and the mailbox moves on.
+  - **A move whose record failed isn't lost.** The next try sees the service's own `SPRUCE/Moved`
+    label and writes the record without moving the email again.
+  - **The sync position only moves forward,** whichever notification finishes last. History is read
+    4,000 messages at a time; a longer backlog is read in parts, never skipped.
 - **Lookups that never block mail.** Every lookup has its own time limit and limits on requests at once,
   and answers are remembered (6 hours to a day; registry dates 30 days, shared). One that fails or is
   slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.
 - **The user has the last word.** When a user takes a moved email back to the Inbox ("Not spam", or
-  dragging it out of Spam), the history shows the Inbox label added back. The record becomes "released
-  by the user" and counts as a false alarm until an admin marks it otherwise; the service never moves
-  that email again. An admin's own release is noted on the record first, so it isn't counted as the
-  user's.
+  dragging it out of Spam), the history shows the Inbox label added back.
+  - The record becomes "released by the user" and counts as a false alarm until an admin marks it
+    otherwise. The service never moves that email again.
+  - Only a label added after the service read the email counts. The label an email arrived with can show
+    in the same history, and the two are told apart by their history IDs.
+  - An admin's own release is noted on the record first, so it isn't counted as the user's.
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
 

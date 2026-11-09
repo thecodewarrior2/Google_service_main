@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.7.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.8.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.7.zip
+   unzip spruce-mail-protection-0.2.8.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.7
+   cd spruce-mail-protection-0.2.8
    ```
 
 4. Make your settings file:
@@ -270,6 +270,9 @@ To turn the alert off, set `BUDGET_ALERT=off`.
   3. the delegation entry's second scope.
 
   Then rerun the job from step 7.
+- **Recent activity: "A message couldn't be checked (try 1 of 3 …)".** A Gmail or Firestore error. It is
+  tried again within a few minutes, up to 3 times; nothing needs doing unless the same message ends in
+  "after 3 tries", which is then left where it is (the reason follows the colon).
 - **Recent activity: "Couldn't watch …'s mailbox".**
   - That account may have no Gmail (no license, or Gmail turned off for it).
   - Or the delegation entry lacks `gmail.modify`.

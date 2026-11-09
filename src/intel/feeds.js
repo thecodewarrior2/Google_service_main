@@ -101,14 +101,15 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     }
 
     // The list that has this link (its exact address, or its site), or null. Never a whole site that is
-    // shared hosting (a cloud-storage page is matched by its exact address only).
-    async function urlHit(url) {
+    // shared hosting (a cloud-storage page is matched by its exact address only), nor one of the
+    // organization's own (exactOnly: a hacked school site listed whole must not flag every staff email).
+    async function urlHit(url, { exactOnly = false } = {}) {
         const s = await ready();
         if (!s) return null;
         const n = E.normalizeFeedUrl(url);
         if (n && s.url.get(n)) return s.url.get(n);
         const host = hostOf(url);
-        if (!host) return null;
+        if (!host || exactOnly) return null;
         if (!E.cloudStoragePage(url)) for (const scheme of ['https://', 'http://']) { const hit = s.url.get(scheme + host); if (hit) return hit; }
         return domainHitIn(s, host);
     }

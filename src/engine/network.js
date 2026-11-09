@@ -3,7 +3,9 @@
 //   - Cloudflare Security DNS: link hosts (where the link goes, and its own host) and the sender's domain;
 //   - Google Safe Browsing, only when turned on (SAFE_BROWSING=true; off by default): the links (no "#…";
 //     one-time links without their query);
-//   - the phishing lists: link addresses and sites, the sender's domain and address;
+//   - the phishing lists: link addresses and sites, the sender's domain and address. The organization's
+//     own domains are matched by exact address only, never as a whole site or domain (as the
+//     extension's senderDomainShared: one listing of a hacked school site must not flag all staff mail);
 //   - registry dates: up to LINK_AGE_LOOKUPS unfamiliar link domains, and the sender's domain.
 // A link any of them flags becomes "dangerous" (the extension's dangerous-links weight then counts
 // it); the sender's findings and the site ages become signs of their own. A lookup that fails or
@@ -38,6 +40,7 @@ async function networkChecks(E, intel, facts, judged, ctx) {
     }
     const ageDomains = [...signInOf.keys()].sort((a, b) => signInOf.get(b) - signInOf.get(a)).slice(0, LINK_AGE_LOOKUPS);
     const senderReg = senderDomain && !personal && !ours(senderDomain) ? E.registrableDomain(senderDomain) : '';
+    const listHit = (u) => intel.feeds.urlHit(u, { exactOnly: ours(hostOf(u)) }).catch(() => null);
 
     const [hostResults, urlResults, ages, senderAge, senderOnList, senderDomainListed, linkListed] = await Promise.all([
         intel.threats ? intel.threats.checkHosts(hosts) : new Map(),
@@ -45,8 +48,8 @@ async function networkChecks(E, intel, facts, judged, ctx) {
         intel.rdap ? Promise.all(ageDomains.map(async d => ({ domain: d, days: await intel.rdap.ageDays(d).catch(() => null), signIn: signInOf.get(d) }))) : [],
         intel.rdap && senderReg ? intel.rdap.ageDays(senderReg).catch(() => null) : null,
         intel.feeds && facts.senderAddress ? intel.feeds.addressHit(facts.senderAddress).catch(() => null) : null,
-        intel.feeds && senderDomain && !personal ? intel.feeds.domainHit(senderDomain).catch(() => null) : null,
-        intel.feeds ? Promise.all(web.map(async j => [j, (await intel.feeds.urlHit(j.finalUrl || j.url).catch(() => null)) || (j.finalUrl && j.finalUrl !== j.url ? await intel.feeds.urlHit(j.url).catch(() => null) : null)])) : []
+        intel.feeds && senderDomain && !personal && !ours(senderDomain) ? intel.feeds.domainHit(senderDomain).catch(() => null) : null,
+        intel.feeds ? Promise.all(web.map(async j => [j, (await listHit(j.finalUrl || j.url)) || (j.finalUrl && j.finalUrl !== j.url ? await listHit(j.url) : null)])) : []
     ]);
     checks.lists = !!intel.feeds;
 

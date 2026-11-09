@@ -18,7 +18,8 @@ and who was affected, and lets IT release an email back to the Inbox.
   - **The AI score alone never moves mail from inside the organization.** The rules still can, for
     example when a staff account is compromised.
   - **Allowlisted senders and domains** are never moved.
-  - **A brake** stops moving after too many moves in an hour, until an admin resumes.
+  - **A brake** stops moving after too many moves in an hour, until an admin resumes (the count then
+    starts again).
   - **Every move can be undone** from the dashboard, and by the user: an email the user moves back
     out of Spam stays in the Inbox. It is recorded as released by the user (a false alarm unless an
     admin marks it phishing), and an alert asks an admin to check when the checks had flagged it.
@@ -57,7 +58,7 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 |---|---|---|
 | **Cloudflare Security DNS** | host names of link sites and the sender's domain | a blocked link is dangerous; a blocked or nonexistent sender domain is a sign |
 | **Google Safe Browsing**: off for now (`SAFE_BROWSING=true` and a key turn it on) | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
-| **Phishing lists** (OpenPhish, Phishing Army, Sefinek) | nothing: downloaded once a day, matched in the service | listed links are dangerous; a listed sender address or domain is a sign |
+| **Phishing lists** (OpenPhish, Phishing Army, Sefinek) | nothing: downloaded once a day, matched in the service | listed links are dangerous; a listed sender address or domain is a sign. Your own domains count only as exact listed links and addresses, never as a whole site or domain |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
 
 A lookup that fails leaves an email "not checked", never "safe". Short links are **not** looked up:

@@ -21,7 +21,7 @@ function fakeGmail(messages) {
     Object.assign(g, {
         addedSince: async () => g.history,
         profile: async () => ({ historyId: '999' }),
-        raw: async (user, id) => { const m = messages[id]; if (!m) throw new GoogleApiError(404, 'gone', 'get'); return { id, threadId: `t${id}`, labelIds: m.labels || ['INBOX', 'UNREAD'], internalDate: 1, raw: m.raw }; },
+        raw: async (user, id) => { const m = messages[id]; if (!m) throw new GoogleApiError(404, 'gone', 'get'); return { id, threadId: `t${id}`, labelIds: m.labels || ['INBOX', 'UNREAD'], historyId: m.historyId || null, internalDate: 1, raw: m.raw }; },
         labelId: async (u, name) => `L_${name}`,
         modify: async (user, id, add, remove) => { g.modified.push({ user, id, add, remove }); return {}; },
         watch: async (user) => { g.watched.push(user); return { historyId: '100', expiration: String(Date.now() + 7 * DAY) }; },
@@ -162,13 +162,160 @@ test('Gmail history: new Inbox messages and Inbox labels added back, asked for a
     const { GmailClient } = require('../src/gmail/client');
     const urls = [];
     const fetch = async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => ({ historyId: '9', history: [
-        { messagesAdded: [{ message: { id: 'a' } }] },
-        { labelsAdded: [{ message: { id: 'b' }, labelIds: ['INBOX'] }, { message: { id: 'c' }, labelIds: ['STARRED'] }] }] }) }; };
+        { id: '6', messagesAdded: [{ message: { id: 'a' } }] },
+        { id: '7', labelsAdded: [{ message: { id: 'b' }, labelIds: ['INBOX'] }, { message: { id: 'c' }, labelIds: ['STARRED'] }] }] }) }; };
     const c = new GmailClient({ tokenFor: async () => 'tok' }, { fetch });
-    assert.deepEqual(await c.addedSince(USER, '5'), { ids: ['a'], inboxed: ['b'], historyId: '9' });
+    assert.deepEqual(await c.addedSince(USER, '5'), { ids: ['a'], inboxed: ['b'], inboxedAt: { b: '7' }, historyId: '9' });
     const q = new URL(urls[0]).searchParams;
     assert.deepEqual(q.getAll('historyTypes'), ['messageAdded', 'labelAdded']);
     assert.equal(q.get('labelId'), 'INBOX'); assert.equal(q.get('startHistoryId'), '5');
+});
+
+test('Gmail history past 4,000 messages: the rest is read next time, never skipped', async () => {
+    const { GmailClient } = require('../src/gmail/client');
+    // 10 pages of 500 new messages; the mailbox's newest history id is 99999.
+    const fetch = async (url) => {
+        const page = Number(new URL(url).searchParams.get('pageToken') || 0);
+        const history = Array.from({ length: 500 }, (_, i) => ({ id: String(1000 + page * 500 + i), messagesAdded: [{ message: { id: `p${page}m${i}` } }] }));
+        return { ok: true, status: 200, json: async () => Object.assign({ historyId: '99999', history }, page < 9 ? { nextPageToken: String(page + 1) } : {}) };
+    };
+    const c = new GmailClient({ tokenFor: async () => 'tok' }, { fetch });
+    const out = await c.addedSince(USER, '999');
+    assert.equal(out.ids.length, 4000);
+    assert.equal(out.more, true);
+    assert.equal(out.historyId, '4999', 'the last change read, not the newest: the next 1,000 are read next time');
+});
+
+test('Gmail asking to slow down (403 rate limit) is tried again; another 403 is not', async () => {
+    const { GmailClient } = require('../src/gmail/client');
+    let n = 0;
+    const answers = [{ status: 403, body: { error: { errors: [{ reason: 'userRateLimitExceeded' }] } } }, { status: 200, body: { id: 'm1' } }];
+    const fetch = async () => { const a = answers[Math.min(n++, answers.length - 1)]; return { ok: a.status < 400, status: a.status, json: async () => a.body, text: async () => JSON.stringify(a.body) }; };
+    const c = new GmailClient({ tokenFor: async () => 'tok' }, { fetch });
+    assert.deepEqual(await c.modify(USER, 'm1', ['SPAM'], ['INBOX']), { id: 'm1' });
+    assert.equal(n, 2);
+    n = 0;
+    const denied = new GmailClient({ tokenFor: async () => 'tok' }, { fetch: async () => { n++; return { ok: false, status: 403, json: async () => ({}), text: async () => '{"error":{"errors":[{"reason":"forbidden"}]}}' }; } });
+    await assert.rejects(denied.modify(USER, 'm1', [], []), (e) => e.status === 403);
+    assert.equal(n, 1);
+});
+
+test('a message whose check fails is tried again, and the mailbox\'s place is kept until then', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    const modify = gmail.modify;
+    let failures = 1;
+    gmail.modify = async (...a) => { if (failures-- > 0) throw new GoogleApiError(403, 'forbidden', 'modify'); return modify(...a); };
+    gmail.history = { ids: ['m1', 'm2'], historyId: '2' };
+    const first = await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(first.held, true);
+    assert.equal(gmail.modified.length, 0);
+    assert.equal((await store.getUser(USER)).historyId, '1', 'the place is kept, so m1 is listed again');
+    assert.match((await store.listEvents()).find(e => e.kind === 'error').text, /try 1 of 3; it is tried again in a minute/);
+    // The next change: m1 is moved and recorded; m2 (done the first time) isn't judged again.
+    gmail.history = { ids: ['m1', 'm2'], historyId: '3' };
+    const second = await svc.handleNotification({ emailAddress: USER, historyId: '3' });
+    assert.equal(second.held, undefined);
+    assert.equal(gmail.modified.length, 1);
+    assert.equal((await store.getRecord(`${USER}|m1`)).state, 'moved');
+    assert.equal((await store.getUser(USER)).historyId, '3');
+    const stats = await store.getStats('2000-01-01', '2999-01-01');
+    assert.equal(stats.reduce((a, s) => a + (s.scanned || 0), 0), 3, 'm1 twice (each try), m2 once');
+    assert.equal(stats.reduce((a, s) => a + (s.moved || 0), 0), 1);
+});
+
+test('a message that keeps failing is left after 3 tries, so the mailbox moves on', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    await store.putUser(USER, { historyId: '1' });
+    gmail.modify = async () => { throw new GoogleApiError(400, 'bad request', 'modify'); };
+    for (const h of ['2', '3', '4']) { gmail.history = { ids: ['m1'], historyId: h }; await svc.handleNotification({ emailAddress: USER, historyId: h }); }
+    assert.equal((await store.getUser(USER)).historyId, '4', 'given up on the third try: the place moves on');
+    assert.ok((await store.listEvents()).some(e => /after 3 tries and was left where it is/.test(e.text)));
+    gmail.history = { ids: ['m1'], historyId: '5' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '5' });
+    assert.equal((await store.listEvents()).filter(e => e.kind === 'error').length, 3, 'not tried a fourth time');
+});
+
+test('moved, then the record failed: the next try writes the record without moving it again', async () => {
+    const msgs = { m1: { raw: PHISH } };
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' }, msgs);
+    await store.putUser(USER, { historyId: '1' });
+    // Gmail's copy follows the move (the service's own label, out of the Inbox).
+    const modify = gmail.modify;
+    gmail.modify = async (u, id, add, remove) => { msgs[id].labels = add.concat(['UNREAD']); return modify(u, id, add, remove); };
+    const save = store.saveRecord.bind(store);
+    let failures = 1;
+    store.saveRecord = async (rec) => { if (failures-- > 0) throw new Error('Firestore unavailable'); return save(rec); };
+    gmail.history = { ids: ['m1'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(await store.getRecord(`${USER}|m1`), null);
+    gmail.history = { ids: ['m1'], historyId: '3' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '3' });
+    const rec = await store.getRecord(`${USER}|m1`);
+    assert.equal(rec.state, 'moved'); assert.equal(rec.action, 'move'); assert.match(rec.why, /moved by an earlier try/);
+    assert.equal(gmail.modified.length, 1, 'moved once');
+    assert.equal((await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example')).record.state, 'released', 'and it can be released');
+});
+
+test('two notifications at once: each message is judged once, and the mailbox\'s place never goes back', async () => {
+    const msgs = { m1: { raw: PHISH }, m2: { raw: GENUINE } };
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' }, msgs);
+    await store.putUser(USER, { historyId: '100' });
+    const raw = gmail.raw;
+    gmail.raw = async (...a) => { await new Promise(r => setTimeout(r, 20)); return raw(...a); };
+    gmail.addedSince = async (u, from) => ({ ids: ['m1', 'm2'], historyId: from === '100' ? '210' : '205' });
+    const [a, b] = await Promise.all([svc.handleNotification({ emailAddress: USER, historyId: '210' }), svc.handleNotification({ emailAddress: USER, historyId: '205' })]);
+    assert.equal(gmail.modified.length, 1, 'moved once');
+    const stats = await store.getStats('2000-01-01', '2999-01-01');
+    assert.equal(stats.reduce((x, s) => x + (s.scanned || 0), 0), 2, 'each counted once');
+    assert.ok(!a.held && !b.held, 'each waited for the message the other had');
+    assert.equal((await store.getUser(USER)).historyId, '210', 'the newer place, whichever finished last');
+    assert.equal(await store.raiseHistoryId(USER, '205'), '210', 'an older position never replaces a newer one');
+    assert.equal((await store.getUser(USER)).historyId, '210');
+});
+
+test('a message claimed by an instance that stopped: the place is kept, and it is taken over once the claim runs out', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' });
+    svc.waitForOthersMs = 300;
+    await store.putUser(USER, { historyId: '1' });
+    const t0 = Date.now();
+    assert.equal((await store.claim(USER, 'm1', t0, 5 * 60 * 1000)).tries, 1, 'another instance took it, then stopped');
+    gmail.history = { ids: ['m1'], historyId: '2' };
+    assert.equal((await svc.handleNotification({ emailAddress: USER, historyId: '2' })).held, true);
+    assert.equal(gmail.modified.length, 0);
+    assert.equal((await store.getUser(USER)).historyId, '1');
+    svc.now = () => t0 + 6 * 60 * 1000;
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal(gmail.modified.length, 1, 'taken over after 5 minutes');
+    assert.equal((await store.getUser(USER)).historyId, '2');
+});
+
+test('a user\'s rescue is told from the label an email arrived with by their order, even when history is read again', async () => {
+    const msgs = { m1: { raw: PHISH, historyId: '50' } };
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' }, msgs);
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['m1'], inboxed: ['m1'], inboxedAt: { m1: '45' }, historyId: '55' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '55' });
+    assert.equal((await store.getRecord(`${USER}|m1`)).state, 'moved');
+    // The same part of history read again (the arrival's label, before the service read it): not a rescue.
+    await store.putUser(USER, { historyId: '1' });
+    await svc.handleNotification({ emailAddress: USER, historyId: '55' });
+    assert.equal((await store.getRecord(`${USER}|m1`)).state, 'moved');
+    // The user takes it back; the history read again from before its arrival lists it as new too.
+    gmail.history = { ids: ['m1'], inboxed: ['m1'], inboxedAt: { m1: '60' }, historyId: '61' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '61' });
+    const rec = await store.getRecord(`${USER}|m1`);
+    assert.equal(rec.state, 'released'); assert.equal(rec.releasedByUser, true);
+    assert.equal(gmail.modified.length, 1, 'never moved again');
+});
+
+test('a message deleted before it was read is skipped without an error', async () => {
+    const { store, gmail, svc } = await setup({ MODE: 'enforce' }, {});
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: ['gone'], historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal((await store.listEvents()).filter(e => e.kind === 'error').length, 0);
+    assert.equal((await store.getUser(USER)).historyId, '2');
 });
 
 test('the brake: too many moves in an hour stops moving until an admin resumes', async () => {
@@ -183,6 +330,13 @@ test('the brake: too many moves in an hour stops moving until an admin resumes',
     assert.ok(await store.getState('brake'));
     assert.ok((await store.listEvents()).some(e => e.kind === 'brake'));
     await svc.resume('it.admin@maple-schools.example');
+    assert.equal(await store.getState('brake'), null);
+    // After the resume the count starts again: the next moves go through.
+    const more = {}; for (let i = 0; i < 2; i++) { more[`q${i}`] = { raw: PHISH }; }
+    Object.assign(svc.gmail, { raw: async (user, id) => ({ id, threadId: `t${id}`, labelIds: ['INBOX'], internalDate: 1, raw: PHISH }) });
+    gmail.history = { ids: Object.keys(more), historyId: '3' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '3' });
+    assert.equal(gmail.modified.length, 5, 'both moved after the resume');
     assert.equal(await store.getState('brake'), null);
 });
 

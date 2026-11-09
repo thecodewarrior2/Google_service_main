@@ -196,9 +196,9 @@ fi
 
 step "9/9 Notifications and daily jobs"
 if gcloud pubsub subscriptions describe gmail-spruce-push >/dev/null 2>&1; then
-    gcloud pubsub subscriptions update gmail-spruce-push --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --quiet >/dev/null
+    gcloud pubsub subscriptions update gmail-spruce-push --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s --quiet >/dev/null
 else
-    gcloud pubsub subscriptions create gmail-spruce-push --topic="$TOPIC" --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --quiet >/dev/null
+    gcloud pubsub subscriptions create gmail-spruce-push --topic="$TOPIC" --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s --quiet >/dev/null
 fi
 # An upgrade keeps a stopped service stopped (deploy/stop.sh paused the renewal); a plain install starts it.
 STOPPED=

@@ -90,8 +90,10 @@ function createApp({ cfg, store, service }) {
                 const body = await readBody(req);
                 let note;
                 try { note = JSON.parse(Buffer.from(String((body.message && body.message.data) || ''), 'base64').toString('utf8')); } catch (e) { return send(res, 204, ''); }
-                await service.handleNotification(note);
-                return send(res, 204, '');
+                // Something left to do (a failed try, a message another instance is still on): Pub/Sub
+                // delivers the notification again later (the subscription's retry delay), and it is tried again.
+                const out = await service.handleNotification(note);
+                return out && out.held ? send(res, 503, { retry: 'later' }) : send(res, 204, '');
             }
             const TASKS = { 'POST /tasks/renew-watches': () => service.renewWatches(), 'POST /tasks/purge': async () => ({ deleted: await service.purge() }), 'POST /tasks/stop-watches': () => service.stopAll(), 'POST /tasks/sync-feeds': () => service.syncFeeds() };
             if (TASKS[route]) {
