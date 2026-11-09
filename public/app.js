@@ -389,6 +389,7 @@
                     row('Short links', 'Not looked up (no outside unshortening service)')),
                 d.lists && d.lists.length ? dataTable([{ name: 'List', get: l => l.name }, { name: 'Kind', get: l => ({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind }, { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') }], d.lists) : null),
             h('section', { class: 'card spaced' }, h('h2', { text: 'Mailboxes watched' }),
+                renewBar(d.renew),
                 h('div', { class: 'sub', text: 'Who the pilot watches, and when Gmail last said each mailbox changed. "None yet" for a mailbox that does get mail means its notifications don\'t arrive. Recent activity says, after each daily re-read of the group, how many people it found and why any were left out.' }),
                 d.mailboxes && d.mailboxes.length
                     ? dataTable([{ name: 'Mailbox', get: m => m.email }, { name: 'Last notification', get: m => (m.lastNotification ? when(m.lastNotification) : 'None yet') }, { name: 'Watch renews by', get: m => (m.watchExpiration ? when(m.watchExpiration) : '–') }], d.mailboxes)
@@ -424,6 +425,29 @@
     function liveDone(err) { liveError = err; updatedAt = Date.now(); showLive(); }
     function liveTick() {
         if (live && !document.hidden && Date.now() - updatedAt >= LIVE_MS && !inUse()) render({ quiet: true });
+    }
+
+    // "Update group membership now" (Settings): runs the daily re-read of the pilot group at once, and
+    // says when the group was last read and whether that reached the service.
+    function renewBar(r) {
+        if (!r) return null;
+        const last = r.last;
+        const status = !last ? null
+            : last.error ? h('span', { class: 'muted small', text: `Couldn't read when the group was last read: ${last.error}` })
+            : !last.at ? h('span', { class: 'muted small', text: 'The group hasn\'t been read yet.' })
+            : last.code ? h('span', { class: 'renew-bad', text: `Group last read ${when(last.at)}, but that didn't reach the service (Cloud Scheduler status ${last.code}): no mailbox is watched or checked. docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".` })
+            : h('span', { class: 'muted small', text: `Group last read ${when(last.at)}: it reached the service.` });
+        const button = r.available ? h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true; acting++;
+            try {
+                await api('/api/renew-watches', { method: 'POST', body: {} });
+                toast('Asked: the group is read again within a minute. This page updates by itself.');
+                setTimeout(() => { if (/settings/.test(currentHash())) render({ quiet: true }); }, 10000);
+            } catch (err) { toast(`Couldn't do that: ${err.message}`); b.disabled = false; }
+            finally { acting--; }
+        } }, 'Update group membership now') : null;
+        return h('div', { class: 'renew' }, button, status);
     }
 
     // --- Routing ---------------------------------------------------------------------------------

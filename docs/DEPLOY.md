@@ -109,6 +109,16 @@ gcloud iam service-accounts add-iam-policy-binding spruce-delegate@PROJECT.iam.g
 gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/datastore.user
 ```
 
+For the dashboard's "Update group membership now": run the re-read job, and read when it last ran.
+
+```bash
+gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/cloudscheduler.jobRunner
+```
+
+```bash
+gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/cloudscheduler.viewer
+```
+
 Consider an organization policy that forbids key creation for service accounts in this project
 (`iam.disableServiceAccountKeyCreation`).
 
@@ -260,6 +270,7 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `PUBSUB_TOPIC` | none | `projects/PROJECT/topics/gmail-spruce` |
 | `PUSH_AUDIENCE`, `PUSH_SERVICE_ACCOUNT` | none | the OIDC tokens the worker accepts (Pub/Sub and Scheduler) |
 | `IAP_AUDIENCE` | none | the dashboard's Identity-Aware Proxy audience |
+| `RENEW_JOB` (dashboard) | none | the job "Update group membership now" runs: `projects/PROJECT/locations/REGION/jobs/spruce-renew-watches`. Without it the button isn't shown |
 | `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
 | `AI_MOVE_THRESHOLD` | `0.85` | AI score that moves (outside senders) |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |

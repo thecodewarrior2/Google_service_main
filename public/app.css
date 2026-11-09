@@ -71,6 +71,9 @@ button { font: inherit; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
 .live.paused .live-dot { background: var(--axis); }
 .live.stale .live-dot { background: var(--warning); }
+/* Settings: "Update group membership now" and when the group was last read. */
+.renew { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0 10px; }
+.renew-bad { color: var(--critical-text); font-size: 12.5px; }
 
 main { padding: 16px 24px 32px; max-width: 1280px; margin: 0 auto; outline: none; }
 main.loading { opacity: 0.55; transition: opacity 120ms; }

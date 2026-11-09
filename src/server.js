@@ -7,6 +7,7 @@
 //   POST /tasks/sync-feeds         daily, from Cloud Scheduler: the phishing lists, downloaded once for everyone
 //   GET  /healthz                  for Cloud Run
 //   /api/*  and  /                 the admin dashboard, behind Identity-Aware Proxy, ADMIN_EMAILS / ADMIN_GROUP only
+//                                  (POST /api/renew-watches runs the Cloud Scheduler job: src/scheduler.js)
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -40,7 +41,22 @@ async function readBody(req, max = 1024 * 1024) {
 const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign,
     status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
 
-function createApp({ cfg, store, service }) {
+// The group re-read from the dashboard: at most once a minute, and its last run remembered for 15 s
+// (Settings is fetched every 30 s by each open dashboard).
+const RENEW_GAP_MS = 60 * 1000, RENEW_STATUS_MS = 15 * 1000;
+
+function createApp({ cfg, store, service, scheduler = null }) {
+    let renewAskedAt = 0, renewStatus = null, renewStatusAt = 0;
+    const canRenew = () => !!(scheduler && cfg.renewJob);
+    async function lastRenew() {
+        if (cfg.demo && !canRenew()) return { at: Date.now() - 15 * 60 * 60 * 1000, code: 0 };
+        if (!canRenew()) return null;
+        if (Date.now() - renewStatusAt > RENEW_STATUS_MS) {
+            renewStatus = await scheduler.lastRun(cfg.renewJob).catch(e => ({ error: String(e.message).slice(0, 200) }));
+            renewStatusAt = Date.now();
+        }
+        return renewStatus;
+    }
     const groupCheck = cfg.adminGroups.length && service.gmail && service.gmail.hasMember ? adminGroupCheck(cfg, service.gmail) : null;
     const since = (q) => Date.now() - Math.min(90, Math.max(1, Number(q.get('days')) || 30)) * A.DAY;
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
@@ -65,6 +81,7 @@ function createApp({ cfg, store, service }) {
         'GET /api/health': async (q) => { const { records } = await load(q); return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold }); },
         'GET /api/settings': async () => {
             const E = spruce.load();
+            const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
@@ -74,12 +91,31 @@ function createApp({ cfg, store, service }) {
                      // started means no notifications arrive for it.
                      mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
                          .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
+                     renew,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email),
-        'POST /api/resume': async (q, body, admin) => { await service.resume(admin.email); return { ok: true }; }
+        'POST /api/resume': async (q, body, admin) => { await service.resume(admin.email); return { ok: true }; },
+        // "Update group membership now": runs the daily re-read job at once (it calls the worker; the
+        // dashboard doesn't). Said in Recent activity, with who asked.
+        'POST /api/renew-watches': async (q, body, admin) => {
+            if (Date.now() - renewAskedAt < RENEW_GAP_MS) return { error: 'Asked less than a minute ago. The list updates once that re-read has run.', status: 429 };
+            if (canRenew()) {
+                try { await scheduler.run(cfg.renewJob); }
+                catch (e) { return { error: `Couldn't start the re-read: ${e.message}`, status: 502 }; }
+                renewAskedAt = Date.now(); renewStatusAt = 0;
+                await store.addEvent({ kind: 'watch-asked', text: `${admin.email} asked for the pilot group to be read again.` });
+                return { ok: true };
+            }
+            if (cfg.demo) {
+                renewAskedAt = Date.now();
+                await store.addEvent({ kind: 'watch-asked', text: `${admin.email} asked for the pilot group to be read again (demo: nothing is read).` });
+                return { ok: true };
+            }
+            return { error: 'Not set up here: RENEW_JOB isn\'t set. Run deploy/install.sh again (docs/DEPLOY.md).', status: 503 };
+        }
     };
 
     return async function handle(req, res) {
@@ -149,7 +185,9 @@ async function main() {
     }
     spruce.load();
     const service = new Service({ cfg, store, gmail, intel });
-    http.createServer(createApp({ cfg, store, service })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
+    // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
+    const scheduler = !cfg.demo && cfg.role !== 'worker' && cfg.renewJob ? require('./scheduler').createScheduler() : null;
+    http.createServer(createApp({ cfg, store, service, scheduler })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

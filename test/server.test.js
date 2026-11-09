@@ -66,6 +66,55 @@ test('Pub/Sub push: a notification with something left to do is asked again late
     } finally { await close(); }
 });
 
+test('Cloud Scheduler client: runs a job and reads its last run', async () => {
+    const { createScheduler } = require('../src/scheduler');
+    const calls = [];
+    let answer = { status: 200, body: {} };
+    const fetch = async (url, init) => { calls.push({ url, method: init.method, auth: init.headers.authorization }); return { ok: answer.status < 400, status: answer.status, text: async () => JSON.stringify(answer.body) }; };
+    const googleAuth = { getClient: async () => ({ getAccessToken: async () => ({ token: 'tok' }) }) };
+    const sch = createScheduler({ fetch, googleAuth });
+    const job = 'projects/p/locations/us-east1/jobs/spruce-renew-watches';
+    await sch.run(job);
+    assert.deepEqual(calls[0], { url: `https://cloudscheduler.googleapis.com/v1/${job}:run`, method: 'POST', auth: 'Bearer tok' });
+    answer = { status: 200, body: { state: 'ENABLED', lastAttemptTime: '2026-11-09T19:05:05.042Z', status: { code: 2 } } };
+    assert.deepEqual(await sch.lastRun(job), { state: 'ENABLED', at: Date.parse('2026-11-09T19:05:05.042Z'), code: 2 });
+    answer = { status: 200, body: { state: 'ENABLED', lastAttemptTime: '2026-11-09T20:00:00Z', status: {} } };
+    assert.equal((await sch.lastRun(job)).code, 0, 'reached the service');
+    answer = { status: 403, body: { error: { message: 'The caller does not have permission' } } };
+    await assert.rejects(sch.run(job), /HTTP 403: The caller does not have permission/);
+});
+
+test('"Update group membership now": runs the re-read job, at most once a minute, said in Recent activity; Settings shows its last run', async () => {
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: 'maple-schools.example', RENEW_JOB: 'projects/p/locations/us-east1/jobs/spruce-renew-watches' });
+    const store = new MemoryStore();
+    const runs = [];
+    let fail = null;
+    const scheduler = { run: async (job) => { if (fail) throw new Error(fail); runs.push(job); return {}; }, lastRun: async () => ({ state: 'ENABLED', at: 1700000000000, code: 2 }) };
+    const { base, close } = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }), scheduler }));
+    const post = (hdr = true) => fetch(`${base}/api/renew-watches`, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, hdr ? { 'x-requested-with': 'spruce-dashboard' } : {}), body: '{}' });
+    try {
+        assert.equal((await post(false)).status, 403, 'needs the dashboard header');
+        assert.equal(runs.length, 0);
+        const ok = await post();
+        assert.equal(ok.status, 200); assert.equal((await ok.json()).ok, true);
+        assert.deepEqual(runs, ['projects/p/locations/us-east1/jobs/spruce-renew-watches']);
+        assert.ok((await store.listEvents()).some(e => e.kind === 'watch-asked' && /asked for the pilot group to be read again/.test(e.text)));
+        const again = await post();
+        assert.equal(again.status, 429); assert.match((await again.json()).error, /less than a minute ago/);
+        const st = await (await fetch(`${base}/api/settings`)).json();
+        assert.deepEqual(st.renew, { available: true, last: { state: 'ENABLED', at: 1700000000000, code: 2 } });
+    } finally { await close(); }
+    // A refused run says why, and can be tried again at once.
+    const app2 = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }), scheduler }));
+    fail = 'Cloud Scheduler answered HTTP 403: The caller does not have permission';
+    try {
+        const r = await fetch(`${app2.base}/api/renew-watches`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: '{}' });
+        assert.equal(r.status, 502); assert.match((await r.json()).error, /Couldn't start the re-read: .*403/);
+        fail = null;
+        assert.equal((await fetch(`${app2.base}/api/renew-watches`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: '{}' })).status, 200);
+    } finally { await app2.close(); }
+});
+
 test('demo dashboard API: numbers agree with the records; release and marks work; POST needs the dashboard header; no path tricks', async () => {
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
     const { store } = await buildDemo({ cfg, now: Date.now() });

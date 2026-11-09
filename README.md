@@ -87,6 +87,9 @@ The dashboard has these pages:
   the number to tune the threshold with.
 - **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
   notified the service about it.
+  - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
+    run.
+  - It also says when the group was last read and whether that reached the service.
 
 The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mockup
 (`tools/build-mockup.js`) uses that same file with made-up data.
@@ -143,6 +146,7 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `src/gmail/` | Keyless domain-wide delegation, Gmail and Directory API calls |
 | `src/store/` | Firestore (production) and memory (demo, tests) |
 | `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |
+| `src/scheduler.js` | Cloud Scheduler, for the dashboard's "Update group membership now" (runs the daily re-read job) |
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |

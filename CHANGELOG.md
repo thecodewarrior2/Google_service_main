@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.13: "Update group membership now" in Settings
+
+- **Settings → Mailboxes watched** has a button, **Update group membership now**. It re-reads the
+  pilot group at once: people added are watched, people removed are no longer watched.
+  - It asks Cloud Scheduler to run the daily `spruce-renew-watches` job now. The dashboard never calls
+    the worker itself, which stays reachable only by Pub/Sub and Cloud Scheduler.
+  - At most once a minute. Recent activity says who asked, then "Watching N mailboxes" once the job
+    has run. The page updates by itself.
+- **When the group was last read** shows next to the button, with whether that reached the service.
+  When it didn't (as with Identity-Aware Proxy on the worker), it says so in red and points to
+  Troubleshooting. Before, that showed only in Cloud Scheduler's log.
+- **`install.sh`:** gives `spruce-run` the Cloud Scheduler Job Runner and Viewer roles, and tells the
+  dashboard which job to run (`RENEW_JOB`). Without `RENEW_JOB`, as in a hand-made deployment that
+  doesn't set it, the button isn't shown.
+- **Docs:** `README.md`, `docs/INSTALL.md` (step 7, Troubleshooting), `docs/DEPLOY.md` (the two roles,
+  `RENEW_JOB`), `docs/ARCHITECTURE.md`.
+- **Checked:**
+  - tests for the Cloud Scheduler client (run, last run, a refusal) and for the dashboard action (needs
+    the dashboard header, once a minute, recorded, a refused run says why);
+  - the installer against a stand-in `gcloud` (roles granted, `RENEW_JOB` in the dashboard's
+    settings);
+  - in demo mode with a browser: the button, its message, the second press refused, and Recent activity.
+
 ## 0.2.12: DMARC must pass to be trusted; the dashboard updates itself; Dependabot
 
 - **The allowlist and "inside the organization" need DMARC to pass.** Both go by the From address,

@@ -35,7 +35,9 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   Real admin quarantine needs an inbound gateway; Google offers no API that puts messages there.
 - **Two services, one image.** Pub/Sub and Scheduler can't sign in through Identity-Aware Proxy. So the
   worker is private (only `spruce-invoker` may call it) and has no dashboard, and the dashboard has no
-  worker routes.
+  worker routes. The dashboard's "Update group membership now" doesn't call the worker either: it asks
+  Cloud Scheduler to run the daily `spruce-renew-watches` job at once (`src/scheduler.js`), which calls
+  the worker as every day.
 - **The extension's own code.** `vendor/spruce/` is copied unchanged and run in a separate JavaScript
   context with a small stand-in for the browser, as the extension's own unit tests run it. Both judge
   an email the same way. A fix in the extension reaches the service with `tools/sync-engine.js`.

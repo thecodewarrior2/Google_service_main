@@ -66,7 +66,10 @@ function loadConfig(env = process.env) {
         iapAudience: env.IAP_AUDIENCE || '',
         adminEmails: list(env.ADMIN_EMAILS),
         // A group whose members may use the dashboard too (read as DIRECTORY_ADMIN; groups inside it count).
-        adminGroups: list(env.ADMIN_GROUP)
+        adminGroups: list(env.ADMIN_GROUP),
+        // The Cloud Scheduler job the dashboard's "Update group membership now" runs
+        // (projects/PROJECT/locations/REGION/jobs/spruce-renew-watches; deploy/install.sh sets it).
+        renewJob: env.RENEW_JOB || ''
     });
 }
 

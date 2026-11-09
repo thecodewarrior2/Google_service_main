@@ -32,6 +32,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         settings: { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                     orgDomains: ['maple-schools.example'], pilotOu: '/Staff', pilotUsers: 0, allowDomains: [], allowAddresses: 0, retentionDays: cfg.retentionDays,
                     storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true,
+                    mailboxes: (await store.listUsers()).sort((a, b) => a.email.localeCompare(b.email)).map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
+                    renew: { available: true, last: { at: now - 15 * 60 * 60 * 1000, code: 0 } },
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
@@ -63,6 +65,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         D.events.push({ at: Date.now(), kind: 'release', text: ADMIN + ' released an email from ' + r.sender.address + ' to ' + r.user + '.' }); return Object.assign(base, { record: r }); }
       case '/api/mark': { const r = recs.find(x => x.key === body.key); if (!r) throw new Error('not found'); Object.assign(r, { falseAlarm: body.falseAlarm === true, markedBy: ADMIN }); return Object.assign(base, { record: r }); }
       case '/api/resume': return Object.assign(base, { ok: true });
+      case '/api/renew-watches': return Object.assign(base, { ok: true });
     }
     throw new Error('not found');
   };

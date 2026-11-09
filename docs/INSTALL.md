@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.12.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.13.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.12.zip
+   unzip spruce-mail-protection-0.2.13.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.12
+   cd spruce-mail-protection-0.2.13
    ```
 
 4. Make your settings file:
@@ -159,7 +159,8 @@ When it finishes, it prints the **dashboard address**.
 
 ## 7. Running the test
 
-- **Add or remove people** in the security group. It applies daily, or at once with:
+- **Add or remove people** in the security group. It applies daily, or at once with **Settings →
+  Update group membership now** in the dashboard, or with:
 
   ```bash
   gcloud scheduler jobs run spruce-renew-watches --location=REGION
@@ -306,8 +307,9 @@ To turn the alert off, set `BUDGET_ALERT=off`.
 
   IAP needs the project to be inside your Google Cloud organization.
 - **The jobs and notifications are refused.** `install.sh` stops with "spruce-renew-watches couldn't
-  reach the worker (UNAUTHENTICATED … 401)". Or Settings → Mailboxes watched shows a "Watch renews by"
-  date that doesn't move after a re-read, and an old "Last notification".
+  reach the worker (UNAUTHENTICATED … 401)". Or Settings → Mailboxes watched says the group's last read
+  "didn't reach the service", or shows a "Watch renews by" date that doesn't move after a re-read and an
+  old "Last notification".
   - **Identity-Aware Proxy is on for `spruce-worker`.** This is the usual cause. `install.sh` turns it
     off there (from 0.2.11). By hand:
 
