@@ -58,6 +58,38 @@ test('policy: rules or the AI move in enforce mode; monitor records; the AI alon
     assert.equal(decide(r('clean', 0.9), cfgOf({ MODE: 'enforce', AI_MOVE_THRESHOLD: '0.95' })).action, 'flag', 'the threshold is a setting');
 });
 
+test('DMARC must pass: a forged allowlisted or staff address is judged like mail from outside', async () => {
+    const { senderVerified } = require('../src/engine/analyze');
+    const mail = (from, auth) => Buffer.from([`From: "Sender" <${from}>`, `To: ${USER}`, 'Subject: Staff meeting moved', 'Message-ID: <m@x.example>',
+        ...(auth ? [`Authentication-Results: mx.google.com; ${auth}`] : []), 'Content-Type: text/plain', '', 'The staff meeting is moved to 3 pm in the library.'].join('\r\n'));
+    const msgs = {
+        allowOk: { raw: mail('billing@vendor.example', 'spf=pass; dmarc=pass (p=REJECT) header.from=vendor.example') },
+        allowForged: { raw: mail('billing@vendor.example', 'spf=fail; dmarc=fail (p=NONE) header.from=vendor.example') },
+        insideOk: { raw: mail('helpdesk@maple-schools.example', 'dkim=pass; dmarc=pass (p=REJECT) header.from=maple-schools.example') },
+        insideForged: { raw: mail('helpdesk@maple-schools.example', 'dmarc=fail (p=NONE) header.from=maple-schools.example') },
+        insideNoResult: { raw: mail('helpdesk@maple-schools.example', null) }
+    };
+    // Any AI score counts as high here, so only the exemptions decide.
+    const { store, gmail, svc } = await setup({ MODE: 'enforce', ALLOW_DOMAINS: 'vendor.example', AI_MOVE_THRESHOLD: '0.0001' }, msgs);
+    await store.putUser(USER, { historyId: '1' });
+    gmail.history = { ids: Object.keys(msgs), historyId: '2' };
+    await svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    const rec = (id) => store.getRecord(`${USER}|${id}`);
+    assert.equal(await rec('allowOk'), null, 'allowlisted with DMARC passing: nothing');
+    const forged = await rec('allowForged');
+    assert.equal(forged.action, 'move'); assert.match(forged.why, /allowlisted sender, but DMARC didn't pass/);
+    assert.equal((await rec('insideOk')).action, 'flag', 'staff mail with DMARC passing: the AI alone never moves it');
+    for (const id of ['insideForged', 'insideNoResult']) {
+        const r = await rec(id);
+        assert.equal(r.action, 'move', id); assert.match(r.trigger, /ai/); assert.match(r.why, /isn't treated as inside/);
+    }
+    assert.deepEqual(gmail.modified.map(m => m.id).sort(), ['allowForged', 'insideForged', 'insideNoResult']);
+    // DMARC for another domain than the one in From doesn't count.
+    assert.equal(senderVerified({ senderAddress: 'a@vendor.example', auth: { dmarc: 'pass', headerFrom: 'other.example' } }), false);
+    assert.equal(senderVerified({ senderAddress: 'a@vendor.example', auth: { dmarc: 'pass', headerFrom: 'vendor.example' } }), true);
+    assert.equal(senderVerified({ senderAddress: 'a@vendor.example', auth: null }), false);
+});
+
 test('a notification: first one only starts the history; then new Inbox messages are judged once, phishing moved, genuine left', async () => {
     const { store, gmail, svc } = await setup({ MODE: 'enforce' });
     assert.deepEqual(await svc.handleNotification({ emailAddress: USER, historyId: '100' }), { started: true });

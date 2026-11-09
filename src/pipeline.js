@@ -12,7 +12,7 @@
 // listed message is done, the mailbox's sync position stays where it was, and it only ever moves forward.
 const crypto = require('crypto');
 const { readMessage } = require('./engine/mime');
-const { analyze } = require('./engine/analyze');
+const { analyze, senderVerified } = require('./engine/analyze');
 const { decide, isAllowed } = require('./policy');
 const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds } = require('./store/history');
@@ -189,7 +189,10 @@ class Service {
         const installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now);
         const first = facts.senderAddress ? await this.store.senderFirstSeen(senderHash(facts.senderAddress), now) : now;
         const learning = now - installedAt < this.cfg.firstSeenLearningDays * DAY;
-        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: isAllowed(this.cfg, facts.senderAddress), firstTime: !learning && now - first < DAY, intel: this.intel });
+        // Allowlisted only with DMARC passing for the address (policy.js).
+        const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !learning && now - first < DAY, intel: this.intel });
+        result.allowlistedUnverified = allowlisted && !verified;
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });
         if (alreadyMoved) decision = { action: 'move', trigger: decision.trigger, why: `${decision.why || 'moved'} (moved by an earlier try)` };

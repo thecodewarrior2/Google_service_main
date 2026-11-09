@@ -46,6 +46,14 @@ function linkSignals(judged) {
               text: `${danger.length === total ? (danger.length === 1 ? 'Its only link is' : `All ${danger.length} of its links are`) : `${danger.length} of its ${total} links ${danger.length === 1 ? 'is' : 'are'}`} flagged as dangerous${why ? ` (${why})` : ''}.` }];
 }
 
+// Whether Gmail's own DMARC check passed for the sender's domain (the domain in From, which anyone can
+// write). Only then does the address count for the allowlist or as "inside the organization".
+function senderVerified(facts) {
+    const a = facts && facts.auth;
+    const domain = String((facts && facts.senderAddress) || '').toLowerCase().split('@')[1] || '';
+    return !!(a && a.dmarc === 'pass' && domain && (!a.headerFrom || a.headerFrom === domain));
+}
+
 // facts: from mime.readMessage. ctx: { mailbox (the recipient's address), orgDomains: [..], trusted: bool,
 // firstTime: bool (first email from this address anywhere in the organization, after the learning period) }
 async function analyze(facts, ctx = {}) {
@@ -53,7 +61,11 @@ async function analyze(facts, ctx = {}) {
     const mailbox = String(ctx.mailbox || '').toLowerCase();
     const org = (ctx.orgDomains || [])[0] || '';
     const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
-    const inside = !!senderDomain && (ctx.orgDomains || []).some(d => E.isOwnDomain(senderDomain, d));
+    // An address in the organization's own domains (as the extension sees it, for the model); "inside"
+    // for the policy only when DMARC passed: a forged staff address is mail from outside.
+    const ownAddress = !!senderDomain && (ctx.orgDomains || []).some(d => E.isOwnDomain(senderDomain, d));
+    const verified = senderVerified(facts);
+    const inside = ownAddress && verified;
     const judged = await judgeLinks(E, facts.links || []);
     // The network checks (they may flag links, so they come before the link signs are counted).
     // Allowlisted senders are never moved, so their mail costs no lookups.
@@ -82,7 +94,7 @@ async function analyze(facts, ctx = {}) {
     // The model reads what the extension gives it for an opened email (modelInputParts in ai.js).
     const aiFacts = {
         subject: facts.subject, senderName: facts.senderName, senderAddress: facts.senderAddress,
-        org: (ctx.orgDomains || []).length ? (inside ? 'inside' : 'outside') : undefined,
+        org: (ctx.orgDomains || []).length ? (ownAddress ? 'inside' : 'outside') : undefined,
         auth: facts.auth ? { dmarc: facts.auth.dmarc } : null,
         links: judged.filter(j => !j.hidden).slice(0, 8).map(j => ({ text: j.text, host: hostOf(j.url), destHost: j.finalUrl && hostOf(j.finalUrl) !== hostOf(j.url) ? hostOf(j.finalUrl) : '', finding: j.severity ? j.reason : '' })),
         bodyText: String(facts.visibleText || '').slice(0, 8000),
@@ -105,8 +117,10 @@ async function analyze(facts, ctx = {}) {
         linkCount: judged.length,
         checks: net.checks,
         inside,
+        ownAddress,
+        verified,
         ai
     };
 }
 
-module.exports = { analyze, judgeLinks, linkSignals };
+module.exports = { analyze, judgeLinks, linkSignals, senderVerified };

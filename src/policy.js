@@ -11,7 +11,9 @@
 //
 // Never moved, whatever the checks say: allowlisted senders and domains ("trusted"). Mail from inside
 // the organization is moved only by the rules (a compromised staff account trips them too), not by the
-// AI score alone, unless AI_MOVES_INSIDE is set.
+// AI score alone, unless AI_MOVES_INSIDE is set. Both rely on the From address, so both need Gmail's
+// DMARC check to have passed for it (engine/analyze.js senderVerified): a forged allowlisted or staff
+// address is judged like any other mail from outside.
 function isAllowed(cfg, address) {
     const a = String(address || '').toLowerCase();
     const d = a.split('@')[1] || '';
@@ -24,13 +26,17 @@ function decide(result, cfg, state = {}) {
     const ruleMove = cfg.moveOnRules && result.status === 'flagged';
     const aiHigh = p !== null && p >= cfg.aiThreshold;
     const aiMove = aiHigh && (!result.inside || cfg.aiMovesInside);
+    // Why an allowlisted or staff address didn't count as one (said on the record).
+    const notes = [result.allowlistedUnverified ? 'allowlisted sender, but DMARC didn\'t pass, so it was judged like any other' : '',
+                   result.ownAddress && !result.inside ? 'the address is the organization\'s, but DMARC didn\'t pass, so it isn\'t treated as inside' : ''].filter(Boolean);
+    const noted = (s) => [s, ...notes].filter(Boolean).join('; ');
     if (!ruleMove && !aiMove) {
         const suspicious = result.status === 'caution' || result.status === 'flagged' || aiHigh || (p !== null && p >= 0.5);
         return { action: suspicious ? 'flag' : 'none', trigger: null,
-                 why: aiHigh && result.inside ? `AI ${Math.round(p * 100)}%, but the sender is inside the organization (the AI alone doesn't move those)` : (suspicious ? 'suspicious, below the move rules' : '') };
+                 why: noted(aiHigh && result.inside ? `AI ${Math.round(p * 100)}%, but the sender is inside the organization (the AI alone doesn't move those)` : (suspicious ? 'suspicious, below the move rules' : '')) };
     }
     const trigger = ruleMove && aiMove ? 'rules+ai' : ruleMove ? 'rules' : 'ai';
-    const why = [ruleMove ? `rules flagged it (score ${result.score})` : '', aiMove ? `AI ${Math.round(p * 100)}% ≥ ${Math.round(cfg.aiThreshold * 100)}%` : ''].filter(Boolean).join(' and ');
+    const why = noted([ruleMove ? `rules flagged it (score ${result.score})` : '', aiMove ? `AI ${Math.round(p * 100)}% ≥ ${Math.round(cfg.aiThreshold * 100)}%` : ''].filter(Boolean).join(' and '));
     if (cfg.mode !== 'enforce') return { action: 'would-move', trigger, why: `${why} (monitor mode: not moved)` };
     if (state.brake) return { action: 'would-move', trigger, why: `${why} (brake on: not moved)`, braked: true };
     return { action: 'move', trigger, why };

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.12: DMARC must pass to be trusted; the dashboard updates itself; Dependabot
+
+- **The allowlist and "inside the organization" need DMARC to pass.** Both go by the From address,
+  which anyone can write. Now they count only when Gmail's own DMARC check passed for that address's
+  domain (`header.from` the same domain).
+  - **A forged allowlisted address** is judged like any other mail. The record says "allowlisted
+    sender, but DMARC didn't pass, so it was judged like any other".
+  - **A forged staff address** is treated as mail from outside, so the AI score can move it. The record
+    says "the address is the organization's, but DMARC didn't pass, so it isn't treated as inside".
+  - Genuine staff mail is unchanged: the AI alone never moves it. Before switching to enforce, check
+    in monitor mode that your own staff's mail isn't being recorded with that note. A domain with no
+    DMARC record, or one whose mail fails it, would lose the "inside" exemption.
+  - The AI model's input is unchanged (as the extension gives it), so AI scores stay the same.
+- **The dashboard updates itself.** The page you're on is fetched again every 30 seconds while the tab
+  is visible, keeping your scroll position.
+  - It waits while you're using the page: typing in a field, focus on a control, a tooltip open, text
+    selected, or an action under way.
+  - The bar under the tabs says "Live · updated …". **Pause updates** stops it, remembered in that
+    browser only. If an update fails, the page stays as it was and the bar says so.
+- **Dependabot** (`.github/dependabot.yml`):
+  - npm updates weekly (minor and patch together, majors one by one);
+  - GitHub Actions monthly;
+  - every pull request runs the tests and `npm audit --omit=dev` (`.github/workflows/test.yml`).
+
+  Turn on **Dependabot security updates** in the repository's settings for security fixes as soon as
+  they're published.
+- **Docs:** `README.md` (both exemptions need DMARC, live updates, dependency updates), `docs/DEPLOY.md`
+  (`ALLOW_DOMAINS`, `ALLOW_ADDRESSES`, `AI_MOVES_INSIDE`).
+- **Checked:**
+  - a new test: allowlisted and staff addresses with and without DMARC passing, and DMARC for another
+    domain than From; it fails on 0.2.11;
+  - live updates in demo mode, with a browser: a release elsewhere shows within the interval, the
+    scroll position is kept, half-typed search text holds the update, and Pause and Resume work;
+  - light, dark and phone width; the clickable mockup (no live updates there).
+
 ## 0.2.11: The installer keeps Identity-Aware Proxy off the worker, and checks the jobs get through
 
 In a pilot, Identity-Aware Proxy got turned on for `spruce-worker` (it belongs on the dashboard,

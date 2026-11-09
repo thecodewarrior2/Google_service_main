@@ -18,6 +18,9 @@ and who was affected, and lets IT release an email back to the Inbox.
   - **The AI score alone never moves mail from inside the organization.** The rules still can, for
     example when a staff account is compromised.
   - **Allowlisted senders and domains** are never moved.
+  - **Both need DMARC to pass.** The allowlist and "inside the organization" go by the From address,
+    which anyone can write. They count only when Gmail's own DMARC check passed for its domain. A
+    forged allowlisted or staff address is judged like any mail from outside, and the record says so.
   - **A brake** stops moving after too many moves in an hour, until an admin resumes (the count then
     starts again).
   - **Every move can be undone** from the dashboard, and by the user: an email the user moves back
@@ -47,10 +50,10 @@ For each new Inbox message:
 | Situation | Action |
 |---|---|
 | The rules flag it (score 5+) | **Move to Spam** (label `SPRUCE/Moved`) |
-| The AI scores **85%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization | **Move to Spam** |
+| The AI scores **85%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing) | **Move to Spam** |
 | Same, in monitor mode or while the brake is on | Recorded as "would move" |
 | Amber, or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious |
-| Allowlisted sender | Nothing |
+| Allowlisted sender, DMARC passing | Nothing |
 
 It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is sent where):
 
@@ -66,6 +69,10 @@ there is no outside unshortening service. A short link is judged by its own host
 offline.
 
 ## The dashboard
+
+The dashboard keeps itself up to date: the page you're on is fetched again every 30 seconds while
+the tab is visible (not while you're typing in it, or using it otherwise). The bar under the tabs says
+when it last updated, and **Pause updates** stops it.
 
 The dashboard has these pages:
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per day by trigger; top
@@ -83,6 +90,14 @@ The dashboard has these pages:
 
 The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mockup
 (`tools/build-mockup.js`) uses that same file with made-up data.
+
+## Dependency updates
+
+Dependabot proposes updates as pull requests on this repository: a weekly one with every minor and
+patch update, and one per major version. GitHub runs the tests and `npm audit` on each pull request
+(`.github/workflows/test.yml`). An update reaches the product like any change: merged here, installed,
+tried, then approved for `google_service_main`. Security fixes come as soon as an advisory appears once
+**Settings → Code security → Dependabot security updates** is on for this repository.
 
 ## Try it
 
@@ -132,5 +147,6 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `upgrade.sh`, `rollback.sh` and `stop.sh` (Cloud Shell), `settings.example.env` |
+| `.github/` | Dependabot (`dependabot.yml`: dependency updates as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip) |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

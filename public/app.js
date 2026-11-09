@@ -312,7 +312,7 @@
         // A user took back an email the checks flagged, and no admin has looked yet: worth a look.
         const rescueToCheck = m.state === 'released' && m.releasedByUser && !m.markedBy && m.score >= 5 && m.trigger !== 'ai';
         const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : 'flag';
-        const act = async (path, body, done) => { try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } };
+        const act = async (path, body, done) => { acting++; try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; } };
         const actions = h('div', { class: 'actions' },
             m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Released: back in the Inbox.') }, 'Release to Inbox') : null,
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
@@ -395,25 +395,60 @@
                     : h('div', { class: 'empty', text: 'None: run the spruce-renew-watches job (docs/INSTALL.md, step 7).' }))];
     }
 
+    // --- Keeping the page up to date --------------------------------------------------------------
+    // While the tab is visible, the page shown is fetched again every LIVE_MS, quietly. A round is skipped
+    // while someone is using the page (typing in a field, focus on something in it, a tooltip open, text
+    // selected, an action under way), and taken as soon as they stop. Pausing is remembered per browser.
+    const LIVE_MS = Number(window.SPRUCE_LIVE_MS) || 30000;   // (a test page may set it shorter)
+    let live = true, updatedAt = 0, liveError = null, acting = 0;
+    try { live = localStorage.getItem('spruce.live') !== 'off'; } catch (e) { /* storage blocked */ }
+    const clock = (ms) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    function inUse() {
+        const v = view(), a = document.activeElement, sel = window.getSelection && window.getSelection();
+        return acting > 0 || !tip().hidden || (a && a !== v && v.contains(a))
+            || [...v.querySelectorAll('input, textarea')].some(i => i.value !== i.defaultValue)
+            || !!(sel && !sel.isCollapsed && sel.anchorNode && v.contains(sel.anchorNode));
+    }
+    function showLive() {
+        const box = $('#live');
+        if (!box) return;
+        box.classList.toggle('paused', !live);
+        box.classList.toggle('stale', live && !!liveError);
+        $('#liveState').textContent = !live ? 'Updates paused'
+            : liveError ? `Couldn't update (${liveError.message}); trying again`
+            : updatedAt ? `Live · updated ${clock(updatedAt)}` : 'Live';
+        const b = $('#liveToggle');
+        b.textContent = live ? 'Pause updates' : 'Resume updates';
+        b.setAttribute('aria-pressed', String(live));
+    }
+    function liveDone(err) { liveError = err; updatedAt = Date.now(); showLive(); }
+    function liveTick() {
+        if (live && !document.hidden && Date.now() - updatedAt >= LIVE_MS && !inUse()) render({ quiet: true });
+    }
+
     // --- Routing ---------------------------------------------------------------------------------
     const ROUTES = { overview, campaigns, users, messages, message, health, settings };
     let rendering = 0;
-    async function render() {
+    // quiet: a live update (no loading fade, the scroll position kept, and on failure the page stays).
+    async function render({ quiet = false } = {}) {
         const [path, query] = (currentHash().replace(/^#\/?/, '') || 'overview').split('?');
         const name = ROUTES[path] ? path : 'overview';
         const tab = name === 'message' ? 'messages' : name;
         for (const a of document.querySelectorAll('.tabs a')) { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
         for (const b of document.querySelectorAll('.range')) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
         const id = ++rendering;
-        view().classList.add('loading');
-        hideTip();
+        if (!quiet) { view().classList.add('loading'); hideTip(); }
+        const scrollY = window.scrollY;
         try {
             const nodes = await ROUTES[name](new URLSearchParams(query || ''));
             if (id !== rendering) return;
             view().textContent = '';
             view().append(...[].concat(nodes).flat(Infinity).filter(Boolean));
+            if (quiet) window.scrollTo(0, scrollY);
+            liveDone(null);
         } catch (e) {
             if (id !== rendering) return;
+            if (quiet) { liveDone(e); return; }
             view().textContent = '';
             view().append(h('div', { class: 'alert critical', role: 'alert' }, h('span', { class: 'icon', text: '⚠️' }), h('div', {}, h('b', { text: 'Couldn\'t load this page. ' }), e.message)));
         } finally { if (id === rendering) view().classList.remove('loading'); }
@@ -424,6 +459,19 @@
         if (MEMORY) document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href^="#/"]'); if (a) { e.preventDefault(); go(a.getAttribute('href')); } });
         else window.addEventListener('hashchange', render);
         window.addEventListener('scroll', hideTip, { passive: true });
+        // Live updates (not in the clickable mockup, whose data never changes).
+        if (!MEMORY && $('#live')) {
+            $('#live').hidden = false;
+            $('#liveToggle').addEventListener('click', () => {
+                live = !live;
+                try { localStorage.setItem('spruce.live', live ? 'on' : 'off'); } catch (e) { /* not kept */ }
+                showLive();
+                if (live) liveTick();
+            });
+            document.addEventListener('visibilitychange', liveTick);
+            setInterval(liveTick, 5000);
+            showLive();
+        }
         try {
             const st = await api('/api/settings');
             $('#who').textContent = st.admin || '';

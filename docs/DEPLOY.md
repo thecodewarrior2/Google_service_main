@@ -229,7 +229,8 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 1. **Monitor mode, at least 2–3 weeks.** Watch the dashboard's *Would be moved* list and *Model
    health*. Open the emails; mark false alarms and confirm phishing.
 2. **Tune.** If AI-only moves get many false alarms, raise `AI_MOVE_THRESHOLD`, for example to `0.95`.
-   Add allowlist entries (`ALLOW_DOMAINS`, `ALLOW_ADDRESSES`) for senders you trust.
+   Add allowlist entries (`ALLOW_DOMAINS`, `ALLOW_ADDRESSES`) for senders you trust. They apply only to
+   mail whose DMARC check passed: a sender without DMARC can't be allowlisted.
 3. **Enforce.** Deploy both services with `MODE=enforce`. Keep `BRAKE_PER_HOUR` at a value just above
    your largest normal campaign.
 4. **Widen.** Add people to the pilot group, or grow `PILOT_OU` one unit at a time.
@@ -262,8 +263,8 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
 | `AI_MOVE_THRESHOLD` | `0.85` | AI score that moves (outside senders) |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
-| `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization |
-| `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved |
+| `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside) |
+| `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain |
 | `BRAKE_PER_HOUR` | `100` | more moves than this in an hour pauses moving |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |

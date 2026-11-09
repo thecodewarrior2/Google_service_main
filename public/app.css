@@ -65,6 +65,12 @@ button { font: inherit; }
 .range { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
 .range:hover { background: var(--surface-2); }
 .range[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* Live updates: a dot (green: live; grey: paused; amber: the last update failed), the time, and a toggle. */
+.live { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12px; }
+.live[hidden] { display: none; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.live.paused .live-dot { background: var(--axis); }
+.live.stale .live-dot { background: var(--warning); }
 
 main { padding: 16px 24px 32px; max-width: 1280px; margin: 0 auto; outline: none; }
 main.loading { opacity: 0.55; transition: opacity 120ms; }

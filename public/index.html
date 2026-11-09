@@ -31,6 +31,11 @@
   <button type="button" class="range" data-days="7">Last 7 days</button>
   <button type="button" class="range" data-days="30">Last 30 days</button>
   <button type="button" class="range" data-days="90">Last 90 days</button>
+  <span class="live" id="live" hidden>
+    <span class="live-dot" aria-hidden="true"></span>
+    <span id="liveState" aria-live="off">Live</span>
+    <button type="button" class="linkbtn" id="liveToggle" aria-pressed="true">Pause updates</button>
+  </span>
 </div>
 <main id="view" tabindex="-1"></main>
 <div class="tooltip" id="tip" role="tooltip" hidden></div>
