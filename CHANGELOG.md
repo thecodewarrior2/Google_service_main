@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.10: No known vulnerabilities in the dependencies
+
+The build printed "6 moderate severity vulnerabilities". `npm audit --omit=dev` now finds none.
+
+- **Why `npm audit fix` alone didn't fix them:** they came from `glob` and `minimatch`, through `rimraf`,
+  in the older Google libraries that `@google-cloud/firestore` 9.4.0 (the newest) still requires
+  (`@google-cloud/firestore-api` 0.2 → `google-gax` 5 → `rimraf` 5). No release in those ranges uses
+  fixed versions.
+- **The fix:** `package.json` overrides `rimraf` to `^6.1.4`, which brings `glob` 14.0.4 and
+  `minimatch` 11.0.5. 21 packages fewer are installed.
+- **Why the override is safe:** nothing in the service loads `rimraf`, `glob` or `minimatch`. They are
+  listed by those libraries but never used. The flaws they had needed an attacker's file patterns,
+  which the service never passes them.
+- **Still printed:** a deprecation notice for `node-domexception`, from Google's libraries. It is not a
+  vulnerability, and there is no newer version to move to yet.
+- **Checked:** a clean `npm ci --omit=dev` (as in the Dockerfile) on Node 22, the Firestore client
+  loading, and the 44 tests.
+
 ## 0.2.9: The dashboard says which mailboxes it watches, and why
 
 A pilot showed "Mailboxes watched: 1" and "Emails checked: 1", with nothing on the dashboard to say
