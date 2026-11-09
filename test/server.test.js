@@ -93,7 +93,10 @@ test('demo dashboard API: numbers agree with the records; release and marks work
         assert.equal((await fetch(`${base}/api/message?key=nope`)).status, 404);
         const health = await get('/api/health?days=30');
         assert.equal(health.buckets.length, 10); assert.equal(health.threshold, 0.85);
-        assert.equal((await get('/api/settings')).demo, true);
+        const st = await get('/api/settings');
+        assert.equal(st.demo, true);
+        assert.equal(st.mailboxes.length, st.watched, 'each watched mailbox is listed');
+        assert.ok(st.mailboxes.every(m => m.email && m.lastNotification && m.watchExpiration));
         assert.equal((await fetch(`${base}/`)).status, 200);
         assert.equal((await fetch(`${base}/app.js`)).headers.get('content-type'), 'text/javascript; charset=utf-8');
         for (const p of ['/../package.json', '/%2e%2e/package.json', '/..%2fsrc/server.js']) assert.equal((await fetch(base + p)).status, 404, p);

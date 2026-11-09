@@ -95,20 +95,32 @@ class GmailClient {
     // Members of a group, with the members of groups inside it (acting as a Workspace admin). Only
     // active user accounts in the organization's own domains: a group can hold outside addresses and
     // suspended accounts, and their mail is not ours to read.
-    async groupMembers(admin, groupEmail, orgDomains = []) {
+    // found (optional) is filled in with what the group listed and why entries were left out: entries,
+    // inactive, outside (with outsideDomains), everyone ("all users in the organization" entries, which
+    // aren't expanded), groups (groups inside it: their members are listed too).
+    async groupMembers(admin, groupEmail, orgDomains = [], found = null) {
         const out = new Set();
+        const f = found || {};
+        Object.assign(f, { entries: 0, inactive: 0, outside: 0, outsideDomains: [], everyone: 0, groups: 0 });
+        const outsideDomains = new Set();
         let pageToken;
         do {
             const r = await this.call(admin, 'GET', `/${encodeURIComponent(groupEmail)}/members`, { scope: SCOPES.groupMembers, base: GROUPS,
                 query: Object.assign({ includeDerivedMembership: 'true', maxResults: '200' }, pageToken ? { pageToken } : {}) });
             for (const m of r.members || []) {
+                f.entries++;
                 const email = String(m.email || '').toLowerCase();
-                if (m.type !== 'USER' || (m.status && m.status !== 'ACTIVE') || !email) continue;
-                if (orgDomains.length && !orgDomains.includes(email.split('@')[1])) continue;
+                if (m.type === 'GROUP') { f.groups++; continue; }
+                if (m.type === 'CUSTOMER') { f.everyone++; continue; }
+                if (m.type !== 'USER' || !email) continue;
+                if (m.status && m.status !== 'ACTIVE') { f.inactive++; continue; }
+                const domain = email.split('@')[1] || '';
+                if (orgDomains.length && !orgDomains.includes(domain)) { f.outside++; outsideDomains.add(domain); continue; }
                 out.add(email);
             }
             pageToken = r.nextPageToken;
         } while (pageToken);
+        f.outsideDomains = [...outsideDomains].sort();
         return [...out];
     }
 }

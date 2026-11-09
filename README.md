@@ -78,7 +78,8 @@ The dashboard has these pages:
 - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
   often by users themselves). This is
   the number to tune the threshold with.
-- **Settings:** the policy in force, read-only.
+- **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
+  notified the service about it.
 
 The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mockup
 (`tools/build-mockup.js`) uses that same file with made-up data.

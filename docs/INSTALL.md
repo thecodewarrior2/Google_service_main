@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.8.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.9.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.8.zip
+   unzip spruce-mail-protection-0.2.9.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.8
+   cd spruce-mail-protection-0.2.9
    ```
 
 4. Make your settings file:
@@ -134,12 +134,15 @@ When it finishes, it prints the **dashboard address**.
 
 1. **Open the dashboard address** and sign in as a member of `ADMIN_GROUP`. The first time,
    Identity-Aware Proxy can take a few minutes to let you in.
-2. **Settings → Mailboxes watched** should show the number of people in the group. If it shows 0:
-   - look at **Overview → Recent activity** for an error;
-   - see "Troubleshooting" below;
-   - delegation changes can take a few minutes to apply. Then rerun the job from step 7.
+2. **Settings → Mailboxes watched** should show the number of people in the group, and list each
+   mailbox with the last time Gmail notified the service about it.
+   - **Overview → Recent activity** has a "Watching … mailboxes" line after each re-read of the group.
+     It says how many entries the group has, and why any were left out.
+   - If it shows fewer than you expect, see "Troubleshooting" below.
+   - Delegation changes can take a few minutes to apply. Then rerun the job from step 7.
 3. **Send a test email** from an account outside your domain (a personal Gmail) to a pilot member:
    - A normal email shows up only in **Emails checked**.
+   - Mail you send from a watched mailbox to itself isn't checked: it's your own sent mail.
    - An email whose text includes the link `http://malware.testcategory.com/` should be recorded. That
      address is Cloudflare's own test site for its malware block. The email should show in
      **Messages** as *Would be moved*, or at least *Suspicious*. In monitor mode it stays in the Inbox.
@@ -150,6 +153,9 @@ When it finishes, it prints the **dashboard address**.
    ```bash
    gcloud run services logs read spruce-worker --region=REGION --limit=50
    ```
+
+   Each notification from Gmail adds a line such as `notification: 1 new in the Inbox, 1 checked`. Each
+   re-read of the group adds `renew-watches: Watching …`. The log can lag a minute behind.
 
 ## 7. Running the test
 
@@ -270,6 +276,20 @@ To turn the alert off, set `BUDGET_ALERT=off`.
   3. the delegation entry's second scope.
 
   Then rerun the job from step 7.
+- **Fewer mailboxes watched than people in the group.** Read the latest "Watching … mailboxes" line in
+  Recent activity. It says what was left out:
+  - **not active:** suspended or archived accounts are never watched;
+  - **outside your domains:** the address's domain isn't in `ORG_DOMAINS` (it must match exactly). If
+    it's one of yours, add it to `ORG_DOMAINS` in `deploy/settings.env` and run `install.sh` again;
+  - **an "all users in the organization" entry:** it isn't expanded. Add the people, or a group of
+    them, instead;
+  - **couldn't be watched:** an error for that mailbox is listed too, usually an account without Gmail.
+
+  No "Watching" line at all after you run the job means the job didn't reach the service: look for
+  `tasks/renew-watches` in the worker's log.
+- **A mailbox that gets mail shows "None yet" under Last notification** (Settings): Gmail isn't
+  notifying the service about it. Run `install.sh` again: step 5 lets Gmail publish to the topic, and
+  step 9 starts the watches again.
 - **Recent activity: "A message couldn't be checked (try 1 of 3 …)".** A Gmail or Firestore error. It is
   tried again within a few minutes, up to 3 times; nothing needs doing unless the same message ends in
   "after 3 tries", which is then left where it is (the reason follows the colon).

@@ -42,6 +42,25 @@ function campaignOf(senderDomain, subject, user) {
     return { key, label: `${senderDomain}: ${s || '(no subject)'}`.slice(0, 160) };
 }
 
+// "Watching 3 mailboxes. spruce-pilot@…: 5 entries, 3 people watched; left out: 1 not active, 1 outside
+// your domains (elsewhere.example). 1 couldn't be watched (see the error)."
+function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains }) {
+    const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
+    const parts = [`Watching ${n(ok, 'mailbox', 'mailboxes')}.`];
+    for (const g of groups) {
+        const out = [];
+        if (g.inactive) out.push(`${g.inactive} not active (suspended or archived)`);
+        if (g.outside) out.push(`${g.outside} outside your domains (${g.outsideDomains.join(', ')}; ORG_DOMAINS is ${orgDomains.join(', ')})`);
+        if (g.everyone) out.push(`${n(g.everyone, '"all users in the organization" entry', '"all users in the organization" entries')}, which ${g.everyone === 1 ? "isn't" : "aren't"} expanded: add people or groups instead`);
+        parts.push(`${g.group}: ${n(g.entries, 'entry', 'entries')}${g.groups ? ` (${n(g.groups, 'group')} inside it, whose members are listed too)` : ''}, ${n(g.people, 'person', 'people')} to watch${out.length ? `; left out: ${out.join(', ')}` : ''}.`);
+    }
+    if (ou) parts.push(`Plus the users of ${ou}.`);
+    if (extra) parts.push(`Plus ${n(extra, 'address', 'addresses')} from PILOT_USERS.`);
+    if (failed) parts.push(`${n(failed, 'mailbox', 'mailboxes')} couldn't be watched (see the errors).`);
+    if (stopped) parts.push(`Stopped watching ${n(stopped, 'mailbox', 'mailboxes')} no longer in the pilot.`);
+    return parts.join(' ');
+}
+
 class Service {
     constructor({ cfg, store, gmail, intel = null, now = () => Date.now(), log = console, waitForOthersMs = WAIT_FOR_OTHERS_MS }) {
         this.cfg = cfg; this.store = store; this.gmail = gmail; this.intel = intel; this.now = now; this.log = log;
@@ -105,6 +124,7 @@ class Service {
         }
         if (busy.length && !(await this.othersDone(user, busy))) hold = true;
         if (!hold) await this.store.raiseHistoryId(user, String(added.historyId));
+        if (this.log.info) this.log.info(`notification: ${added.ids.length} new in the Inbox, ${results.length} checked${hold ? ', some left to try again' : ''}`);
         return Object.assign({ processed: results.length, results }, hold ? { held: true } : {}, added.more ? { more: true } : {});
     }
 
@@ -282,9 +302,15 @@ class Service {
     // mailboxes that left the pilot.
     async renewWatches() {
         const users = new Set(this.cfg.pilotUsers);
+        const groups = [];
         // A failed directory read stops here, before any watch is stopped by mistake, and says so.
         try {
-            for (const g of this.cfg.pilotGroups) for (const u of await this.gmail.groupMembers(this.cfg.directoryAdmin, g, this.cfg.orgDomains)) users.add(u);
+            for (const g of this.cfg.pilotGroups) {
+                const found = {};
+                const members = await this.gmail.groupMembers(this.cfg.directoryAdmin, g, this.cfg.orgDomains, found);
+                for (const u of members) users.add(u);
+                groups.push(Object.assign({ group: g, people: members.length, entries: members.length, inactive: 0, outside: 0, outsideDomains: [], everyone: 0, groups: 0 }, found));
+            }
             if (this.cfg.pilotOu) for (const u of await this.gmail.usersInOu(this.cfg.directoryAdmin, this.cfg.pilotOu)) users.add(u);
         } catch (e) {
             await this.store.addEvent({ kind: 'error', text: `Couldn't read who is in the pilot (${[...this.cfg.pilotGroups, this.cfg.pilotOu].filter(Boolean).join(', ')}) as ${this.cfg.directoryAdmin}: ${String(e.message).slice(0, 200)}. Check the admin's role and the domain-wide delegation scopes.` });
@@ -302,12 +328,19 @@ class Service {
                 await this.store.addEvent({ kind: 'error', user, text: `Couldn't watch ${user}'s mailbox: ${String(e.message).slice(0, 200)}` });
             }
         }
+        let stopped = 0;
         for (const u of await this.store.listUsers()) {
             if (u.watched && !users.has(u.email)) {
                 try { await this.gmail.stop(u.email); } catch (e) { /* already stopped */ }
                 await this.store.putUser(u.email, { watched: false });
+                stopped++;
             }
         }
+        // What was found, for Recent activity (and the log, without addresses): so a count that looks
+        // wrong says why.
+        const text = watchSummary({ ok, failed, stopped, groups, extra: this.cfg.pilotUsers.length, ou: this.cfg.pilotOu, orgDomains: this.cfg.orgDomains });
+        await this.store.addEvent({ kind: 'watch', text });
+        if (this.log.info) this.log.info(`renew-watches: ${text}`);
         return { watched: ok, failed };
     }
 

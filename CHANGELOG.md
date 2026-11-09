@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.9: The dashboard says which mailboxes it watches, and why
+
+A pilot showed "Mailboxes watched: 1" and "Emails checked: 1", with nothing on the dashboard to say
+why. Nothing about how mail is judged changes.
+
+- **Recent activity: "Watching N mailboxes."** after each re-read of the pilot group (daily, after
+  `install.sh`, or the `spruce-renew-watches` job). For each group it says how many entries the group
+  lists, how many people are watched, and what was left out:
+  - accounts that aren't active;
+  - addresses outside `ORG_DOMAINS`, with their domains;
+  - "all users in the organization" entries (not expanded);
+  - groups inside it, whose members are listed too.
+
+  It also says how many mailboxes couldn't be watched, and how many were stopped. Before, only errors
+  were shown, so people left out for these reasons were never mentioned.
+- **Settings → Mailboxes watched:** each watched mailbox, with the last time Gmail notified the service
+  about it and when its watch renews. A mailbox that gets mail but shows "None yet" isn't being
+  notified.
+- **Worker log:** a line for each notification (`notification: 1 new in the Inbox, 1 checked`) and for
+  each re-read (`renew-watches: Watching …`), without email addresses.
+- **Demo:** the made-up mailboxes have notification times, and Recent activity has a "Watching" line.
+- **Docs:** `docs/INSTALL.md` (what step 6 should show; mail sent to yourself isn't checked;
+  Troubleshooting for fewer mailboxes than people, and for "None yet"), `README.md` (Settings).
+- **Tests:** what the group re-read says (people left out and why, mailboxes that couldn't be watched or
+  were stopped), what the Directory API listing counts, and the Settings list.
+
 ## 0.2.8: Fixes from a code review
 
 None of these could move mail in monitor mode, the default. They matter before enforce mode.

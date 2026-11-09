@@ -65,10 +65,15 @@ function createApp({ cfg, store, service }) {
         'GET /api/health': async (q) => { const { records } = await load(q); return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold }); },
         'GET /api/settings': async () => {
             const E = spruce.load();
+            const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
-                     model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).filter(u => u.watched).length, demo: cfg.demo,
+                     model: E.modelInfo, engine: E.vendor, watched: watchedUsers.length, demo: cfg.demo,
+                     // Each watched mailbox, and when Gmail last said it changed: none since the watch
+                     // started means no notifications arrive for it.
+                     mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
+                         .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },

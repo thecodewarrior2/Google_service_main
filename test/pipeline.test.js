@@ -373,14 +373,28 @@ test('a security group as the pilot: its members are watched, those removed are 
     gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example', 'b@maple-schools.example'];
     assert.deepEqual(await svc.renewWatches(), { watched: 2, failed: 0 });
     assert.deepEqual(gmail.watched, ['a@maple-schools.example', 'b@maple-schools.example']);
+    assert.equal(store.events.filter(e => e.kind === 'watch').pop().text, 'Watching 2 mailboxes. spruce-pilot@maple-schools.example: 2 entries, 2 people to watch.');
     assert.equal((await svc.handleNotification({ emailAddress: 'outsider@maple-schools.example', historyId: '5' })).ignored, 'not watched');
     gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example'];
     await svc.renewWatches();
     assert.deepEqual(gmail.stopped, ['b@maple-schools.example']);
+    assert.match(store.events.filter(e => e.kind === 'watch').pop().text, /^Watching 1 mailbox\. .* Stopped watching 1 mailbox no longer in the pilot\.$/);
+    // Why people in the group aren't watched: said in Recent activity, with the domains that don't match.
+    const members = gmail.groupMembers;
+    gmail.groupMembers = async (admin, group, domains, found) => { Object.assign(found, { entries: 6, inactive: 1, outside: 2, outsideDomains: ['elsewhere.example', 'students.maple-schools.example'], everyone: 1, groups: 1 }); return ['a@maple-schools.example']; };
+    let fail = true;
+    const watch = gmail.watch;
+    gmail.watch = async (u) => { if (fail) { fail = false; throw new GoogleApiError(400, 'Mail service not enabled', 'watch'); } return watch(u); };
+    assert.deepEqual(await svc.renewWatches(), { watched: 0, failed: 1 });
+    assert.equal(store.events.filter(e => e.kind === 'watch').pop().text,
+        'Watching 0 mailboxes. spruce-pilot@maple-schools.example: 6 entries (1 group inside it, whose members are listed too), 1 person to watch; left out: 1 not active (suspended or archived), '
+        + '2 outside your domains (elsewhere.example, students.maple-schools.example; ORG_DOMAINS is maple-schools.example), 1 "all users in the organization" entry, which isn\'t expanded: add people or groups instead. '
+        + '1 mailbox couldn\'t be watched (see the errors).');
+    gmail.groupMembers = members;
     delete gmail.groups['spruce-pilot@maple-schools.example'];
     await assert.rejects(svc.renewWatches(), /no such group/);
     assert.equal((await store.getUser('a@maple-schools.example')).watched, true, 'still watched after a failed read');
-    assert.match((await store.listEvents()).find(e => e.kind === 'error').text, /Couldn't read who is in the pilot \(spruce-pilot@maple-schools.example\)/);
+    assert.ok((await store.listEvents()).some(e => e.kind === 'error' && /Couldn't read who is in the pilot \(spruce-pilot@maple-schools.example\)/.test(e.text)));
     assert.deepEqual(gmail.stopped, ['b@maple-schools.example']);
 });
 
@@ -390,11 +404,13 @@ test('group members: nested groups included; only active users in the organizati
     const pages = [
         { members: [{ email: 'A@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { email: 'sub@maple-schools.example', type: 'GROUP', status: 'ACTIVE' },
                     { email: 'gone@maple-schools.example', type: 'USER', status: 'SUSPENDED' }], nextPageToken: 'p2' },
-        { members: [{ email: 'friend@elsewhere.example', type: 'USER', status: 'ACTIVE' }, { email: 'b@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { email: 'a@maple-schools.example', type: 'USER', status: 'ACTIVE' }] }];
+        { members: [{ email: 'friend@elsewhere.example', type: 'USER', status: 'ACTIVE' }, { email: 'b@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { email: 'a@maple-schools.example', type: 'USER', status: 'ACTIVE' }, { id: 'C01abc', type: 'CUSTOMER' }] }];
     const fetch = async (url, init) => { calls.push({ url, auth: init.headers.authorization }); return { ok: true, status: 200, json: async () => pages[calls.length - 1] }; };
     const scopes = [];
     const c = new GmailClient({ tokenFor: async (u, scope) => { scopes.push([u, scope]); return 'tok'; } }, { fetch });
-    assert.deepEqual(await c.groupMembers('admin@maple-schools.example', 'spruce-pilot@maple-schools.example', ['maple-schools.example']), ['a@maple-schools.example', 'b@maple-schools.example']);
+    const found = {};
+    assert.deepEqual(await c.groupMembers('admin@maple-schools.example', 'spruce-pilot@maple-schools.example', ['maple-schools.example'], found), ['a@maple-schools.example', 'b@maple-schools.example']);
+    assert.deepEqual(found, { entries: 7, inactive: 1, outside: 1, outsideDomains: ['elsewhere.example'], everyone: 1, groups: 1 }, 'what was left out, and why');
     const u = new URL(calls[0].url);
     assert.equal(u.pathname, '/admin/directory/v1/groups/spruce-pilot%40maple-schools.example/members');
     assert.equal(u.searchParams.get('includeDerivedMembership'), 'true');

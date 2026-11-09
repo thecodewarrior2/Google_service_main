@@ -84,7 +84,9 @@ async function buildDemo({ now = Date.now(), cfg }) {
     const r = rng(20261106);
     const store = new MemoryStore();
     const staff = people(r, 60);
-    for (const u of staff) await store.putUser(u, { watched: true, historyId: '1000' });
+    // Watched mailboxes, each with a recent notification (no random draws here: the data below stays the same).
+    for (const [i, u] of staff.entries()) await store.putUser(u, { watched: true, historyId: '1000', lastNotification: now - (3 + (i * 37) % 180) * 60 * 1000, watchExpiration: now + 6 * DAY });
+    await store.addEvent({ kind: 'watch', at: now - 15 * 60 * 60 * 1000, text: `Watching ${staff.length} mailboxes. spruce-pilot@${ORG}: ${staff.length + 2} entries (1 group inside it, whose members are listed too), ${staff.length} people to watch; left out: 1 not active (suspended or archived).` });
     await store.setState('installedAt', now - 60 * DAY);
     const monitorUntil = now - 10 * DAY;              // monitor mode before, enforce after
     const templates = campaignTemplates();
