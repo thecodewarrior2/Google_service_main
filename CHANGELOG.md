@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.4: Clearing the dashboard's data
+
+- **`deploy/clear-data.sh`** (Cloud Shell, from the install folder) clears what the dashboard shows, to
+  start counting again (after a trial, before going live).
+  - **Deleted** (Firestore): `records`, `stats`, `campaigns`, `moveCounts`, and `events` (Activity)
+    unless `--keep-activity`.
+  - **Kept:** the watched mailboxes (`users`), the emails already checked (`seen`), the Settings switches
+    and the brake's state (`state`), sender history, the phishing lists. Nothing in Gmail changes.
+  - **Before:** it shows all this and asks you to type the project ID (`--yes` for scripts; without a
+    terminal it stops unless given `--yes`).
+  - **When something is held, it stops:** the brake is on, a campaign waits for a decision, or Firestore
+    didn't answer the check. The held emails stay in the Inbox and are no longer tracked once cleared.
+    `--even-if-held` clears anyway.
+  - **After:** Activity gets one entry saying who cleared it, and the dashboard restarts (each instance
+    keeps a copy of the records, and a deletion doesn't reach it otherwise).
+  - **`--reset-clock`** also restarts the monitor-mode clock (Readiness, and the senders' learning
+    period).
+  - Every collection is named: `gcloud firestore bulk-delete` without `--collection-ids` would delete
+    every collection, and a test checks that no deploy script calls it that way.
+- **Tests:** 85 (from 83).
+  - `test/install.test.js`, with stand-ins for `gcloud` and `curl`: what is deleted and kept, the
+    options, the order (the Activity entry after the deletion), refusing when something is held or
+    can't be checked.
+  - `test/firestore.test.js`, against the Firestore emulator with the real `curl`: the brake and held
+    campaigns read as the service stores them, the Activity entry as the dashboard reads it, the clock
+    reset, and a refused token stopping it before anything is deleted.
+- **Docs:** `docs/INSTALL.md` ("Clearing the dashboard's data"), `README.md`, `docs/PRIVACY.md`.
+
 ## 0.3.3: The AI model phish-tiny 0.11.0
 
 - **phish-tiny 0.11.0** replaces 0.4.0, copied unchanged from the S.P.R.U.C.E+ extension (5.94.13,

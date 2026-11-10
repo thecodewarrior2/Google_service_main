@@ -132,3 +132,45 @@ test('the dashboard\'s cache reads: records carry updatedAt, changed ones are li
     const held = (await s.listHeldCampaigns()).map(c => c.key);
     assert.ok(held.includes('h1') && !held.includes('h2'));
 });
+
+test('deploy/clear-data.sh against Firestore: sees the brake and held campaigns, writes its Activity entry, restarts the clock', { skip: skip || (require('child_process').spawnSync('bash', ['-c', 'true']).status !== 0 && 'no bash') }, async () => {
+    const os = require('os'), path = require('path'), fs = require('fs'), { spawnSync } = require('child_process');
+    const s = getStore();
+    // A folder as unzipped, with the stand-in gcloud (nothing reaches Google); curl is the real one.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-clear-'));
+    const dir = path.join(home, 'spruce'), bin = path.join(home, 'bin'), log = path.join(home, 'calls.log');
+    fs.mkdirSync(path.join(dir, 'deploy'), { recursive: true }); fs.mkdirSync(bin);
+    fs.copyFileSync(path.join(__dirname, '..', 'deploy', 'clear-data.sh'), path.join(dir, 'deploy', 'clear-data.sh'));
+    fs.writeFileSync(path.join(dir, 'deploy', 'settings.env'), `PROJECT=${PROJECT}\nREGION=us-east1\n`);
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'fakebin', 'gcloud'), path.join(bin, 'gcloud')); fs.chmodSync(path.join(bin, 'gcloud'), 0o755);
+    const run = (...args) => {
+        fs.writeFileSync(log, '');
+        const r = spawnSync('bash', ['deploy/clear-data.sh', ...args], { cwd: dir, encoding: 'utf8', input: '',
+            env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_LOG: log, FAKE_DIR: home, SPRUCE_FIRESTORE_URL: `http://${HOST}/v1`, FAKE_TOKEN: 'owner' }) });
+        return { code: r.status, out: `${r.stdout}${r.stderr}`.replace(/\x1b\[[0-9;]*m/g, '') };
+    };
+    try {
+        // A token Firestore refuses: "couldn't check" stops it, never reads as "nothing held".
+        fs.writeFileSync(log, '');
+        const bad = spawnSync('bash', ['deploy/clear-data.sh', '--yes'], { cwd: dir, encoding: 'utf8', input: '',
+            env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_LOG: log, FAKE_DIR: home, SPRUCE_FIRESTORE_URL: `http://${HOST}/v1`, FAKE_TOKEN: 'not-a-jwt' }) });
+        assert.equal(bad.status, 1, bad.stdout); assert.match(bad.stdout + bad.stderr, /Couldn't check whether the brake or a campaign hold is on/);
+        assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /bulk-delete/);
+        await s.setState('brake', { at: 1, moves: 5, limit: 5 });
+        let r = run('--yes');
+        assert.equal(r.code, 1, r.out); assert.match(r.out, /The brake is on/);
+        await s.setState('brake', null);
+        await s.campaignHold('clear-h', 0, Date.now(), 'held.example: x');     // held, no decision yet
+        r = run('--yes');
+        assert.equal(r.code, 1, r.out); assert.match(r.out, /[1-9]\d* campaign\(s\) are held for a decision/); assert.doesNotMatch(r.out, /The brake is on/);
+        await s.setState('installedAt', 12345);
+        r = run('--yes', '--even-if-held', '--reset-clock');
+        assert.equal(r.code, 0, r.out);
+        assert.equal(await s.getState('installedAt'), null, 'the clock restarts');
+        const e = (await s.listEvents(Date.now() - 60000)).find(x => x.kind === 'clear');
+        assert.ok(e, 'the Activity entry, as the dashboard reads it');
+        assert.equal(typeof e.at, 'number');
+        assert.match(e.text, /^it\.admin@district-test\.example cleared the dashboard's data/);
+        assert.match(fs.readFileSync(log, 'utf8'), /firestore bulk-delete --database=\(default\) --collection-ids=records,stats,campaigns,moveCounts,events --quiet/);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

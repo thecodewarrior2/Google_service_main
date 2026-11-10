@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.3.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.4.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.3.zip
+   unzip spruce-mail-protection-0.3.4.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.3
+   cd spruce-mail-protection-0.3.4
    ```
 
 4. Make your settings file:
@@ -256,6 +256,41 @@ bash deploy/rollback.sh
 | `bash deploy/stop.sh` | Stops watching every mailbox: no email is read from then on. Running `install.sh` starts it again |
 | Remove the domain-wide delegation entry in the Admin console | All access to mail ends at once |
 | Delete the Cloud project | Removes the service and every record |
+
+## Clearing the dashboard's data
+
+To start counting again, for example after a trial and before going live, run this in Cloud Shell
+from the folder you installed or last upgraded from:
+
+```bash
+bash deploy/clear-data.sh
+```
+
+It shows what it deletes and what it keeps, and asks you to type the project ID first.
+- **Deleted:**
+  - every recorded email (Overview, Messages, Campaigns, Users, Review, Model health, Readiness);
+  - the daily counts;
+  - campaign holds and admins' campaign decisions;
+  - the Activity page.
+- **Kept:**
+  - the watched mailboxes;
+  - which emails were already checked, so none is judged twice;
+  - your Settings switches and the brake's state;
+  - sender history and the phishing lists.
+- **Gmail:** nothing in it changes.
+- **Afterwards:** Activity starts with one entry saying who cleared it, and the dashboard restarts so
+  it drops its copy of the records.
+
+It can't be undone.
+
+| Option | What it does |
+|---|---|
+| `--keep-activity` | Keeps the Activity page (what admins did, alerts) |
+| `--reset-clock` | Also restarts the monitor-mode clock: Readiness counts days again, and senders are learned for 14 days again |
+| `--even-if-held` | Clears even when the brake or a campaign hold is on. The emails they held stay in the Inbox and are no longer tracked, so decide on them on the dashboard first |
+| `--yes` | No question (for scripts) |
+
+It needs the same access as `install.sh`, and nobody can clear the data from the dashboard.
 
 ## Costs
 

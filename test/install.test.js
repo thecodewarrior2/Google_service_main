@@ -200,3 +200,51 @@ test('update.sh: fetches the newest approved version, unpacks it next to this fo
         assert.equal(again.status, 0); assert.match(again.stdout, /already 9\.9\.0, the newest approved version/);
     } finally { w.cleanup(); }
 });
+
+test('clear-data.sh: deletes only what the dashboard shows, says who did it in Activity, restarts the dashboard; refuses when something is held', { skip: !hasBash }, () => {
+    const w = workspace('spruce-mail-protection-0.3.4');
+    fs.copyFileSync(path.join(FAKEBIN, 'curl'), path.join(w.home, 'bin', 'curl')); fs.chmodSync(path.join(w.home, 'bin', 'curl'), 0o755);
+    const event = () => JSON.parse(fs.readFileSync(path.join(w.fake, 'event.json'), 'utf8')).fields;
+    const deletes = (r) => r.calls.filter(c => /firestore bulk-delete/.test(c));
+    try {
+        // Without a terminal and without --yes: nothing happens.
+        let r = w.run('clear-data.sh');
+        assert.equal(r.code, 1); assert.match(r.out, /add --yes/); assert.equal(deletes(r).length, 0);
+        assert.match(r.out, /Deleted: every recorded email/); assert.match(r.out, /Kept: {4}the watched mailboxes/);
+        // The usual run.
+        r = w.run('clear-data.sh', {}, ['--yes']);
+        assert.equal(r.code, 0, r.out);
+        assert.deepEqual(deletes(r), ["gcloud firestore bulk-delete --database=(default) --collection-ids=records,stats,campaigns,moveCounts,events --quiet"]);
+        assert.ok(!has(r.calls, /DELETE .*installedAt/), 'the clock stays');
+        const e = event();
+        assert.equal(e.kind.stringValue, 'clear');
+        assert.ok(Math.abs(Number(e.at.integerValue) - Date.now()) < 60000, 'at: now, in milliseconds');
+        assert.match(e.text.stringValue, /^it\.admin@district-test\.example cleared the dashboard's data \(deploy\/clear-data\.sh\): the recorded emails, daily counts and campaign decisions, and Activity before this\. Watched mailboxes and settings were kept\.$/);
+        assert.ok(has(r.calls, /run services update spruce-admin --region=us-east1 --update-env-vars=SPRUCE_RESTARTED=\d+ --quiet/), 'the dashboard restarts');
+        // The Activity entry comes after the deletion (or it would be deleted too).
+        const at = (re) => r.calls.findIndex(c => re.test(c));
+        assert.ok(at(/bulk-delete/) < at(/curl .*-X POST .*\/documents\/events/));
+        // --keep-activity, --reset-clock; no account known.
+        r = w.run('clear-data.sh', { FAKE_ACCOUNT: '' }, ['--yes', '--keep-activity', '--reset-clock']);
+        assert.equal(r.code, 0, r.out);
+        assert.match(deletes(r)[0], /--collection-ids=records,stats,campaigns,moveCounts --quiet$/);
+        assert.ok(has(r.calls, /curl .*-X DELETE .*\/documents\/state\/installedAt$/));
+        assert.match(event().text.stringValue, /^Someone in Cloud Shell cleared .*campaign decisions; the monitor-mode clock restarts\./);
+        // Held: the brake, or campaigns waiting for a decision. Refused unless --even-if-held.
+        r = w.run('clear-data.sh', { FAKE_BRAKE: 'on' }, ['--yes']);
+        assert.equal(r.code, 1); assert.match(r.out, /The brake is on/); assert.match(r.out, /add --even-if-held/); assert.equal(deletes(r).length, 0);
+        r = w.run('clear-data.sh', { FAKE_BRAKE: 'resumed' }, ['--yes']);
+        assert.equal(r.code, 0, `a resumed brake isn't held: ${r.out}`);
+        r = w.run('clear-data.sh', { FAKE_BRAKE: 'error' }, ['--yes']);
+        assert.equal(r.code, 1); assert.match(r.out, /Couldn't check whether the brake/); assert.equal(deletes(r).length, 0);
+        r = w.run('clear-data.sh', { FAKE_HELD: '2' }, ['--yes']);
+        assert.equal(r.code, 1); assert.match(r.out, /2 campaign\(s\) are held for a decision/); assert.equal(deletes(r).length, 0);
+        r = w.run('clear-data.sh', { FAKE_HELD: '2' }, ['--yes', '--even-if-held']);
+        assert.equal(r.code, 0, r.out); assert.equal(deletes(r).length, 1);
+        assert.equal(w.run('clear-data.sh', {}, ['--everything']).code, 1, 'an unknown option stops it');
+        // Every bulk-delete the deploy scripts make names its collections (without them it deletes all).
+        for (const f of fs.readdirSync(path.join(ROOT, 'deploy')).filter(x => x.endsWith('.sh'))) {
+            for (const line of fs.readFileSync(path.join(ROOT, 'deploy', f), 'utf8').split('\n').filter(l => /^\s*gcloud firestore bulk-delete/.test(l))) assert.match(line, /--collection-ids=/, `${f}: ${line}`);
+        }
+    } finally { w.cleanup(); }
+});

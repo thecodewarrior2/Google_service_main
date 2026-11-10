@@ -5,6 +5,8 @@ echo "gcloud $*" >> "$FAKE_LOG"
 a="$*"
 case "$a" in
   "projects describe"*) echo 123456789 ;;
+  "config get-value account"*) echo "${FAKE_ACCOUNT-it.admin@district-test.example}" ;;
+  "auth print-access-token"*) echo "${FAKE_TOKEN:-fake-token}" ;;
   "billing projects describe"*billingEnabled*) echo "${FAKE_BILLING:-True}" ;;
   "billing projects describe"*) echo billingAccounts/000000-000000-000000 ;;
   "billing accounts describe"*) echo USD ;;

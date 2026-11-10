@@ -196,6 +196,8 @@ The last command writes `build/mockup.html`, a single file to share the look and
 - **`deploy/rollback.sh`** goes back to the previous build.
 - **`deploy/stop.sh`** stops it.
 - **`deploy/doctor.sh`** checks the installation end to end and says what to run for each problem.
+- **`deploy/clear-data.sh`** clears what the dashboard shows (emails recorded, counts, campaign
+  decisions, Activity) and keeps the watched mailboxes and settings, after you type the project ID.
 
 Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` again. It reuses the image
 built from the same files, so it only redeploys, in about a minute.
@@ -223,7 +225,7 @@ training examples, and a better AI model.
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
-| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh` and `doctor.sh` (Cloud Shell), `settings.example.env` |
+| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

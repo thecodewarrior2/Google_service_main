@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# A stand-in for curl (test/install.test.js): the Firestore REST calls deploy/clear-data.sh makes.
+# Logs every call, answers what FAKE_BRAKE and FAKE_HELD say, and keeps the Activity entry it is sent.
+echo "curl $*" >> "$FAKE_LOG"
+method=GET url='' body='' out='' fmt=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift ;;
+    -d | --data) body="$2"; shift ;;
+    -o) out="$2"; shift ;;
+    -w) fmt="$2"; shift ;;
+    -H) shift ;;
+    http*://*) url="$1" ;;
+  esac
+  shift
+done
+case "$method $url" in
+  "GET "*/state/brake)   # (asked with -o FILE -w '%{http_code}')
+    case "${FAKE_BRAKE:-off}" in
+      on) printf '%s' '{"fields":{"value":{"mapValue":{"fields":{"at":{"integerValue":"1"}}}}}}' > "$out"; code=200 ;;
+      resumed) printf '%s' '{"fields":{"value":{"nullValue":null}}}' > "$out"; code=200 ;;
+      error) printf '%s' '{"error":{"code":403,"status":"PERMISSION_DENIED"}}' > "$out"; code=403 ;;
+      *) printf '%s' '{"error":{"code":404,"status":"NOT_FOUND"}}' > "$out"; code=404 ;;
+    esac
+    [ -z "$fmt" ] || printf '%s' "$code" ;;
+  "POST "*:runQuery)
+    rows='{"document":{"fields":{"heldAt":{"integerValue":"5"},"decision":{"stringValue":"confirmed"}}}}'
+    for i in $(seq 1 "${FAKE_HELD:-0}"); do rows="$rows,{\"document\":{\"fields\":{\"heldAt\":{\"integerValue\":\"$i\"}}}}"; done
+    echo "[$rows]" ;;
+  "POST "*/documents/events) printf '%s' "$body" > "$FAKE_DIR/event.json"; echo '{"name":"projects/test-proj/databases/(default)/documents/events/x1"}' ;;
+  "DELETE "*/state/installedAt) echo '{}' ;;
+  *) echo "unexpected: curl $method $url" >&2; exit 2 ;;
+esac

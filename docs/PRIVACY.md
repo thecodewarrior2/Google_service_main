@@ -53,6 +53,8 @@ And:
 - **mailbox state:** each watched mailbox's sync position.
 
 **Retention:** records and message IDs are deleted after `RETENTION_DAYS` (60 by default) by a daily job.
+To delete what the dashboard shows sooner, all at once: `bash deploy/clear-data.sh` (docs/INSTALL.md,
+"Clearing the dashboard's data").
 
 ## Who sees it
 
