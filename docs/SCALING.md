@@ -41,7 +41,57 @@ Run's processor speed. A load test on a spare project is what settles them (belo
 - **Gmail API:** about 67 units per email and 2 per notification, about 8 million a day: a tenth of the
   80 million below which there is no charge, and a tenth of the 1.2 million a minute in a campaign.
 - **Cost:** Cloud Run about $14 a month (it was about $26), Firestore about $45–60 a month in us-east1
-  (it was about $85). Pub/Sub, Scheduler and the Gmail API: next to nothing.
+  (it was about $85). Pub/Sub, Scheduler and the Gmail API: next to nothing. 0.4.1 lowers it again
+  (below).
+
+## What it costs (0.4.1)
+
+Estimates, at about 10 emails a mailbox a day, three notifications an email, with Google's free
+allowances (Firestore: 50,000 reads, 20,000 writes and 20,000 deletes a day; Cloud Run: 180,000
+vCPU-seconds, 360,000 GiB-seconds and 2 million requests a month; Cloud Scheduler: 3 jobs):
+
+| Mailboxes | Emails a day | Firestore, `us-central1` | Firestore, `us-east1` | Cloud Run | About a month |
+|---|---|---|---|---|---|
+| 500 | 5,000 | $0 | $0 | $0 | **$0** |
+| 2,000 | 20,000 | about $2 | about $4 | $0 | **$2–4** |
+| 5,000 | 50,000 | about $6 | about $12 | about $4 | **$10–16** |
+| 10,000 | 100,000 | about $15 | about $30 | about $14 | **$30–45** |
+
+**Per email** after 0.4.1: about 3 Firestore reads and 3 writes for the email's own notification, 1
+read for each notification that brings nothing new (2 an email), about 1 delete when it expires;
+0.1–0.2 s of processor time; 67 Gmail quota units (free below 80 million a day).
+
+**Prices checked on Google's pricing page** (Firestore Standard edition, per 100,000): `us-east1`
+reads $0.06, writes $0.18, deletes $0.02; `us-central1`, `us-west1`, `us-east5`, `us-west8` $0.03,
+$0.09, $0.01; the other US regions $0.033–0.036, $0.099–0.108, $0.011–0.012. `us-east1` is the only US
+region at twice the price.
+
+**What 0.4.1 changed for cost:**
+- **The dashboard no longer reads every mailbox** for Status, Readiness and Settings (each refreshes
+  every 30 s while open): a count and one read instead, kept a minute. At 10,000 mailboxes, a Status
+  page left open all day read about 29 million documents (about $17 a day in `us-east1`); now about
+  17,000 (the counts cost one read per 1,000 mailboxes).
+- **The hourly health check** counts instead of reading every mailbox (240,000 reads a day at 10,000
+  mailboxes).
+- **A notification that brings nothing new writes nothing** for up to 30 minutes (two thirds of
+  notifications; about 200,000 writes and 200,000 reads a day at 10,000 mailboxes).
+- **Three scheduled jobs, not four:** the cleanup runs with the hourly job, so the installation keeps to
+  Cloud Scheduler's 3 free jobs per billing account.
+- **The example region is `us-central1`.**
+
+**More to save, not done (each with a trade-off):**
+- **Region:** an installation in `us-east1` halves Firestore by moving to a new project in another
+  region (a new installation; Firestore can't move).
+- **Worker concurrency 16** (it is 8): measured 7.0 emails a second per instance instead of 4.8, so
+  about 30% less Cloud Run time, but 16 large emails at once could fill the worker's 1 GiB. It needs a
+  limit on large emails first (plan, item 5).
+- **The model run natively** (plan, item 1): Cloud Run's processor time down severalfold.
+- **Dashboard rollups** (plan, item 2): no read of every record when an idle dashboard is opened again
+  (180,000 reads at 10,000 mailboxes and 60 days).
+- **`RETENTION_DAYS`** lower than 60: fewer records kept, and fewer read when the dashboard starts.
+- **One write per email instead of two** for its "checked" marker (claimed, then done): possible, but
+  the claim is what keeps two instances from judging one email at once; not worth the risk for about
+  $3–5 a month at 10,000 mailboxes.
 
 ## What 0.4.0 changed
 
@@ -100,9 +150,8 @@ Run's processor speed. A load test on a spare project is what settles them (belo
    - the mailbox document updated with a precondition (`lastUpdateTime`) instead of a transaction: one
      read less per notification (about 200,000 a day);
    - `count()` for totals where a page only needs a number (one read per 1,000 index entries);
-   - a new installation could use us-east4, about 45% cheaper than us-east1 in Standard edition (moving
-     an existing database isn't worth it). Enterprise edition is cheaper per operation but means a new
-     database.
+   - a new installation in `us-central1` or `us-west1` pays half of `us-east1`'s Firestore prices
+     (checked: below). Enterprise edition is cheaper per operation but means a new database.
 5. **Large emails.** `messages.get` with `format=raw` brings attachments too: 8 at once of 25 MB on a
    1 GiB worker is a memory risk. Either fewer at once for large messages, or `format=full`, whose
    attachments come as ids (same 60 units), which the parser would have to take.

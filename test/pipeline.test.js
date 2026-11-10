@@ -552,3 +552,60 @@ test('delegation tokens (0.4.0): calls for one mailbox at the same moment share 
     fail = false;
     assert.match(await a.tokenFor('b.ray@maple-schools.example'), /^t\d+$/, 'asked again after a failure');
 });
+
+test('notifications that bring nothing new (0.4.1): no write for up to 30 minutes; new mail always writes the position', async () => {
+    let now = Date.now();
+    const { store, gmail, svc } = await setup({ MODE: 'monitor' });
+    svc.now = () => now;
+    const USER = 'reader@maple-schools.example';
+    await store.putUser(USER, { watched: true, historyId: '100', lastNotification: now });
+    const writes = [];
+    const raise = store.raiseHistoryId.bind(store), put = store.putUser.bind(store);
+    let inside = false;   // (the memory store writes the position through putUser: one write, counted once)
+    store.raiseHistoryId = async (...a) => { writes.push(['position', a[1]]); inside = true; try { return await raise(...a); } finally { inside = false; } };
+    store.putUser = async (...a) => { if (!inside) writes.push(['user', Object.keys(a[1]).join()]); return put(...a); };
+    gmail.history = { ids: [], historyId: '101' };   // a read or an archive: nothing for the Inbox
+    now += 5 * 60 * 1000; await svc.handleNotification({ emailAddress: USER, historyId: '101' });
+    now += 5 * 60 * 1000; gmail.history = { ids: [], historyId: '102' }; await svc.handleNotification({ emailAddress: USER, historyId: '102' });
+    assert.deepEqual(writes, [], 'nothing written');
+    assert.equal((await store.getUser(USER)).historyId, '100', 'the position waits (read again from there next time)');
+    now += 25 * 60 * 1000; gmail.history = { ids: [], historyId: '103' }; await svc.handleNotification({ emailAddress: USER, historyId: '103' });
+    assert.deepEqual(writes, [['position', '103']], 'after 30 minutes, written with the time');
+    assert.equal((await store.getUser(USER)).lastNotification, now);
+    now += 60 * 1000; gmail.history = { ids: [], historyId: '104' }; await svc.handleNotification({ emailAddress: USER, historyId: '104' });
+    assert.equal(writes.length, 1);
+    // A new email: always written (and judged).
+    gmail.history = { ids: ['m9'], historyId: '105' };
+    now += 60 * 1000; await svc.handleNotification({ emailAddress: USER, historyId: '105' });
+    assert.deepEqual(writes.at(-1), ['position', '105']);
+});
+
+test('the mailboxes in numbers (0.4.1): watched, the latest notification, watches ending; stopped ones are not "ending"', async () => {
+    const { store, gmail, svc } = await setup({ PILOT_USERS: '', PILOT_GROUP: 'spruce-pilot@maple-schools.example', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
+    gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example', 'b@maple-schools.example'];
+    await svc.renewWatches();
+    await store.putUser('a@maple-schools.example', { lastNotification: 5000 });
+    await store.putUser('old@maple-schools.example', { watched: false, watchExpiration: Date.now() - DAY });   // (stopped before 0.4.1)
+    let sum = await store.mailboxSummary(Date.now() + 8 * DAY);
+    assert.deepEqual([sum.watched, sum.lastNotification, sum.ending], [2, 5000, 3]);
+    gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example'];
+    await svc.renewWatches();
+    sum = await store.mailboxSummary(Date.now() + 8 * DAY);
+    assert.deepEqual([sum.watched, sum.ending], [1, 1], 'b stopped, and the old one cleared: only a\'s watch counts');
+    assert.equal((await store.getUser('b@maple-schools.example')).watchExpiration, null);
+    assert.deepEqual((await store.listWatched(10)).map(u => u.email), ['a@maple-schools.example']);
+    const h = await svc.health();
+    assert.equal(h.watched, 1);
+});
+
+test('the hourly job also cleans up (0.4.1): what TTL doesn\'t delete, within what is left of its time', async () => {
+    const { store, svc } = await setup({ MODE: 'monitor' });
+    await store.saveRecord({ key: 'old', processedAt: Date.now() - 400 * DAY, action: 'move' });
+    let asked = null;
+    const purge = store.purge.bind(store);
+    store.purge = async (before, opts) => { asked = opts; return purge(before, opts); };
+    const out = await svc.syncFeeds();
+    assert.equal(out.purged, 1);
+    assert.ok(asked && asked.budgetMs > 0 && asked.budgetMs <= 30000, JSON.stringify(asked));
+    assert.equal(await store.getRecord('old'), null);
+});

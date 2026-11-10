@@ -46,6 +46,22 @@ class FirestoreStore {
     async getUser(email) { const d = await this.col('users').doc(safeId(email)).get(); return d.exists ? d.data() : null; }
     async putUser(email, patch) { await this.col('users').doc(safeId(email)).set(Object.assign({ email }, patch), { merge: true }); }
     async listUsers() { return (await this.col('users').get()).docs.map(d => d.data()); }
+    // What the dashboard and the hourly health check need about the mailboxes, without reading them all
+    // (a district has 10,000): how many are watched (a count: one read per 1,000), the latest notification
+    // (one read), how many watches end before untilMs (a count). Stopped mailboxes have no watchExpiration.
+    async mailboxSummary(untilMs = Date.now() + 24 * 3600 * 1000) {
+        const users = this.col('users');
+        const [watched, latest, ending] = await Promise.all([
+            users.where('watched', '==', true).count().get(),
+            users.orderBy('lastNotification', 'desc').limit(1).get(),
+            users.where('watchExpiration', '<', untilMs).count().get()
+        ]);
+        return { watched: watched.data().count, lastNotification: latest.empty ? null : (Number(latest.docs[0].data().lastNotification) || null), ending: ending.data().count };
+    }
+    // Watched mailboxes for Settings → Mailboxes, at most limit (by address).
+    async listWatched(limit = 500) {
+        return (await this.col('users').where('watched', '==', true).limit(limit).get()).docs.map(d => d.data()).sort((a, b) => String(a.email).localeCompare(String(b.email)));
+    }
     // The mailbox's sync position, only ever moved forward (two notifications can finish in any order).
     // extra: fields written with it (the time of the notification), so a notification costs one write.
     async raiseHistoryId(email, historyId, extra = {}) {

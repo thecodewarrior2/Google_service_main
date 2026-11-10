@@ -19,8 +19,8 @@ Admins ──Identity-Aware Proxy──▶ spruce-admin (Cloud Run, ROLE=admin):
                                    move back → messages.modify (Inbox)
 
 Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watch lasts 7 days)
-                           ──▶ worker /tasks/purge (daily; RETENTION_DAYS)
-                           ──▶ worker /tasks/sync-feeds (daily; the phishing lists, for everyone)
+                           ──▶ worker /tasks/sync-feeds (hourly: the health check, the phishing lists
+                                once a day for everyone, the cleanup of what TTL doesn't delete)
 
 worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
        ··▶ safebrowsing.googleapis.com    OFF by default (SAFE_BROWSING=true): link addresses, no #part

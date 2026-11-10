@@ -299,8 +299,10 @@ job_reached_worker() {
     fail "$name couldn't reach the worker (${why:-status code $code}). Gmail's notifications can't either, so no mail is checked. A 401 or 403 means a sign-in problem in front of the service: docs/INSTALL.md, Troubleshooting, \"The jobs and notifications are refused\"."
 }
 job spruce-renew-watches "17 3 * * *" /tasks/renew-watches
-job spruce-purge "41 4 * * *" /tasks/purge
-# Hourly: the health check (alerts when Gmail has gone quiet), and the phishing lists once a day.
+# (0.4.1: the cleanup runs with the hourly job, so the installation keeps to Cloud Scheduler's 3 free jobs.)
+gcloud scheduler jobs delete spruce-purge --location="$REGION" --quiet >/dev/null 2>&1 || true
+# Hourly: the health check (alerts when Gmail has gone quiet), the phishing lists once a day, and the
+# cleanup of what Firestore's TTL policies don't delete.
 job spruce-sync-feeds "23 * * * *" /tasks/sync-feeds --attempt-deadline=300s
 # Settings → Update runs this job; it starts a Cloud Build as spruce-updater with these steps, fixed
 # here: download google_service_main, then deploy/cloud-update.sh from it. It also runs by itself once a

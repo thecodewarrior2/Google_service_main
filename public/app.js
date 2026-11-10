@@ -562,7 +562,7 @@
     }
 
     // --- Settings, in pages (a menu on the left): Policy, Allowlist, Mailboxes, Weekly summary, Retraining, About
-    async function settingsData() { const d = await api('/api/settings'); showMode(d.mode); return d; }
+    async function settingsData(query = '') { const d = await api(`/api/settings${query}`); showMode(d.mode); return d; }
     const kvRow = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
     async function settings() {   // Policy
         const d = await settingsData();
@@ -586,7 +586,7 @@
             policyCard(d, ALLOW_ROWS, 'Allowlisted senders', 'A change applies within 30 seconds and is noted in Status → Activity. When deploy/settings.env (ALLOW_DOMAINS, ALLOW_ADDRESSES) says something else, deploy/install.sh asks which to keep, and writes the answer into settings.env.')];
     }
     async function mailboxes() {
-        const d = await settingsData();
+        const d = await settingsData('?mailboxes=1');   // (only this page lists them)
         return [h('h1', { text: 'Mailboxes' }), h('p', { class: 'sub', text: 'Who is watched, and whether Gmail\'s notifications arrive for each. The pilot group and unit are set when the service is deployed (deploy/settings.env).' }),
             h('section', { class: 'card' }, h('dl', { class: 'kv' },
                 kvRow('Organization', d.orgDomains.join(', ') || '–'),
@@ -594,6 +594,7 @@
             h('section', { class: 'card spaced' }, h('h2', { text: 'Mailboxes watched' }),
                 renewBar(d.renew),
                 h('div', { class: 'sub', text: 'When Gmail last said each mailbox changed. "None yet" for a mailbox that does get mail means its notifications don\'t arrive. Status → Activity says, after each daily re-read of the group, how many people it found and why any were left out.' }),
+                d.mailboxes && d.mailboxes.length < d.watched ? h('div', { class: 'small muted', text: `The first ${num(d.mailboxes.length)} of ${num(d.watched)}, by address.` }) : null,
                 d.mailboxes && d.mailboxes.length
                     ? dataTable([{ name: 'Mailbox', get: m => m.email }, { name: 'Last notification', get: m => (m.lastNotification ? when(m.lastNotification) : 'None yet') }, { name: 'Watch renews by', get: m => (m.watchExpiration ? when(m.watchExpiration) : '–') }], d.mailboxes)
                     : h('div', { class: 'empty', text: 'None: run the spruce-renew-watches job (docs/INSTALL.md, step 7).' }))];

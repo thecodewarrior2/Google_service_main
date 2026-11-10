@@ -133,6 +133,18 @@ test('records, events and the shared phishing lists round-trip; purge deletes wh
     assert.equal(await s.purge(Date.now() - 365 * 24 * 3600 * 1000), 5);
 });
 
+test('0.4.1: the mailboxes in numbers come from counts and one read, not every mailbox', { skip }, async () => {
+    const s = getStore();
+    const now = Date.now();
+    for (let i = 0; i < 5; i++) await s.putUser(`m${i}@maple-schools.example`, { watched: i < 4, watchExpiration: i < 4 ? now + (i + 1) * 864e5 : null, lastNotification: now - i * 1000 });
+    const sum = await s.mailboxSummary(now + 2.5 * 864e5);
+    assert.ok(sum.watched >= 4);
+    assert.ok(sum.lastNotification >= now);
+    assert.ok(sum.ending >= 2, JSON.stringify(sum));
+    const listed = await s.listWatched(500);
+    assert.ok(listed.some(u => u.email === 'm0@maple-schools.example') && !listed.some(u => u.email === 'm4@maple-schools.example'));
+});
+
 test('0.4.0: a claim and a new sender are created without a transaction; races still have one winner', { skip }, async () => {
     const s = getStore();
     const now = Date.now(), lease = 300000;

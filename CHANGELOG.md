@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.1: Lower monthly costs
+
+For school systems on small budgets: the same protection for less. Costs by district size, with the
+prices checked on Google's pricing page: `docs/SCALING.md` ("What it costs") and `docs/INSTALL.md`
+("Costs").
+
+- **The dashboard no longer reads every mailbox.** Status, Readiness and every Settings page read each
+  watched mailbox's document, and open pages refresh every 30 seconds: at 10,000 mailboxes, a Status page
+  left open all day read about 29 million documents (about $17 a day in `us-east1`). Now they use a count
+  of the watched mailboxes, the latest notification (one read) and a count of watches ending, kept a
+  minute: about 17,000 reads a day. Only Settings → Mailboxes lists mailboxes, the first 500.
+- **The hourly health check counts too** (it read every mailbox's document every hour).
+- **A notification that brings nothing new writes nothing** (someone read or archived an email: two
+  thirds of notifications). The mailbox's position waits up to 30 minutes; the next notification reads
+  its history from there, for 2 Gmail quota units.
+- **Three scheduled jobs, the free ones.** The cleanup of old documents runs with the hourly job (last,
+  within 30 seconds), and `install.sh` removes the daily `spruce-purge` job: Cloud Scheduler gives 3 jobs
+  per billing account for free, then $0.10 a job a month.
+- **The example region is `us-central1`** (`deploy/settings.example.env`, `docs/INSTALL.md`). Firestore
+  in `us-east1` costs twice as much as in any other US region ($0.06 per 100,000 reads and $0.18 per
+  100,000 writes, against $0.03 and $0.09). The region can't be changed once installed.
+- **Stopped mailboxes clear their watch's end**, so "watches ending within a day" counts only watched
+  ones (those stopped before are cleared at the next renewal).
+- **Install:** from Cloud Shell, as 0.4.0 (`installLevel` 2). From 0.4.0, Settings → Update would work
+  too: the old cleanup job then keeps running until the next `install.sh`, harmlessly.
+- **Tests:** 113 (from 109): a notification with nothing new writes nothing for 30 minutes, then writes;
+  the mailboxes in numbers (memory and the Firestore emulator), stopped ones not "ending"; the Mailboxes
+  list only on request; the hourly cleanup; three jobs, the old one removed.
+- **Docs:** `docs/SCALING.md`, `docs/INSTALL.md`, `docs/DEPLOY.md`, `docs/ARCHITECTURE.md`.
+
 ## 0.4.0: Ready for a district (10,000 mailboxes, 100,000 emails a day); its own engine
 
 Measured with the service's own code on a made-up district's mail; the numbers, and the plan for what

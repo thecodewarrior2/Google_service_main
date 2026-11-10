@@ -2,7 +2,8 @@
 // The HTTP service (Cloud Run).
 //   POST /pubsub/push              Gmail notifications, from Pub/Sub (OIDC-verified)
 //   POST /tasks/renew-watches      daily, from Cloud Scheduler (OIDC-verified)
-//   POST /tasks/purge              daily, from Cloud Scheduler: records past RETENTION_DAYS deleted
+//   POST /tasks/purge              records past RETENTION_DAYS deleted (the hourly sync-feeds does it since
+//                                  0.4.1; kept for an older installation's daily job)
 //   POST /tasks/stop-watches       by hand, to switch the service off: every mailbox watch is stopped
 //   POST /tasks/sync-feeds         daily, from Cloud Scheduler: the phishing lists, downloaded once for everyone
 //   GET  /healthz                  for Cloud Run
@@ -45,6 +46,7 @@ async function readBody(req, max = 1024 * 1024) {
 // subject and the checks' own short quotes (both can be turned off: STORE_SUBJECTS, STORE_AI_QUOTES).
 // How long the dashboard keeps today's counters before reading them again (pages refresh every 30 s).
 const STATS_TODAY_MS = 15 * 1000;
+const MAILBOXES_KEPT_MS = 60 * 1000;
 const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign,
     status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
 
@@ -84,6 +86,15 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     // The daily counters (stats/{day}~{shard}): a past day no longer changes, so each instance reads it
     // once; today is read again after STATS_TODAY_MS. (Ten minutes after midnight yesterday still counts as
     // today: instances write what they added up every few seconds. clear-data.sh restarts the dashboard.)
+    // The mailboxes in numbers (how many watched, the latest notification, watches ending within a day):
+    // three small queries, kept a minute, for Status, Readiness and Settings, which open pages fetch every
+    // 30 s. (Reading every mailbox's document there cost 10,000 reads a page at 10,000 mailboxes.) Only
+    // Settings → Mailboxes lists them, at most 500.
+    let mailboxInfo = null;
+    const mailboxes = async () => {
+        if (!mailboxInfo || Date.now() - mailboxInfo.at > MAILBOXES_KEPT_MS) mailboxInfo = { at: Date.now(), v: await store.mailboxSummary(Date.now() + A.DAY) };
+        return mailboxInfo.v;
+    };
     const pastStats = new Map(); let todayStats = null;
     const statsFor = async (fromDay, toDay) => {
         const now = Date.now(), today = A.dayOf(now), settled = A.dayOf(now - 10 * 60 * 1000) < today ? A.dayOf(now - A.DAY) : today;
@@ -156,15 +167,15 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         if (canRenew()) {
             const sync = await scheduler.lastRun(cfg.renewJob.replace(/spruce-renew-watches$/, 'spruce-sync-feeds')).catch(e => ({ error: e.message }));
             if (sync.error) add('hourly', null, `Couldn't read the hourly job: ${String(sync.error).slice(0, 160)}`);
-            else add('hourly', !!sync.at && !sync.code && now - sync.at < 2 * 3600 * 1000, sync.at ? `The hourly job (health check, phishing lists, weekly summary) last ran ${Math.round((now - sync.at) / 60000)} minutes ago${sync.code ? ', and didn\'t reach the worker' : ''}.` : 'The hourly job hasn\'t run yet.',
+            else add('hourly', !!sync.at && !sync.code && now - sync.at < 2 * 3600 * 1000, sync.at ? `The hourly job (health check, phishing lists, weekly summary, cleanup) last ran ${Math.round((now - sync.at) / 60000)} minutes ago${sync.code ? ', and didn\'t reach the worker' : ''}.` : 'The hourly job hasn\'t run yet.',
                 'Check spruce-sync-feeds in Cloud Scheduler, or run bash deploy/doctor.sh.');
         }
-        const users = (await store.listUsers()).filter(u => u.watched);
-        const last = Math.max(0, ...users.map(u => Number(u.lastNotification) || 0));
-        add('notifications', users.length > 0 && !!last && now - last < cfg.quietHours * 3600 * 1000,
-            !users.length ? 'No mailbox is watched.' : last ? `Gmail's last notification: ${Math.round((now - last) / 60000)} minutes ago, for ${users.length} watched mailboxes.` : 'No notification from Gmail yet.',
-            !users.length ? 'Settings → Mailboxes → Update group membership now, then the list below it.' : 'Send a test email to a watched mailbox; if nothing comes, run bash deploy/doctor.sh.');
-        const expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + 24 * 3600 * 1000).length;
+        const mb = await mailboxes();
+        const last = mb.lastNotification || 0;
+        add('notifications', mb.watched > 0 && !!last && now - last < cfg.quietHours * 3600 * 1000,
+            !mb.watched ? 'No mailbox is watched.' : last ? `Gmail's last notification: ${Math.round((now - last) / 60000)} minutes ago, for ${mb.watched} watched mailboxes.` : 'No notification from Gmail yet.',
+            !mb.watched ? 'Settings → Mailboxes → Update group membership now, then the list below it.' : 'Send a test email to a watched mailbox; if nothing comes, run bash deploy/doctor.sh.');
+        const expiring = mb.ending;
         add('watches', !expiring, expiring ? `${expiring} mailbox watches end within a day.` : 'Every watch is renewed in time.', 'Settings → Mailboxes → Update group membership now.');
         if (service.intel && service.intel.feeds) {
             const lists = await service.intel.feeds.status().catch(() => []);
@@ -213,22 +224,23 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const tx = (await store.getState('trainingExport')) || {};
             return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
         },
-        'GET /api/settings': async () => {
+        'GET /api/settings': async (q) => {
             const E = spruce.load();
             const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
             const digest = Object.assign({ enabled: false }, await store.getState('digest'));
             const trainingExport = Object.assign({ enabled: false }, await store.getState('trainingExport'));
             const policy = service.policyInfo ? service.policyInfo() : null;
-            const watchedUsers = (await store.listUsers()).filter(u => u.watched);
+            const mb = await mailboxes();
+            // (the list, for Settings → Mailboxes only: ?mailboxes=1)
+            const listed = q && q.get && q.get('mailboxes') ? await store.listWatched(500) : null;
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
-                     model: E.modelInfo, engine: E.vendor, watched: watchedUsers.length, demo: cfg.demo,
+                     model: E.modelInfo, engine: E.vendor, watched: mb.watched, demo: cfg.demo,
                      // Each watched mailbox, and when Gmail last said it changed: none since the watch
                      // started means no notifications arrive for it.
-                     mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
-                         .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
+                     mailboxes: listed && listed.map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                      renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION,
                      policy, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
@@ -365,10 +377,10 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         // "Ready for enforce mode?"
         'GET /api/readiness': async (q) => {
             const { records } = await load(q);
-            const users = (await store.listUsers()).filter(u => u.watched);
+            const mb = await mailboxes();
             return { readiness: A.readiness(records, { now: Date.now(), days: nDays(q), mode: cfg.mode, installedAt: await store.getState('installedAt'),
-                brakeLimit: await service.brakeLimit(), holdAfter: cfg.campaignHoldAfter, watched: users.length,
-                lastNotification: Math.max(0, ...users.map(u => Number(u.lastNotification) || 0)) || null, quietHours: cfg.quietHours, renew: await lastRenew() }) };
+                brakeLimit: await service.brakeLimit(), holdAfter: cfg.campaignHoldAfter, watched: mb.watched,
+                lastNotification: mb.lastNotification, quietHours: cfg.quietHours, renew: await lastRenew() }) };
         },
         // "Update group membership now": runs the daily re-read job at once (it calls the worker; the
         // dashboard doesn't). Said in Recent activity, with who asked.

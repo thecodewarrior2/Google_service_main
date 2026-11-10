@@ -224,8 +224,9 @@ itself, typically within a day (billed as deletes). `deploy/install.sh` sets the
 for g in seen records events moveCounts campaigns cache; do gcloud firestore fields ttls update expireAt --collection-group=$g --enable-ttl --async; gcloud firestore indexes fields update expireAt --collection-group=$g --disable-indexes --async; done
 ```
 
-The daily `spruce-purge` job still deletes what has no `expireAt` (written before 0.4.0), within 90
-seconds a run.
+The hourly `spruce-sync-feeds` job also deletes what has no `expireAt` (written before 0.4.0), for up
+to 30 seconds a run (since 0.4.1; before, a daily `spruce-purge` job did, which `install.sh` now
+removes, keeping the installation to Cloud Scheduler's 3 free jobs).
 
 ## 6. Notifications and daily jobs
 
@@ -238,11 +239,7 @@ gcloud scheduler jobs create http spruce-renew-watches --location=REGION --sched
 ```
 
 ```bash
-gcloud scheduler jobs create http spruce-purge --location=REGION --schedule="41 4 * * *" --uri=WORKER_URL/tasks/purge --http-method=POST --oidc-service-account-email=spruce-invoker@PROJECT.iam.gserviceaccount.com --oidc-token-audience=WORKER_URL
-```
-
-```bash
-gcloud scheduler jobs create http spruce-sync-feeds --location=REGION --schedule="23 5 * * *" --uri=WORKER_URL/tasks/sync-feeds --http-method=POST --oidc-service-account-email=spruce-invoker@PROJECT.iam.gserviceaccount.com --oidc-token-audience=WORKER_URL --attempt-deadline=300s
+gcloud scheduler jobs create http spruce-sync-feeds --location=REGION --schedule="23 * * * *" --uri=WORKER_URL/tasks/sync-feeds --http-method=POST --oidc-service-account-email=spruce-invoker@PROJECT.iam.gserviceaccount.com --oidc-token-audience=WORKER_URL --attempt-deadline=300s
 ```
 
 Run the list and renew jobs once by hand to start:

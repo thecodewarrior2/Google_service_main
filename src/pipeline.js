@@ -37,6 +37,8 @@ const WAIT_FOR_OTHERS_MS = 5000;
 // How often a mailbox's "last notification" time is written when its history position doesn't move (it
 // is written with the position otherwise): the Status page and the quiet-mailbox alert (12 hours) need no more.
 const NOTED_EVERY_MS = 10 * 60 * 1000;
+// How long a mailbox's sync position may wait when its notifications bring nothing new (see above).
+const QUIET_POSITION_MS = 30 * 60 * 1000;
 // Senders remembered per instance (about 100 bytes each).
 const SENDERS_KEPT = 100000;
 // How often the worker writes the day's counters it added up (src/server.js; see Service.count).
@@ -321,7 +323,12 @@ class Service {
             else if (r) results.push(r);
         }
         if (busy.length && !(await this.othersDone(user, busy))) hold = true;
+        // Nothing new for the Inbox (the user read or archived something; two thirds of notifications): the
+        // sync position can wait up to QUIET_POSITION_MS, as the next notification reads the history from
+        // where it is (2 quota units). No write, no transaction.
+        const nothingNew = !added.ids.length && !(added.inboxed || []).length && !added.more && !u.backfill;
         if (hold || !movesForward(String(added.historyId), u.historyId)) await note();
+        else if (nothingNew && this.now() - (Number(u.lastNotification) || 0) < QUIET_POSITION_MS) { /* written later */ }
         else await this.store.raiseHistoryId(user, String(added.historyId), noted);
         if (u.backfill) { try { await this.backfillStep(user, u.backfill); } catch (e) { this.log.error(`backfill ${user}:`, e); } }
         if (this.log.info) this.log.info(`notification: ${added.ids.length} new in the Inbox, ${results.length} checked${hold ? ', some left to try again' : ''}`);
@@ -793,9 +800,12 @@ class Service {
         const gone = [...known.values()].filter(u => u.watched && !users.has(u.email));
         await pool(gone, parallel, async (u) => {
             try { await this.gmail.stop(u.email); } catch (e) { /* already stopped */ }
-            await this.store.putUser(u.email, { watched: false });
+            await this.store.putUser(u.email, { watched: false, watchExpiration: null });
             stopped++;
         }, over);
+        // (Stopped before 0.4.1, their watches' end left behind: cleared, so "watches ending" counts only
+        // the watched.)
+        await pool([...known.values()].filter(u => !u.watched && u.watchExpiration && !users.has(u.email)), parallel, (u) => this.store.putUser(u.email, { watchExpiration: null }), over);
         // Watched now: every member whose watch (renewed now, or before) hasn't ended. The automatic brake
         // is half of these.
         const ok = [...users].filter(u => (out.get(u) || expiry(u)) > now).length;
@@ -816,7 +826,7 @@ class Service {
         for (const u of await this.store.listUsers()) {
             if (!u.watched) continue;
             try { await this.gmail.stop(u.email); } catch (e) { /* already stopped */ }
-            await this.store.putUser(u.email, { watched: false });
+            await this.store.putUser(u.email, { watched: false, watchExpiration: null });
             stopped++;
         }
         await this.store.addEvent({ kind: 'mode', text: `All ${stopped} mailbox watches were stopped.` });
@@ -824,22 +834,30 @@ class Service {
     }
 
     // Cloud Scheduler, daily: records older than RETENTION_DAYS are deleted.
-    purge() { return this.store.purge(this.now() - this.cfg.retentionDays * DAY); }
+    purge(opts = {}) { return this.store.purge(this.now() - this.cfg.retentionDays * DAY, opts); }
 
     // Cloud Scheduler, hourly (the spruce-sync-feeds job): the health check, then the phishing lists,
     // downloaded once a day for everyone (src/intel/feeds.js; a failed download is tried again the next
     // day, not every hour).
+    // Since 0.4.1 it also deletes what Firestore's TTL policies don't (documents written before 0.4.0),
+    // last, with what is left of the request's time (at most 30 s): no daily job of its own, so the
+    // installation keeps to Cloud Scheduler's 3 free jobs.
     async syncFeeds() {
+        const started = Date.now();
         await this.refreshPolicy();
-        let health, digest = null;
+        let health, digest = null, out;
         try { health = await this.health(); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
         try { digest = await this.maybeDigest(); } catch (e) { digest = { error: String(e.message || e).slice(0, 200) }; this.log.error('weekly summary:', e); }
         if (digest) health.digest = digest;
-        if (!this.intel || !this.intel.feeds) return { health, skipped: 'phishing lists are off' };
-        const last = Number(await this.store.getState('feedsAttemptedAt')) || 0;
-        if (this.now() - last < 20 * HOUR) return { health, skipped: 'checked within the day' };
-        await this.store.setState('feedsAttemptedAt', this.now());
-        return Object.assign({ health }, await this.intel.feeds.sync());
+        if (!this.intel || !this.intel.feeds) out = { health, skipped: 'phishing lists are off' };
+        else {
+            const last = Number(await this.store.getState('feedsAttemptedAt')) || 0;
+            if (this.now() - last < 20 * HOUR) out = { health, skipped: 'checked within the day' };
+            else { await this.store.setState('feedsAttemptedAt', this.now()); out = Object.assign({ health }, await this.intel.feeds.sync()); }
+        }
+        const budgetMs = Math.min(30 * 1000, 90 * 1000 - (Date.now() - started));
+        if (budgetMs > 0) { try { out.purged = await this.purge({ budgetMs }); } catch (e) { out.purged = { error: String(e.message || e).slice(0, 200) }; } }
+        return out;
     }
 
     // --- The weekly summary email (dashboard Settings; off by default) --------------------------------
@@ -969,24 +987,25 @@ class Service {
     // Whether the service is getting Gmail's notifications at all, and its watches are renewed. Each
     // problem is alerted once a day: no notification for QUIET_HOURS for any watched mailbox (they may be
     // refused before reaching the service), or watches ending within a day (the daily re-read failing).
+    // (Counted, not read: three small queries, not 10,000 documents an hour.)
     async health() {
         const now = this.now();
-        const users = (await this.store.listUsers()).filter(u => u.watched);
-        const out = { watched: users.length };
-        if (!users.length) return out;
+        const sum = await this.store.mailboxSummary(now + DAY);
+        const out = { watched: sum.watched };
+        if (!sum.watched) return out;
         const once = async (name, kind, text) => {
             if (now - (Number(await this.store.getState(name)) || 0) < DAY) return;
             await this.store.setState(name, now);
             await this.alert(kind, text);
         };
-        const last = Math.max(0, ...users.map(u => Number(u.lastNotification) || 0));
+        const last = sum.lastNotification || 0;
         const since = last || Number(await this.store.getState('installedAt')) || now;
         out.lastNotification = last || null;
         if (now - since > this.cfg.quietHours * HOUR) {
             out.quiet = true;
-            await once('quietAlertAt', 'quiet', `No notification from Gmail for ${Math.round((now - since) / HOUR)} hours, for any of the ${users.length} watched mailboxes. Gmail's notifications may be refused before they reach the service: docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".`);
+            await once('quietAlertAt', 'quiet', `No notification from Gmail for ${Math.round((now - since) / HOUR)} hours, for any of the ${sum.watched} watched mailboxes. Gmail's notifications may be refused before they reach the service: docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".`);
         }
-        out.expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + DAY).length;
+        out.expiring = sum.ending;
         if (out.expiring) await once('expiringAlertAt', 'watch-expiring', `${out.expiring} mailbox watches end within a day and weren't renewed: the daily re-read of the group (spruce-renew-watches) may be failing. Settings → Mailboxes says when it last reached the service.`);
         return out;
     }

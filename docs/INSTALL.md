@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.4.0.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.4.1.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.4.0.zip
+   unzip spruce-mail-protection-0.4.1.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.4.0
+   cd spruce-mail-protection-0.4.1
    ```
 
 4. Make your settings file:
@@ -91,7 +91,7 @@ can only read groups. It never uses that account's password.
    | Setting | Put in |
    |---|---|
    | `PROJECT` | the project ID from step 3 |
-   | `REGION` | a region near you, for example `us-east1` |
+   | `REGION` | `us-central1` (Iowa) or `us-west1` (Oregon), among the cheapest for Firestore. Avoid `us-east1` (South Carolina): Firestore costs twice as much there, the only US region that does. Cloud Run costs the same everywhere in the US. It can't be changed once installed |
    | `ORG_DOMAINS` | your email domain(s), separated by semicolons |
    | `PILOT_GROUP` | the security group from step 1 |
    | `DIRECTORY_ADMIN` | the account from step 2 |
@@ -357,7 +357,7 @@ amounts change; check its pricing pages):
 | Cloud Run | 2 million requests, 180,000 CPU-seconds | 60,000 requests, 30,000 CPU-seconds |
 | Firestore | 50,000 reads and 20,000 writes a day, 1 GB | a few thousand writes a day |
 | Pub/Sub | 10 GB | well under 1 GB |
-| Cloud Scheduler | 3 jobs | 3 jobs (one runs hourly: the health check) |
+| Cloud Scheduler | 3 jobs per billing account | 3 jobs (one runs hourly: the health check and cleanup) |
 | Cloud Monitoring alerts | log-based alerts read no metrics | 2 alert policies, expected free (the budget alert would say otherwise) |
 | Cloud Build (only when Docker can't upload) | 2,500 build-minutes | a few minutes per install |
 | Cloud Storage (only with Cloud Build) | 5 GB in `us-east1`, `us-central1` and `us-west1` | about 5 MB per install (the uploaded source) |
@@ -372,8 +372,28 @@ The installer keeps it there:
     **Billing → Budgets & alerts**, scoped to this project.
 - **Only the newest 3 builds are kept** in Artifact Registry. Google applies the cleanup about once a
   day.
-- **Instance limits:** at most 10 workers and 3 dashboards running at once, so a burst of mail can't
-  run up the bill.
+- **Instance limits:** at most 30 workers (`WORKER_MAX_INSTANCES`) and 3 dashboards running at once,
+  so a burst of mail can't run up the bill.
+
+**A whole district** (estimates from `docs/SCALING.md`, about 10 emails a mailbox a day, in
+`us-central1`; `us-east1` costs about twice as much for Firestore):
+
+| Mailboxes | Emails a day | About a month |
+|---|---|---|
+| 500 | 5,000 | $0 (within the free allowances) |
+| 2,000 | 20,000 | about $2 |
+| 5,000 | 50,000 | about $10 |
+| 10,000 | 100,000 | about $30 |
+
+What keeps it low:
+- **The region.** Firestore in `us-east1` costs twice what it does in any other US region
+  (`us-central1`, `us-west1`: $0.03 per 100,000 reads and $0.09 per 100,000 writes, against $0.06 and
+  $0.18). It is chosen at install and can't be changed: a district moving out of `us-east1` installs in a
+  new project.
+- **Close the dashboard when you're done.** An open page refreshes every 30 seconds (it reads little,
+  but not nothing), and a dashboard that has gone idle reads its records again when it is next opened.
+- **`RETENTION_DAYS`** (60 by default): fewer days, fewer records to keep and to read when the dashboard
+  starts.
 
 To turn the alert off, set `BUDGET_ALERT=off`.
 
@@ -477,4 +497,4 @@ Details).
 - **Step 6/9: Cloud Build fails.** Its log is printed above the message.
   - **A permission error about `spruce-build`** right after it was created: new permissions take a
     minute or two to apply. Run `install.sh` again.
-  - **A region error:** Cloud Build runs in `REGION`. Pick a region it supports, for example `us-east1`.
+  - **A region error:** Cloud Build runs in `REGION`. Pick a region it supports, for example `us-central1`.

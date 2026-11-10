@@ -15,6 +15,12 @@ class MemoryStore {
     }
     async getUser(email) { return this.users.get(email) || null; }
     async putUser(email, patch) { this.users.set(email, Object.assign({}, this.users.get(email) || { email }, patch)); }
+    async mailboxSummary(untilMs = Date.now() + 24 * 3600 * 1000) {
+        const us = [...this.users.values()];
+        const last = Math.max(0, ...us.map(u => Number(u.lastNotification) || 0));
+        return { watched: us.filter(u => u.watched).length, lastNotification: last || null, ending: us.filter(u => typeof u.watchExpiration === 'number' && u.watchExpiration < untilMs).length };
+    }
+    async listWatched(limit = 500) { return (await this.listUsers()).filter(u => u.watched).sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, limit); }
     async listUsers() { return [...this.users.values()]; }
     // The mailbox's sync position, only ever moved forward. Returns the position kept.
     async raiseHistoryId(email, historyId, extra = {}) {

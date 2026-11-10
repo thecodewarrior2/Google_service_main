@@ -61,6 +61,10 @@ test('install.sh: the whole install in order, and what each step sets up', { ski
         assert.match(r.out, /Old documents expire by themselves \(Firestore TTL policies\)/);
         assert.ok(has(r.calls, /run deploy spruce-worker .*--max-instances=30 --execution-environment=gen2 --cpu-boost/));
         assert.ok(has(r.calls, /run deploy spruce-admin .*--memory=1Gi .*--cpu-boost/));
+        // 0.4.1: three scheduled jobs (Cloud Scheduler's free ones): the cleanup runs with the hourly job.
+        const made = r.calls.filter(c => /scheduler jobs create http /.test(c)).map(c => c.match(/create http (\S+)/)[1]);
+        assert.deepEqual(made.sort(), ['spruce-renew-watches', 'spruce-sync-feeds', 'spruce-update']);
+        assert.ok(has(r.calls, /scheduler jobs delete spruce-purge /), 'the old daily cleanup job removed');
         assert.ok(!has(r.calls, /--no-iap/), 'IAP was off on the worker: nothing to turn off');
         assert.match(r.out, /spruce-renew-watches reached the service/);
         // Alerts: an email channel and two log-based policies, as valid JSON.
