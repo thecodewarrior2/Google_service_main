@@ -66,6 +66,7 @@ print("\t".join([key, raw, words(v), str(o.get("by") or "an admin"), when, state
 '
 
 dashboard_label() { case "$1" in mode) echo mode ;; aiThreshold) echo 'AI move threshold' ;; brakePerHour) echo brake ;; timeZone) echo 'time zone' ;; allowDomains) echo 'allowlisted domains' ;; allowAddresses) echo 'allowlisted addresses' ;; esac; }
+dashboard_comes() { case "$1" in allowDomains | allowAddresses) echo come ;; *) echo comes ;; esac; }   # (the allowlists are plural)
 dashboard_env_name() { case "$1" in mode) echo MODE ;; aiThreshold) echo AI_MOVE_THRESHOLD ;; brakePerHour) echo BRAKE_PER_HOUR ;; timeZone) echo TIME_ZONE ;; allowDomains) echo ALLOW_DOMAINS ;; allowAddresses) echo ALLOW_ADDRESSES ;; esac; }
 dashboard_fs() {   # dashboard_fs PROJECT CURL-ARGS...: a Firestore REST call as the Cloud Shell account
     local project="$1"; shift
@@ -91,7 +92,7 @@ dashboard_policy_summary() {
     while IFS=$'\t' read -r key value words by at state fwords; do
         [ -n "$key" ] || continue
         case "$state" in
-            unset) echo "  The $(dashboard_label "$key") comes from the dashboard ($words, changed by $by, $at): settings.env doesn't set it." ;;
+            unset) echo "  The $(dashboard_label "$key") $(dashboard_comes "$key") from the dashboard ($words, changed by $by, $at): settings.env doesn't set it." ;;
             differs) echo "  The dashboard and settings.env differ on the $(dashboard_label "$key"): $words on the dashboard (by $by, $at), $fwords in settings.env. The installer asks which to keep." ;;
         esac
     done <<< "$DASHBOARD_POLICY"
@@ -127,7 +128,7 @@ dashboard_policy_reconcile() {
         name="$(dashboard_env_name "$key")"
         if [ "$state" = unset ] || { [ "$state" = differs ] && [ "$choice" = dashboard ]; }; then
             dashboard_set_setting "$file" "$name" "$value"; printf -v "$name" '%s' "$value"
-            if [ "$state" = unset ]; then echo "  The $(dashboard_label "$key") comes from the dashboard: $words (now in $file too)."; DASHBOARD_NOTES="$DASHBOARD_NOTES; took the dashboard's $(dashboard_label "$key") ($words), which settings.env didn't set"
+            if [ "$state" = unset ]; then echo "  The $(dashboard_label "$key") $(dashboard_comes "$key") from the dashboard: $words (now in $file too)."; DASHBOARD_NOTES="$DASHBOARD_NOTES; took the dashboard's $(dashboard_label "$key") ($words), which settings.env didn't set"
             else echo "  Keeping the dashboard's $(dashboard_label "$key"): $words (now in $file too)."; DASHBOARD_NOTES="$DASHBOARD_NOTES; kept the dashboard's $(dashboard_label "$key") ($words) over settings.env's ($fwords)"; fi
         elif [ "$state" = differs ]; then
             echo "  Using settings.env's $(dashboard_label "$key"): $fwords (the dashboard's $words is removed once this version is deployed)."

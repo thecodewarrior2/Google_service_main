@@ -302,7 +302,7 @@ test('the dashboard\'s policy changes when installing: taken where settings.env 
         r = w.run('install.sh', { FAKE_POLICY_allowDomains: 'news.example,vendor.example|', FAKE_POLICY_allowAddresses: 'billing@vendor.example,a&b@bus.example|' });
         assert.equal(r.code, 0, r.out);
         assert.doesNotMatch(r.out, /say different things/, 'the same domains in another order and case');
-        assert.match(r.out, /The allowlisted addresses come from the dashboard|The allowlisted addresses comes from the dashboard/);
+        assert.match(r.out, /The allowlisted addresses come from the dashboard/);
         assert.match(settings(), /^ALLOW_ADDRESSES=a&b@bus\.example,billing@vendor\.example$/m, 'written as it is (& kept)');
         assert.match(envOf('spruce-worker'), /^ALLOW_ADDRESSES: "a&b@bus\.example,billing@vendor\.example"$/m);
     } finally { w.cleanup(); }
