@@ -276,7 +276,11 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
 | `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside) |
 | `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain |
-| `BRAKE_PER_HOUR` | `100` | more moves than this in an hour pauses moving |
+| `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
+| `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before the rest wait for an admin; strong evidence is never held |
+| `CAMPAIGN_ALERT_AFTER` | `50` | a campaign moved this many times sends an alert |
+| `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |
+| `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |

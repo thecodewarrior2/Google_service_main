@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.3.0: Brakes that protect a whole district, alerts, campaign decisions
+
+With 7,000 mailboxes, the brake (100 moves an hour, for everyone) would have stopped protecting people
+early in a real phishing campaign. The brakes now tell a clear phishing campaign from a possible
+misfire.
+
+- **Strong evidence is never held.** The rules flag the email *and* something outside it confirms it:
+  - a link Cloudflare blocks or a phishing list has;
+  - a sender on a list or blocked;
+  - a brand-new look-alike domain;
+  - Gmail's DMARC check failing.
+
+  Every copy is moved, to every mailbox. Each record says how strong its evidence was.
+- **Weaker evidence is held per campaign.** Past `CAMPAIGN_HOLD_AFTER` (25) copies of one campaign moved
+  without outside confirmation, the rest wait in the Inbox, recorded as "would move". Other mail keeps
+  moving. An alert and a banner on Overview ask an admin to decide.
+- **The domain-wide brake is a last resort.** `BRAKE_PER_HOUR` now defaults to half the watched
+  mailboxes, at least 100 (3,500 for 7,000).
+  - Its count is exact: a slot is reserved before each move. Before, it was counted after the move, so
+    moves happening at the same moment could pass the limit.
+  - Tripping it is one atomic step (one alert).
+- **Held mail is recoverable.** **Resume and move held mail** moves what the domain-wide brake held, if
+  still in the Inbox. **Resume without moving** leaves it.
+- **Campaign decisions** (Messages, filtered to a campaign):
+  - **Confirm phishing: move every copy** moves held and recorded copies and marks them all phishing,
+    and later copies aren't held. It can also search every watched mailbox's Inbox of the last 7 days
+    for copies the service didn't record (same sender domain and subject), reading only From and
+    Subject.
+  - **False alarm: release every copy** releases the moved ones; later copies aren't moved.
+  - **Find other copies** runs that search again.
+  - In monitor mode nothing is moved.
+- **Alerts by email** (`ALERT_EMAIL`, default the `ADMIN_GROUP`; `off` for none). The service logs each
+  alert, and Cloud Monitoring emails it through two log-based alert policies that `install.sh` makes
+  (expected free). The alerts:
+  - the domain-wide brake engaged;
+  - a campaign held;
+  - a large campaign (`CAMPAIGN_ALERT_AFTER`, 50 moves);
+  - no notification from Gmail for `QUIET_HOURS` (12), or watches about to end, from an hourly health
+    check;
+  - a user taking a flagged email into their Inbox;
+  - the group re-read failing;
+  - any failed scheduled job (as with Identity-Aware Proxy on the worker).
+- **Mail that skipped the checks:**
+  - **An email the user moves into the Inbox that was never checked** (it went to Spam first, within 7
+    days of arrival) is checked and recorded, never moved, with an alert when the checks flag it.
+  - **After a gap in a mailbox's history,** its Inbox since the last notification (at most a week) is
+    checked, 25 at a time with each later notification. Before, it was skipped.
+- **Dashboard:**
+  - **Readiness**: whether monitor mode has shown enough for enforce mode, as checks;
+  - **Activity**: alerts, admin actions, errors, watching, by kind;
+  - **Download CSV** on Messages (cells a spreadsheet would run as formulas are written as text);
+  - the strength of the evidence on each email;
+  - the brake and campaign hold in Settings.
+- **Scale**, found by the new Firestore tests: counters that every move or checked email updated were
+  single Firestore documents, which take about one write a second.
+  - The brake's hourly count is split in up to 32 shards, whose limits add up to the limit exactly.
+  - The campaign hold only reads once a campaign is held. Campaign move counts use an increment.
+  - The daily stats are split in 10 shards, summed when read (older days' single documents count too).
+- **`install.sh`:**
+  - Cloud Monitoring API, the email channel and the alert policies;
+  - `spruce-sync-feeds` runs hourly for the health check (still 3 jobs; the lists are downloaded once a
+    day, and a failed download is tried again the next day);
+  - `CAMPAIGN_HOLD_AFTER` and `ALERT_EMAIL` settings, which `upgrade.sh` adds empty.
+- **Tests:** 67 (from 47).
+  - `test/brakes.test.js`: the brakes, held mail, campaign decisions, the two gaps, health.
+  - `test/install.test.js`: the deploy scripts against stand-ins for `gcloud` and `docker`, which were
+    checked by hand before.
+  - `test/firestore.test.js`: the Firestore store against Google's emulator, run in CI by a new job.
+  - New dashboard routes in `test/server.test.js`.
+- **Docs:** `README.md`, `docs/INSTALL.md` (settings, the brakes in enforce mode, Troubleshooting, Costs),
+  `docs/DEPLOY.md` (settings), `docs/ARCHITECTURE.md`, `docs/PRIVACY.md` (what the new checks read, alert
+  emails, the CSV), `docs/ROADMAP.md`.
+
 ## 0.2.14: The files that are in both repositories read right in both
 
 Each release copies `google_service_testing` unchanged to `google_service_main`. So `CLAUDE.md`, `README.md`

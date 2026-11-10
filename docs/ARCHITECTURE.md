@@ -55,6 +55,24 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
     label and writes the record without moving the email again.
   - **The sync position only moves forward,** whichever notification finishes last. History is read
     4,000 messages at a time; a longer backlog is read in parts, never skipped.
+- **Brakes for a whole district** (`brakes` in `src/pipeline.js`). A move first passes:
+  - **an admin's decision on the campaign** (released: not moved; confirmed: moved);
+  - **the campaign hold**, for weak evidence only (no outside confirmation): past `CAMPAIGN_HOLD_AFTER`
+    copies of one campaign, the rest wait. Strong evidence is never held;
+  - **the domain-wide brake**, a last resort: a slot is reserved in the hour's count before each move, in
+    up to 32 Firestore shards whose limits add up to the limit exactly.
+
+  Held copies stay in the Inbox, recorded as "would move", and can be moved later: on **Resume and move
+  held mail**, or when the campaign is confirmed (`moveHeld`). The counters are spread so one busy
+  campaign doesn't make every move wait for one Firestore document; the daily stats are spread too.
+- **Alerts.** The service logs each alert as a structured line (`spruceAlert`, `message`) and adds it to
+  Recent activity. Cloud Monitoring emails them, and any failed Cloud Scheduler job, to `ALERT_EMAIL`
+  (log-based alert policies made by `deploy/install.sh`). The hourly `spruce-sync-feeds` job runs a
+  health check: no notification from Gmail for `QUIET_HOURS`, or watches about to end.
+- **Mail that skipped the checks.** An email the user moves into the Inbox that the service never
+  checked (it went to Spam first) is checked when its Inbox label shows in the history, and never moved.
+  After a gap in a mailbox's history, its Inbox since the last notification is checked in batches of 25
+  with the next notifications.
 - **Lookups that never block mail.** Every lookup has its own time limit and limits on requests at once,
   and answers are remembered (6 hours to a day; registry dates 30 days, shared). One that fails or is
   slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.

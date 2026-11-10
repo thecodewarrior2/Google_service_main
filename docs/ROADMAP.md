@@ -11,10 +11,10 @@ What the service doesn't do yet, roughly in the order it would help.
    - **Safe Browsing's Update API:** local hash prefixes, so link addresses are not sent at all.
 2. **Retraining from real mail.** False alarms marked in the dashboard, de-identified and reviewed,
    become training examples for phish-tiny (the extension's `tools/ai/data/extra/`).
-3. **Campaign actions.** "Move every copy" and "release every copy" for a whole campaign, plus finding
-   earlier copies already delivered before the first one was judged.
-4. **Notifications.** Email or chat alerts to IT when the brake trips or a large campaign arrives, and an
-   optional daily digest to users of what was moved for them.
+3. **Campaign actions** are in (0.3.0). Still out: a campaign search over more than the last 7 days.
+4. **Notifications.** Email alerts to IT are in (0.3.0: brakes, held campaigns, large campaigns, Gmail
+   gone quiet, failed jobs). Still out: chat alerts, and an optional daily digest to users of what was
+   moved for them.
 5. **Composite Firestore indexes**, for districts big enough that the dashboard's bounded reads (the
    latest 20,000 records in the period) aren't enough.
 6. **Real admin quarantine** (Design B): an inbound gateway that adds a verdict header and a Gmail

@@ -10,6 +10,14 @@ protect.
   within seconds of delivery.
   - The whole raw message is read **in memory only** while it is judged, then discarded.
   - Attachments are listed by name and type only; their contents are not read.
+- **Also read, the same way:**
+  - an email a user moves into their Inbox themselves that the service never checked (from Spam, within 7
+    days of arrival). It is checked and recorded, never moved;
+  - after a gap in a mailbox's history (the service was unreachable for a while), that Inbox's mail since
+    the last notification, at most a week.
+- **When an admin confirms a campaign and asks for a search:** each watched mailbox's Inbox of the last 7
+  days is searched for mail from the campaign's senders. Only the From and Subject of the matching emails
+  are read, to tell whether they are copies.
 - **Not read:** sent mail, drafts, mail already in Spam, and mailboxes outside the pilot.
 - **Who is in the pilot:**
   - read through the Admin SDK by an admin account with only read access (to groups, or to users for a
@@ -52,6 +60,11 @@ And:
   Every release and mark records who did it.
 - **The service's own accounts:** in your Cloud project, under IAM. Limit project access to the people
   who run the service.
+- **Alert emails** go to `ALERT_EMAIL` (the admin group by default). They say what happened, with what
+  the dashboard shows for it: a campaign's sender domain and subject, and for a user who took a flagged
+  email into their Inbox, their address and the sender's.
+- **The CSV export** (Messages → Download CSV) holds what the Messages page shows: keep the file as you
+  would the dashboard.
 
 ## What is sent elsewhere
 

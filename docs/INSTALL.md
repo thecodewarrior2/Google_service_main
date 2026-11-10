@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.2.14.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.0.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.2.14.zip
+   unzip spruce-mail-protection-0.3.0.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.2.14
+   cd spruce-mail-protection-0.3.0
    ```
 
 4. Make your settings file:
@@ -99,6 +99,7 @@ can only read groups. It never uses that account's password.
    | `ADMIN_EMAILS` | optional: more people who may open the dashboard, separated by semicolons |
    | `MODE` | leave `monitor` |
    | `BUDGET_ALERT` | leave `1`: an email at the first charge (see "Costs") |
+   | `ALERT_EMAIL` | leave empty: alerts go to `ADMIN_GROUP`. That group must accept email from outside the domain (alerts come from Google Cloud); otherwise put a person's address. `off` for none |
 
 ## 5. Install
 
@@ -171,12 +172,23 @@ When it finishes, it prints the **dashboard address**.
   - Open the *Would be moved* emails.
   - Use **Mark false alarm** or **Confirm phishing**.
   - Watch **Model health**.
+  - **Readiness** turns these into checks; switch when they are all green.
 - **To move mail for real:**
   1. Set `MODE=enforce` in `deploy/settings.env`.
   2. Run `bash deploy/install.sh` again.
 
   Moved mail goes to Spam with the label `SPRUCE/Moved`. A user can always move it back, and the
   dashboard records that.
+- **In enforce mode, the brakes** (README, "Careful by default"):
+  - **A campaign held for your decision** (an alert, and a banner on Overview). Many copies were moved on
+    evidence nothing outside the email confirms, so the rest wait in the Inbox. Open it:
+    - **Confirm phishing** moves every copy, optionally searching every watched mailbox for more;
+    - **False alarm** releases the moved ones, and later copies aren't moved.
+  - **The domain-wide brake** (an alert, and a red banner). Far more moves in an hour than a campaign
+    makes: something may be wrong. Look at Messages, then:
+    - **Resume and move held mail** moves what it held;
+    - **Resume without moving** leaves it in the Inbox.
+  - Clear phishing (rules plus outside confirmation) is never held.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version
@@ -240,7 +252,8 @@ amounts change; check its pricing pages):
 | Cloud Run | 2 million requests, 180,000 CPU-seconds | 60,000 requests, 30,000 CPU-seconds |
 | Firestore | 50,000 reads and 20,000 writes a day, 1 GB | a few thousand writes a day |
 | Pub/Sub | 10 GB | well under 1 GB |
-| Cloud Scheduler | 3 jobs | 3 jobs |
+| Cloud Scheduler | 3 jobs | 3 jobs (one runs hourly: the health check) |
+| Cloud Monitoring alerts | log-based alerts read no metrics | 2 alert policies, expected free (the budget alert would say otherwise) |
 | Cloud Build (only when Docker can't upload) | 2,500 build-minutes | a few minutes per install |
 | Cloud Storage (only with Cloud Build) | 5 GB in `us-east1`, `us-central1` and `us-west1` | about 5 MB per install (the uploaded source) |
 | Artifact Registry | 0.5 GB | 3 builds (the installer deletes older ones) |
@@ -291,6 +304,12 @@ To turn the alert off, set `BUDGET_ALERT=off`.
 - **A mailbox that gets mail shows "None yet" under Last notification** (Settings): Gmail isn't
   notifying the service about it. Run `install.sh` again: step 5 lets Gmail publish to the topic, and
   step 9 starts the watches again.
+- **"Alerts couldn't be set up from here" (step 9/9).** The alerts still show on the dashboard (Overview,
+  Activity). Setting them up needs the Monitoring Editor role, or Owner, on the project. Run `install.sh`
+  again with it.
+- **No alert emails arrive.** The address in `ALERT_EMAIL` (or the admin group) must accept email from
+  outside the domain: alerts come from Google Cloud (`alerting-noreply@google.com`). For a group, allow
+  external senders, or put a person's address in `ALERT_EMAIL`.
 - **Recent activity: "A message couldn't be checked (try 1 of 3 …)".** A Gmail or Firestore error. It is
   tried again within a few minutes, up to 3 times; nothing needs doing unless the same message ends in
   "after 3 tries", which is then left where it is (the reason follows the colon).

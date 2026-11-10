@@ -23,8 +23,19 @@ and who was affected, and lets IT release an email back to the Inbox.
   - **Both need DMARC to pass.** The allowlist and "inside the organization" go by the From address,
     which anyone can write. They count only when Gmail's own DMARC check passed for its domain. A
     forged allowlisted or staff address is judged like any mail from outside, and the record says so.
-  - **A brake** stops moving after too many moves in an hour, until an admin resumes (the count then
-    starts again).
+  - **Brakes that still protect a whole district** (`src/pipeline.js`, `brakes`):
+    - **Clear phishing is never held.** "Strong evidence" means the rules flag it *and* something outside
+      the email confirms it: a blocked or listed link, a listed or blocked sender, a brand-new look-alike
+      domain, or DMARC failing. Every copy is moved, to every mailbox.
+    - **Weaker evidence is held per campaign.** Once `CAMPAIGN_HOLD_AFTER` (25) copies of one campaign
+      were moved without outside confirmation, the rest wait (in the Inbox, recorded) for an admin:
+      **Confirm phishing** moves every copy, **False alarm** releases them. Other mail keeps moving.
+    - **A domain-wide brake as a last resort:** more than `BRAKE_PER_HOUR` moves in an hour (by default
+      half the watched mailboxes, at least 100) stops moving everywhere. That is a misfire on many
+      unrelated emails, not one campaign. Counted exactly. **Resume and move held mail** moves what it
+      held.
+    - **Alerts by email** when a brake engages, a campaign is held, a large campaign arrives, Gmail goes
+      quiet, or a scheduled job fails (`ALERT_EMAIL`, Cloud Monitoring).
   - **Every move can be undone** from the dashboard, and by the user: an email the user moves back
     out of Spam stays in the Inbox. It is recorded as released by the user (a false alarm unless an
     admin marks it phishing), and an alert asks an admin to check when the checks had flagged it.
@@ -53,7 +64,9 @@ For each new Inbox message:
 |---|---|
 | The rules flag it (score 5+) | **Move to Spam** (label `SPRUCE/Moved`) |
 | The AI scores **85%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing) | **Move to Spam** |
-| Same, in monitor mode or while the brake is on | Recorded as "would move" |
+| Same, in monitor mode, or held by a brake (a campaign on weaker evidence, or the domain-wide brake) | Recorded as "would move" (a held one can be moved later) |
+| An admin released the campaign (a false alarm) | Recorded as suspicious, not moved |
+| The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
 | Amber, or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious |
 | Allowlisted sender, DMARC passing | Nothing |
 
@@ -80,13 +93,20 @@ The dashboard has these pages:
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per day by trigger; top
   reasons; largest campaigns; alerts.
 - **Campaigns** and **Users:** each opens the list of emails behind it.
-- **Messages:** search and filters, opening each email's decision.
+  - For a campaign: **Confirm phishing: move every copy** (optionally searching every watched mailbox for
+    copies the service didn't record), **False alarm: release every copy**, and **Find other copies**.
+- **Messages:** search and filters, opening each email's decision. **Download CSV** gives the same list.
+  - It says how strong the evidence was.
   - It shows the signs found with their weights, flagged links, the AI score with what weighed most,
     and the sender check.
   - Buttons: **Release to Inbox**, **Mark false alarm**, **Confirm phishing**.
 - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
   often by users themselves). This is
   the number to tune the threshold with.
+- **Readiness:** whether monitor mode has shown enough to switch to enforce mode, as checks: time,
+  emails reviewed, false alarms, staff mail failing DMARC, the busiest hour against the brake,
+  notifications arriving, the group re-read reaching the service.
+- **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
 - **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
   notified the service about it.
   - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
@@ -124,6 +144,18 @@ sign-in and refuses to run on Cloud Run.
 
 ```bash
 npm test
+```
+
+The tests include the deploy scripts against stand-ins for `gcloud` and `docker` (`test/install.test.js`).
+The Firestore store's tests (`test/firestore.test.js`) run against Google's Firestore emulator when
+`FIRESTORE_EMULATOR_HOST` is set, as in CI:
+
+```bash
+gcloud emulators firestore start --host-port=127.0.0.1:8786
+```
+
+```bash
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8786 npm test
 ```
 
 ```bash
