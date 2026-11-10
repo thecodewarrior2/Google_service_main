@@ -4,7 +4,7 @@
 // your held-out examples before and after a new model is synced (docs/RETRAINING.md, "Is the new model
 // better?"): the false alarms and the missed phishing should go down, not up.
 //
-//     node tools/score-examples.js held-out.jsonl [--threshold 0.85]
+//     node tools/score-examples.js held-out.jsonl [--threshold 0.9]
 'use strict';
 const fs = require('fs');
 const spruce = require('../src/engine/spruce');
@@ -12,8 +12,8 @@ const spruce = require('../src/engine/spruce');
 const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--'));
 const ti = args.indexOf('--threshold');
-const threshold = ti >= 0 ? Number(args[ti + 1]) : Number(process.env.AI_MOVE_THRESHOLD || 0.85);
-if (!file || !(threshold > 0 && threshold < 1)) { console.error('Usage: node tools/score-examples.js FILE.jsonl [--threshold 0.85]'); process.exit(2); }
+const threshold = ti >= 0 ? Number(args[ti + 1]) : Number(process.env.AI_MOVE_THRESHOLD || 0.9);
+if (!file || !(threshold > 0 && threshold < 1)) { console.error('Usage: node tools/score-examples.js FILE.jsonl [--threshold 0.9]'); process.exit(2); }
 
 const E = spruce.load();
 const rows = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l));

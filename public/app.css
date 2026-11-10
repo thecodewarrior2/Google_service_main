@@ -253,6 +253,10 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .policy-form { margin: 12px 0 0 192px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: grid; gap: 10px; max-width: 640px; }
 .policy-form input[type="text"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
 .policy-form .num-input { width: 110px; }
+.policy-form textarea { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); width: 100%; box-sizing: border-box; resize: vertical; }
+.entries { margin: 0; padding-left: 18px; columns: 2; column-gap: 24px; }
+.entries li { break-inside: avoid; overflow-wrap: anywhere; }
+@media (max-width: 700px) { .entries { columns: 1; } }
 .policy-form .alert { margin-bottom: 0; }
 .policy-form .actions { margin-top: 0; }
 .choices { display: grid; gap: 6px; }

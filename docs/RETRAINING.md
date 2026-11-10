@@ -35,12 +35,12 @@ model, without any person's details reaching a repository or an outside service.
   you installed from, or a copy of `google_service_main`). Training also needs Python 3 with `torch` (the
   CPU build is enough) and `transformers`, and the extension's repository (step 6).
 - **Only admins' marks count.** The export takes the emails an admin marked: **Confirm phishing**, and
-  **Mark false alarm** or an admin's **Release**. A user moving an email out of Spam is not a label: people
+  **Mark false alarm** or an admin's **Move back to Inbox**. A user moving an email out of Spam is not a label: people
   rescue phishing too.
 
 ## 1. Allow the export, then download
 
-1. **Settings → Retraining export → Allow the retraining export.** It is off by default. Activity
+1. **Settings → Retraining → Allow the retraining export.** It is off by default. Activity
    notes who turned it on, and every download.
 2. **Status → Model health → Examples for retraining the model.** Choose the period at the top (7, 30 or 90
    days).
@@ -246,7 +246,7 @@ Score the model the service runs now, and write the numbers down:
 node tools/score-examples.js spruce-retraining-2026-11-10-held-out.jsonl
 ```
 
-It shows the missed phishing and the false alarms at the service's move threshold (0.85, or
+It shows the missed phishing and the false alarms at the service's move threshold (0.9, or
 `--threshold` to match your `AI_MOVE_THRESHOLD`), and lists the emails it got wrong.
 
 ## 6. Train (in the extension's repository)
@@ -255,7 +255,7 @@ phish-tiny is trained in the S.P.R.U.C.E+ extension's repository, on its `llm_te
 whoever looks after the model there, following that repository's own rules (its `CLAUDE.md`). Its
 `tools/ai/README.md` describes the training in full.
 
-The service runs the model it was last synced with (**Settings → Model**). The extension's branch may
+The service runs the model it was last synced with (**Settings → About → Model**). The extension's branch may
 already have a newer one, and your examples are added to the newest. To see what your examples add on
 their own, sync and score the extension's current model first (step 7's commands), before step 1 below.
 
@@ -296,7 +296,7 @@ With your examples:
    cases. Your examples stay out of the commit.
 
 The extension's model scores use 0.5 as the line between phishing and genuine; the service moves mail
-only from `AI_MOVE_THRESHOLD` (0.85 by default). That's why step 7 scores at the service's threshold.
+only from `AI_MOVE_THRESHOLD` (0.9 by default). That's why step 7 scores at the service's threshold.
 
 ## 7. Is the new model better?
 
@@ -343,7 +343,7 @@ With 30 held-out emails, one email is 3%, so a small set tells you about large c
   - delete the downloaded file and the in-between files (and the claude.ai conversation, if you used
     one);
   - keep only the final files, which have no personal data, somewhere private, for the next round;
-  - **Settings → Retraining export → off.**
+  - **Settings → Retraining → off.**
 
 ## When training goes wrong, it is usually one of these
 

@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.7: The allowlist and Settings in pages; the AI lines at 65% and 90%; clearer words
+
+- **The AI's two lines:**
+  - **Suspicious from 65%** (it was 50%). Below 65%, and with a rules score under 3, an email isn't
+    recorded.
+  - **Moved from 90% by default** (`AI_MOVE_THRESHOLD`, it was 85%). An install whose settings.env
+    leaves it empty moves from 90% after upgrading; one that sets a value keeps it.
+  - The threshold can't go below 65% (settings.env, or Settings → Policy).
+  - The AI meter on an email's page turns red at the threshold in force, not at a fixed 85%.
+- **Allowlist on Settings** (Settings → Allowlist): the domains and addresses never moved (when Gmail's
+  DMARC check passes for them).
+  - Changed like the policy: the project ID, noted in Activity, emailed as an alert naming what was
+    added and removed, in force everywhere within 30 seconds.
+  - **Your own domains (and their subdomains) can't be allowlisted**, or a staff account taken over would
+    never be moved. Single addresses in them can.
+  - One per line, or separated by commas; lower case, no repeats; at most 500 of each.
+  - `install.sh` compares the lists with `ALLOW_DOMAINS` and `ALLOW_ADDRESSES` as sets (order and case
+    aside), and asks when they differ, as for the policy.
+- **Settings in pages,** with a menu on the left like Email and Status:
+  - **Policy:** the four settings, and how the rest decides;
+  - **Allowlist**;
+  - **Mailboxes:** the watched mailboxes, and Update group membership now;
+  - **Weekly summary**;
+  - **Retraining**;
+  - **About:** the version, the model, what is kept, and the network checks.
+- **Words that don't suggest mail is withheld.** Every email reaches the user's mailbox; the service
+  only moves some to Spam.
+  - "Release" is now **move back to the Inbox**: **Move back to Inbox**, **False alarm: move every copy
+    back**, "Moved back" in lists and filters.
+  - "Held" is now **paused**, or **left in the Inbox**:
+    - "Moving is paused for this campaign, waiting for your decision";
+    - the brake's "Resume, and move those to Spam" and "Resume, and leave them in the Inbox";
+    - Settings' "Campaign pause".
+  - The same words in the alerts, Activity, the weekly summary, decision reasons, `clear-data.sh` and
+    the docs. `--even-if-paused` replaces `--even-if-held` (which still works). The setting
+    `CAMPAIGN_HOLD_AFTER` keeps its name.
+  - The Gmail label on mail an admin moves back is now **`SPRUCE/Moved back`** (`RELEASED_LABEL`; it was
+    `SPRUCE/Released`, which emails moved back before stay labelled with).
+- **Review:** the "Open it with its other buttons" link is gone.
+- **Tests:** 92 (from 90): the 65% and 90% lines, the allowlist (checks, the own-domain refusal, in
+  force at once, the alert's text, the installer comparing lists, `&` in an address kept), and the
+  clickable mockup building with scripts that parse (its allowlist stand-in had broken it).
+- **Docs:** `README.md`, `docs/INSTALL.md`, `docs/DEPLOY.md`, `docs/PRIVACY.md`, `docs/ARCHITECTURE.md`,
+  `docs/RETRAINING.md`, `docs/ROADMAP.md`.
+
 ## 0.3.6: The policy, changed on the dashboard
 
 - **Settings → Policy:** a **Change** button for each of:

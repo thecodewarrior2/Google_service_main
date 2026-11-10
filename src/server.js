@@ -124,9 +124,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
         const last = Math.max(0, ...users.map(u => Number(u.lastNotification) || 0));
         add('notifications', users.length > 0 && !!last && now - last < cfg.quietHours * 3600 * 1000,
             !users.length ? 'No mailbox is watched.' : last ? `Gmail's last notification: ${Math.round((now - last) / 60000)} minutes ago, for ${users.length} watched mailboxes.` : 'No notification from Gmail yet.',
-            !users.length ? 'Settings → Update group membership now, then Settings → Mailboxes watched.' : 'Send a test email to a watched mailbox; if nothing comes, run bash deploy/doctor.sh.');
+            !users.length ? 'Settings → Mailboxes → Update group membership now, then the list below it.' : 'Send a test email to a watched mailbox; if nothing comes, run bash deploy/doctor.sh.');
         const expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + 24 * 3600 * 1000).length;
-        add('watches', !expiring, expiring ? `${expiring} mailbox watches end within a day.` : 'Every watch is renewed in time.', 'Settings → Update group membership now.');
+        add('watches', !expiring, expiring ? `${expiring} mailbox watches end within a day.` : 'Every watch is renewed in time.', 'Settings → Mailboxes → Update group membership now.');
         if (service.intel && service.intel.feeds) {
             const lists = await service.intel.feeds.status().catch(() => []);
             const oldest = Math.min(...lists.map(l => l.updated || 0));
@@ -288,7 +288,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
         // The retraining export: allowed or not (off by default), and the download (docs/RETRAINING.md).
         'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
         'POST /api/training-export': async (q, body, admin) => {
-            if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings.', status: 403 };
+            if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings → Retraining.', status: 403 };
             if (exporting) return { error: 'A download is already being made. Try again in a minute.', status: 429 };
             exporting = true;
             try {
@@ -371,7 +371,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
                 if (req.method === 'POST') cache.stale();
                 if (out && typeof out.csv === 'string') return send(res, 200, out.csv, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${out.filename}"` });
                 if (out && out.download) return send(res, 200, out.download.body, out.download.type, Object.assign({ 'content-disposition': `attachment; filename="${out.download.filename}"` }, out.download.headers));
-                return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo }, out));
+                return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold }, out));
             }
             if (req.method === 'GET') {
                 const rel = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');

@@ -38,7 +38,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     digest: { enabled: false }, trainingExport: { enabled: false }, timeZone: 'America/New_York',
                     projectKnown: true, demoProjectId: 'demo-project',
                     policy: { mode: { value: cfg.mode, env: cfg.mode, changed: null, replaced: null }, aiThreshold: { value: cfg.aiThreshold, env: cfg.aiThreshold, changed: null, replaced: null },
-                              brakePerHour: { value: 0, env: 0, changed: null, replaced: null }, timeZone: { value: 'America/New_York', env: 'America/New_York', changed: null, replaced: null } }, version: require('../package.json').version,
+                              brakePerHour: { value: 0, env: 0, changed: null, replaced: null }, timeZone: { value: 'America/New_York', env: 'America/New_York', changed: null, replaced: null },
+                              allowDomains: { value: [], env: [], changed: null, replaced: null }, allowAddresses: { value: [], env: [], changed: null, replaced: null } }, version: require('../package.json').version,
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
@@ -92,6 +93,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         if (body.key === 'mode' && body.value === 'enforce' && p.value !== 'enforce' && body.agree !== true) throw new Error('Tick "I agree" to switch to enforce mode. Nothing was changed.');
         const before = p.value;
         Object.assign(p, { value: body.value, changed: { by: ADMIN, at: Date.now(), before } });
+        if (Array.isArray(p.env)) body.value = [...new Set(String(body.value || '').split(/[\\r\\n,;]+/).map(x => x.trim().toLowerCase()).filter(Boolean))].sort();
+        p.value = body.value;
         D.settings[body.key] = body.value;
         if (body.key === 'brakePerHour') D.settings.brakeLimit = body.value || 100;
         return Object.assign(base, { changed: { key: body.key, value: body.value, before } });

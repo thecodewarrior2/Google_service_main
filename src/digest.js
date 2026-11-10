@@ -38,13 +38,13 @@ function buildDigest(records, stats, events, ctx) {
     const period = `${dateIn(from, ctx.timeZone)} to ${dateIn(now, ctx.timeZone)}`;
     const enforce = ctx.mode === 'enforce';
     const subject = `S.P.R.U.C.E+ weekly summary: ${enforce ? `${n(s.moved)} moved to Spam` : `${n(s.wouldMove)} would be moved`}, ${period}`;
-    const waiting = [ctx.brake ? 'the domain-wide brake is ON (moving is paused)' : '', ctx.held ? plural(ctx.held, 'campaign') + ' held for your decision' : '',
+    const waiting = [ctx.brake ? 'the domain-wide brake is ON (moving is paused)' : '', ctx.held ? 'moving paused for ' + plural(ctx.held, 'campaign') + ', waiting for your decision' : '',
         unreviewed ? `${n(unreviewed)} emails not reviewed yet (Review in the dashboard)` : ''].filter(Boolean);
     const lines = [
         `S.P.R.U.C.E+ Mail Protection: ${period} (${enforce ? 'enforce mode' : 'monitor mode: nothing is moved'})`,
         '',
         `Checked: ${plural(s.scanned, 'email')}, in ${plural(ctx.watched, 'watched mailbox', 'watched mailboxes')}.`,
-        `Moved to Spam: ${n(s.moved)}. Recorded as "would move" (monitor mode, or held by a brake): ${n(s.wouldMove)}. On strong evidence: ${n(strong)} of these ${n(s.moved + s.wouldMove)}.`,
+        `Moved to Spam: ${n(s.moved)}. Recorded as "would move" (monitor mode, or left in the Inbox by a brake): ${n(s.wouldMove)}. On strong evidence: ${n(strong)} of these ${n(s.moved + s.wouldMove)}.`,
         `Suspicious only (not moved): ${n(s.flagged)}.`,
         enforce ? `Moved back to the Inbox: ${n(s.released)} (${n(s.userReleased || 0)} by users themselves).` : null,
         `Marked as false alarms: ${n(s.falseAlarms)}.`,

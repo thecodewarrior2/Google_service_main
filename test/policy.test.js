@@ -43,7 +43,7 @@ test('a change applies at once here, within the refresh everywhere, is noted and
     assert.equal(await a.brakeLimit(), 250);
     const ev = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
     assert.ok(ev.includes(`it.head@${ORG} switched to enforce mode on the dashboard (confirmed with the project ID, and agreed): from now on, emails the policy flags are moved to Spam.`));
-    assert.ok(ev.includes(`it.head@${ORG} changed the AI move threshold from 85% to 92% on the dashboard (confirmed with the project ID).`));
+    assert.ok(ev.includes(`it.head@${ORG} changed the AI move threshold from 90% to 92% on the dashboard (confirmed with the project ID).`));
     assert.ok(ev.includes(`it.head@${ORG} changed the brake from automatic (half the watched mailboxes, at least 100) to 250 moves an hour on the dashboard (confirmed with the project ID).`));
     assert.ok(ev.some(t => /changed the time zone from UTC to America\/Chicago .*the nightly jobs move to it the next time deploy\/install\.sh runs\./.test(t)));
     assert.deepEqual(warned.map(w => w.spruceAlert), ['settings', 'settings', 'settings'], 'emailed as alerts, the time zone aside');
@@ -92,7 +92,7 @@ test('the dashboard: the project ID is required, wrong ones lock it for a while,
         r = await s.post({ key: 'mode', value: 'enforce', projectId: ' Demo-Project ', agree: true });
         assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.changed.value, 'enforce'); assert.equal(cfg.mode, 'enforce');
         r = await s.post({ key: 'aiThreshold', value: 0.3, projectId: 'demo-project' });
-        assert.equal(r.status, 400); assert.match(r.body.error, /more than 50%.*Nothing was changed\./);
+        assert.equal(r.status, 400); assert.match(r.body.error, /from 65% \(where an email counts as suspicious\) to 100%.*Nothing was changed\./);
         r = await s.post({ key: 'timeZone', value: 'America/Denver', projectId: 'demo-project' });
         assert.equal(r.status, 200);
         st = await s.settings();
@@ -114,4 +114,34 @@ test('the project ID that counts: GOOGLE_CLOUD_PROJECT (set by install.sh), demo
     assert.equal(expectedProject(loadConfig(ENV)), 'maple-mail-protection');
     assert.equal(expectedProject(loadConfig(Object.assign({}, ENV, { GOOGLE_CLOUD_PROJECT: '' }))), '', 'unknown: the route refuses (409)');
     assert.equal(expectedProject(loadConfig({ DEMO: '1', ORG_DOMAINS: ORG })), 'demo-project');
+});
+
+test('the allowlist on the dashboard: lists checked (never the organization\'s own domains), in force at once, alerted with what was added and removed', async () => {
+    const store = new MemoryStore();
+    const warned = [];
+    const svc = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {}, warn: (x) => warned.push(JSON.parse(x)) } });
+    const { isAllowed } = require('../src/policy');
+    assert.equal(isAllowed(svc.cfg, 'billing@vendor.example'), false);
+    await assert.rejects(svc.setPolicy('allowDomains', `vendor.example\n${ORG}`, 'x'), { status: 400, message: /your organization's own domain/ });
+    await assert.rejects(svc.setPolicy('allowDomains', `staff.${ORG}`, 'x'), { status: 400, message: /own domain/ });
+    await assert.rejects(svc.setPolicy('allowAddresses', 'not-an-address', 'x'), { status: 400, message: /isn't an email address/ });
+    await assert.rejects(svc.setPolicy('allowDomains', Array.from({ length: 501 }, (_, i) => `d${i}.example`), 'x'), { status: 400, message: /At most 500/ });
+    const out = await svc.setPolicy('allowDomains', 'Vendor.example\nnews.example, vendor.example', `it.head@${ORG}`);
+    assert.deepEqual(out.value, ['news.example', 'vendor.example'], 'lower case, no repeats, sorted');
+    assert.equal(isAllowed(svc.cfg, 'billing@mail.vendor.example'), true, 'in force at once, subdomains too');
+    await svc.setPolicy('allowAddresses', `sis-notices@${ORG}`, `it.head@${ORG}`);
+    assert.equal(isAllowed(svc.cfg, `sis-notices@${ORG}`), true, 'a single address in the own domain can be');
+    await svc.setPolicy('allowDomains', 'vendor.example\nbus-company.example', `it.head@${ORG}`);
+    const texts = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
+    assert.ok(texts.includes(`it.head@${ORG} changed the allowlisted domains on the dashboard (confirmed with the project ID): added news.example, vendor.example. Mail from them is never moved when Gmail's DMARC check passes for it.`));
+    assert.ok(texts.includes(`it.head@${ORG} changed the allowlisted domains on the dashboard (confirmed with the project ID): added bus-company.example; removed news.example. Mail from them is never moved when Gmail's DMARC check passes for it.`));
+    assert.equal(warned.length, 3, 'each emailed as an alert');
+    // Another instance, at its refresh.
+    const b = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {} } });
+    await b.refreshPolicy({ force: true });
+    assert.deepEqual(b.cfg.allowDomains, ['bus-company.example', 'vendor.example']);
+    // settings.env with the same list in another order: the same, so the dashboard's stays in force.
+    const c = new Service({ cfg: loadConfig(Object.assign({}, ENV, { ALLOW_DOMAINS: 'news.example;vendor.example' })), store, gmail: gmail(), log: { error() {} } });
+    await c.refreshPolicy({ force: true });
+    assert.deepEqual(c.cfg.allowDomains, ['news.example', 'vendor.example'], 'settings.env changed since the dashboard\'s change: settings.env applies');
 });

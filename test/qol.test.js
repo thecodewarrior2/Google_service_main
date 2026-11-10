@@ -71,8 +71,8 @@ test('the summary\'s text: the week\'s numbers, what waits, the largest campaign
     const recs = [r(1), r(2), r(3, { markedBy: 'it@x', falseAlarm: true }), r(4, { action: 'flag', state: 'inbox' })];
     const d = buildDigest(recs, [{ day: '2026-11-08', scanned: 1234 }], [{ at: now - DAY, alert: true }], { now, mode: 'enforce', timeZone: 'UTC', watched: 40, held: 1, brake: false });
     assert.match(d.subject, /^S\.P\.R\.U\.C\.E\+ weekly summary: 3 moved to Spam, Nov 2 to Nov 9$/);
-    for (const re of [/Checked: 1,234 emails, in 40 watched mailboxes\./, /Moved to Spam: 3\. Recorded as "would move" \(monitor mode, or held by a brake\): 0\. On strong evidence: 3 of these 3\./, /Suspicious only \(not moved\): 1\./, /Marked as false alarms: 1\./,
-        /Alerts: 1 /, /Waiting for you: 1 campaign held for your decision; 2 emails not reviewed yet/, /bad\.example: invoice \(4 copies, 3 moved\)/]) assert.match(d.text, re);
+    for (const re of [/Checked: 1,234 emails, in 40 watched mailboxes\./, /Moved to Spam: 3\. Recorded as "would move" \(monitor mode, or left in the Inbox by a brake\): 0\. On strong evidence: 3 of these 3\./, /Suspicious only \(not moved\): 1\./, /Marked as false alarms: 1\./,
+        /Alerts: 1 /, /Waiting for you: moving paused for 1 campaign, waiting for your decision; 2 emails not reviewed yet/, /bad\.example: invoice \(4 copies, 3 moved\)/]) assert.match(d.text, re);
 });
 
 test('several emails at once: release and mark, with what was skipped; one entry in Activity', async () => {

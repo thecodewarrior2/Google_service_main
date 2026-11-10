@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.6.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.7.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.6.zip
+   unzip spruce-mail-protection-0.3.7.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.6
+   cd spruce-mail-protection-0.3.7
    ```
 
 4. Make your settings file:
@@ -136,7 +136,7 @@ When it finishes, it prints the **dashboard address**.
 
 1. **Open the dashboard address** and sign in as a member of `ADMIN_GROUP`. The first time,
    Identity-Aware Proxy can take a few minutes to let you in.
-2. **Settings → Mailboxes watched** should show the number of people in the group, and list each
+2. **Settings → Mailboxes** should show the number of people in the group, and list each
    mailbox with the last time Gmail notified the service about it.
    - **Overview → Recent activity** has a "Watching … mailboxes" line after each re-read of the group.
      It says how many entries the group has, and why any were left out.
@@ -184,7 +184,7 @@ When it finishes, it prints the **dashboard address**.
   - The choice is written into `deploy/settings.env`. Once the new build is deployed, the dashboard's
     copy is removed and Activity notes what was chosen, so the two say the same thing again.
 - **Add or remove people** in the security group. It applies daily, or at once with **Settings →
-  Update group membership now** in the dashboard, or with:
+  Mailboxes → Update group membership now** in the dashboard, or with:
 
   ```bash
   gcloud scheduler jobs run spruce-renew-watches --location=REGION
@@ -204,15 +204,16 @@ When it finishes, it prints the **dashboard address**.
   Moved mail goes to Spam with the label `SPRUCE/Moved`. A user can always move it back, and the
   dashboard records that.
 - **In enforce mode, the brakes** (README, "Careful by default"):
-  - **A campaign held for your decision** (an alert, and a banner on Overview). Many copies were moved on
-    evidence nothing outside the email confirms, so the rest wait in the Inbox. Open it:
-    - **Confirm phishing** moves every copy, optionally searching every watched mailbox for more;
-    - **False alarm** releases the moved ones, and later copies aren't moved.
+  - **Moving a campaign paused for your decision** (an alert, and a banner on Overview). Many copies were
+    moved on evidence nothing outside the email confirms, so the others are left in the Inbox, like any
+    email not moved. Open it:
+    - **Confirm phishing** moves every copy to Spam, optionally searching every watched mailbox for more;
+    - **False alarm** moves the moved ones back to the Inbox, and later copies aren't moved.
   - **The domain-wide brake** (an alert, and a red banner). Far more moves in an hour than a campaign
     makes: something may be wrong. Look at Email → Messages, then:
-    - **Resume and move held mail** moves what it held;
-    - **Resume without moving** leaves it in the Inbox.
-  - Clear phishing (rules plus outside confirmation) is never held.
+    - **Resume, and move those to Spam** moves the emails left in the Inbox while it was on;
+    - **Resume, and leave them in the Inbox** doesn't.
+  - Moving clear phishing (rules plus outside confirmation) never pauses for a campaign.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version
@@ -291,7 +292,7 @@ It shows what it deletes and what it keeps, and asks you to type the project ID 
   - every recorded email (Overview; under Email: Review, Campaigns, Messages, Users; under Status:
     Model health, Readiness);
   - the daily counts;
-  - campaign holds and admins' campaign decisions;
+  - campaign pauses and admins' campaign decisions;
   - Status → Activity.
 - **Kept:**
   - the watched mailboxes;
@@ -308,7 +309,7 @@ It can't be undone.
 |---|---|
 | `--keep-activity` | Keeps Status → Activity (what admins did, alerts) |
 | `--reset-clock` | Also restarts the monitor-mode clock: Readiness counts days again, and senders are learned for 14 days again |
-| `--even-if-held` | Clears even when the brake or a campaign hold is on. The emails they held stay in the Inbox and are no longer tracked, so decide on them on the dashboard first |
+| `--even-if-paused` | Clears even when the brake or a campaign pause is on. The emails they left in the Inbox are no longer tracked, so decide on them on the dashboard first (`--even-if-held` still works) |
 | `--yes` | No question (for scripts) |
 
 It needs the same access as `install.sh`, and nobody can clear the data from the dashboard.
@@ -414,7 +415,7 @@ Details).
 
   IAP needs the project to be inside your Google Cloud organization.
 - **The jobs and notifications are refused.** `install.sh` stops with "spruce-renew-watches couldn't
-  reach the worker (UNAUTHENTICATED … 401)". Or Settings → Mailboxes watched says the group's last read
+  reach the worker (UNAUTHENTICATED … 401)". Or Settings → Mailboxes says the group's last read
   "didn't reach the service", or shows a "Watch renews by" date that doesn't move after a re-read and an
   old "Last notification".
   - **Identity-Aware Proxy is on for `spruce-worker`.** This is the usual cause. `install.sh` turns it

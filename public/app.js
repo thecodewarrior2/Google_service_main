@@ -18,7 +18,13 @@
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         return data;
     }
-    const api = (path, opts) => (window.SPRUCE_API || realApi)(path, opts);
+    // The AI move threshold in force (every answer says it; 90% until the first one).
+    let aiThreshold = 0.9;
+    const api = async (path, opts) => {
+        const data = await (window.SPRUCE_API || realApi)(path, opts);
+        if (data && typeof data.aiThreshold === 'number') aiThreshold = data.aiThreshold;
+        return data;
+    };
     // A POST whose answer is a file (the retraining export): saved by the browser; its headers returned.
     async function downloadPost(path, body) {
         const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'x-requested-with': 'spruce-dashboard', 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -58,7 +64,7 @@
     const dayLabel = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const ACTION = { move: ['Moved to Spam', 'moved'], 'would-move': ['Would be moved', 'would'], flag: ['Suspicious, not moved', 'flag'] };
-    const STATE = { moved: ['In Spam', 'moved'], released: ['Released', 'released'], inbox: ['In Inbox', 'inbox'] };
+    const STATE = { moved: ['In Spam', 'moved'], released: ['Moved back', 'released'], inbox: ['In Inbox', 'inbox'] };
     const stateOf = (m) => (m.state === 'released' && m.releasedByUser ? ['Moved back by user', 'released'] : STATE[m.state] || [m.state, '']);
     const pill = ([label, cls]) => h('span', { class: `pill ${cls}`, text: label });
 
@@ -172,10 +178,10 @@
         for (let i = 0; i <= ax.n; i++) { const v = ax.step * i; svg.append(s('line', { class: i ? 'gridline' : 'baseline', x1: L, x2: W - R, y1: y(v), y2: y(v) })); svg.append(s('text', { x: L - 6, y: y(v) + 3.5, 'text-anchor': 'end' }, compact(v))); }
         buckets.forEach((b, i) => {
             const x = L + i * band + (band - bw) / 2;
-            const g = s('g', { class: 'bar', tabindex: 0, role: 'img', 'aria-label': `AI ${b.from}–${b.to}%: ${b.count} emails, ${b.released} released` });
+            const g = s('g', { class: 'bar', tabindex: 0, role: 'img', 'aria-label': `AI ${b.from}–${b.to}%: ${b.count} emails, ${b.released} moved back` });
             if (b.count) g.append(s('path', { d: colPath(x, y(b.count), bw, y(0) - y(b.count), true), fill: css('--s1') }));
             g.append(s('rect', { class: 'hit', x: L + i * band, y: T, width: band, height: ph }));
-            const rows = [{ name: 'Emails', value: num(b.count) }, { name: 'Released (false alarm)', value: num(b.released) }];
+            const rows = [{ name: 'Emails', value: num(b.count) }, { name: 'Moved back (false alarm)', value: num(b.released) }];
             g.addEventListener('pointermove', (e) => showTip(e, `AI score ${b.from}–${b.to}%`, rows)); g.addEventListener('focus', (e) => showTip(e, `AI score ${b.from}–${b.to}%`, rows));
             g.addEventListener('pointerleave', hideTip); g.addEventListener('blur', hideTip);
             svg.append(g);
@@ -228,17 +234,17 @@
         const out = [];
         if (d.brake) {
             const held = d.brake.held || 0;
-            const resume = (moveHeld) => postButton('/api/resume', () => ({ moveHeld }), (o) => (moveHeld && o.held && !o.held.monitor ? `Moving resumed: ${num(o.held.moved)} held emails moved to Spam${o.held.left ? `; ${num(o.held.left)} left, press again` : ''}.` : 'Moving resumed.'),
-                moveHeld ? `Resume moving, and move the ${num(held)} held emails to Spam now?` : 'Resume moving, and leave the held emails in the Inbox?');
+            const resume = (moveHeld) => postButton('/api/resume', () => ({ moveHeld }), (o) => (moveHeld && o.held && !o.held.monitor ? `Moving resumed: ${num(o.held.moved)} moved to Spam${o.held.left ? `; ${num(o.held.left)} to go, press again` : ''}.` : 'Moving resumed.'),
+                moveHeld ? `Resume moving, and move the ${num(held)} emails the brake left in the Inbox to Spam now?` : 'Resume moving, and leave those emails in the Inbox?');
             out.push(h('div', { class: 'alert critical', role: 'alert' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '⛔' }),
-                h('div', { class: 'grow' }, h('b', { text: 'Moving is paused (brake).' }), ` ${num(d.brake.moves)} emails were moved within an hour (the limit is ${num(d.brake.limit || d.brake.moves)}). ${num(held)} suspicious emails are held in the Inbox until you resume.`),
-                h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'button', onclick: resume(true) }, `Resume and move held mail (${num(held)})`),
-                    h('button', { class: 'btn', type: 'button', onclick: resume(false) }, 'Resume without moving'))));
+                h('div', { class: 'grow' }, h('b', { text: 'Moving is paused (brake).' }), ` ${num(d.brake.moves)} emails were moved within an hour (the limit is ${num(d.brake.limit || d.brake.moves)}). Since then, ${num(held)} emails that would have been moved were left in the Inbox, like any other email; resuming can move them now.`),
+                h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'button', onclick: resume(true) }, `Resume, and move those ${num(held)} to Spam`),
+                    h('button', { class: 'btn', type: 'button', onclick: resume(false) }, 'Resume, and leave them in the Inbox'))));
         }
         if (d.heldCampaigns && d.heldCampaigns.length) out.push(h('div', { class: 'alert warning', role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '✋' }),
-            h('div', { class: 'grow' }, h('b', { text: `${d.heldCampaigns.length} campaign${d.heldCampaigns.length === 1 ? '' : 's'} held for your decision.` }),
-                ' Many copies were moved on evidence nothing outside the email confirms, so later copies wait. Open one to confirm it as phishing (every copy is moved) or release it.',
-                h('ul', { class: 'held-list' }, d.heldCampaigns.slice(0, 5).map(c => h('li', {}, h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }), ` (${num(c.held)} held)`))))));
+            h('div', { class: 'grow' }, h('b', { text: `Moving is paused for ${d.heldCampaigns.length} campaign${d.heldCampaigns.length === 1 ? '' : 's'}, waiting for your decision.` }),
+                ' Many copies were moved on evidence nothing outside the email confirms, so its other copies are left in the Inbox, like any email not moved. Open one to confirm it as phishing (every copy is moved to Spam) or dismiss it as a false alarm (the moved ones go back to the Inbox).',
+                h('ul', { class: 'held-list' }, d.heldCampaigns.slice(0, 5).map(c => h('li', {}, h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }), ` (${num(c.held)} left in the Inbox)`))))));
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
@@ -256,7 +262,7 @@
         const toggle = h('button', { class: 'linkbtn', type: 'button', text: 'Show as table' });
         toggle.addEventListener('click', () => {
             asTable = !asTable; toggle.textContent = asTable ? 'Show as chart' : 'Show as table'; chartBox.textContent = '';
-            chartBox.append(asTable ? dataTable([{ name: 'Day', get: r => dayLabel(r.day) }, { name: 'Checked', num: true, get: r => num(r.scanned) }, ...TREND_SERIES.map(se => ({ name: se.name, num: true, get: r => num(r[se.key]) })), { name: 'Released', num: true, get: r => num(r.released) }], d.trend.slice().reverse())
+            chartBox.append(asTable ? dataTable([{ name: 'Day', get: r => dayLabel(r.day) }, { name: 'Checked', num: true, get: r => num(r.scanned) }, ...TREND_SERIES.map(se => ({ name: se.name, num: true, get: r => num(r[se.key]) })), { name: 'Moved back', num: true, get: r => num(r.released) }], d.trend.slice().reverse())
                                     : stackedColumns(d.trend, TREND_SERIES));
         });
         out.push(h('div', { class: 'grid two' },
@@ -266,7 +272,7 @@
         out.push(h('div', { class: 'grid two' },
             h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Largest campaigns' }), h('div', { class: 'sub', text: 'The same email sent to many people.' })), h('a', { href: '#/campaigns', text: 'All campaigns' })),
                 campaignTable(d.campaigns)),
-            h('section', { class: 'card' }, h('h2', { text: 'Recent activity' }), h('div', { class: 'sub', text: 'Alerts, releases and changes, last 7 days.' }),
+            h('section', { class: 'card' }, h('h2', { text: 'Recent activity' }), h('div', { class: 'sub', text: 'Alerts, emails moved back, and changes, last 7 days.' }),
                 d.alerts.length ? h('ul', { class: 'events' }, d.alerts.map(a => h('li', {}, h('time', { text: when(a.at) }), a.text))) : h('div', { class: 'empty', text: 'Nothing new.' }))));
         return out;
     }
@@ -287,9 +293,9 @@
         let c;
         try { ({ campaign: c } = await api(`/api/campaign?${q({ key })}`)); } catch (e) { return null; }
         const status = c.decision === 'confirmed' ? `Confirmed as phishing by ${c.decidedBy}: every copy is moved, and later ones too.`
-            : c.decision === 'released' ? `Released as a false alarm by ${c.decidedBy}: its copies aren't moved.`
-            : c.held ? `${num(c.held)} copies held: over ${num(c.holdAfter)} were moved on evidence nothing outside the email confirms. Confirm or release it.`
-            : `${num(c.copies)} copies recorded: ${num(c.moved)} in Spam, ${num(c.recorded)} in the Inbox, ${num(c.released)} released.`;
+            : c.decision === 'released' ? `Dismissed as a false alarm by ${c.decidedBy}: its moved copies went back to the Inbox, and later ones aren't moved.`
+            : c.held ? `Moving is paused: ${num(c.held)} copies were left in the Inbox, because over ${num(c.holdAfter)} were moved on evidence nothing outside the email confirms. Confirm it as phishing, or dismiss it as a false alarm.`
+            : `${num(c.copies)} copies recorded: ${num(c.moved)} in Spam, ${num(c.recorded)} in the Inbox, ${num(c.released)} moved back.`;
         const search = h('input', { type: 'checkbox', checked: true });
         const found = (f) => (f ? `; ${num(f.found)} more found in ${num(f.searched)} of ${num(f.of)} mailboxes${f.moved ? `, ${num(f.moved)} moved` : ''}` : '');
         return h('section', { class: `card campaign-bar${c.held && !c.decision ? ' held' : ''}` },
@@ -300,8 +306,8 @@
                         (o) => (o.moved && o.moved.monitor ? `Confirmed as phishing. Monitor mode: nothing moved${found(o.found)}.` : `Confirmed: ${num(o.moved.moved)} copies moved to Spam${found(o.found)}${o.moved.left ? `; ${num(o.moved.left)} left, press again` : ''}.`),
                         `Confirm "${c.label}" as phishing and move every copy to Spam${search.checked ? ', searching every watched mailbox for more' : ''}?`) }, 'Confirm phishing: move every copy'),
                     h('label', { class: 'small' }, search, ' also search every watched mailbox for copies not recorded')] : null,
-                c.decision !== 'released' ? h('button', { class: 'btn', type: 'button', onclick: postButton('/api/campaign/release', () => ({ key }), (o) => `Released: ${num(o.released)} copies back in the Inbox.`,
-                    `Release every copy of "${c.label}" to the Inbox, and stop moving it?`) }, 'False alarm: release every copy') : null,
+                c.decision !== 'released' ? h('button', { class: 'btn', type: 'button', onclick: postButton('/api/campaign/release', () => ({ key }), (o) => `Moved back: ${num(o.released)} copies in the Inbox again.`,
+                    `Move every copy of "${c.label}" back to the Inbox, and stop moving it?`) }, 'False alarm: move every copy back') : null,
                 c.decision === 'confirmed' ? h('button', { class: 'btn', type: 'button', onclick: postButton('/api/campaign/find', () => ({ key }), (o) => `Searched: ${num(o.found.found)} more found in ${num(o.found.searched)} of ${num(o.found.of)} mailboxes${o.found.moved ? `, ${num(o.found.moved)} moved` : ''}.`) }, 'Find other copies') : null));
     }
     const kpi = (label, value, note) => h('div', { class: 'card kpi' }, h('div', { class: 'label', text: label }), h('div', { class: 'value', text: value }), note ? h('div', { class: 'note', text: note }) : null);
@@ -312,7 +318,7 @@
             { name: 'People', num: true, get: c => num(c.recipients) },
             { name: 'Moved', num: true, get: c => num(c.moved) },
             { name: 'Would move', num: true, get: c => num(c.wouldMove) },
-            { name: 'Released', num: true, get: c => num(c.released) },
+            { name: 'Moved back', num: true, get: c => num(c.released) },
             { name: 'Top reason', get: c => c.topReason }
         ], list, c => go(`#/messages?${q({ campaign: c.campaign })}`));
     }
@@ -325,7 +331,7 @@
                 { name: 'People', num: true, get: c => num(c.recipients) },
                 { name: 'Moved', num: true, get: c => num(c.moved) },
                 { name: 'Would move', num: true, get: c => num(c.wouldMove) },
-                { name: 'Released', num: true, get: c => num(c.released) },
+                { name: 'Moved back', num: true, get: c => num(c.released) },
                 { name: 'Highest AI', num: true, get: c => pct(c.maxAi) },
                 { name: 'Top reason', get: c => c.topReason },
                 { name: 'First seen', get: c => when(c.firstAt) },
@@ -341,7 +347,7 @@
                 { name: 'Moved', num: true, get: u => num(u.moved) },
                 { name: 'Would move', num: true, get: u => num(u.wouldMove) },
                 { name: 'Suspicious', num: true, get: u => num(u.flagged) },
-                { name: 'Released', num: true, get: u => num(u.released) },
+                { name: 'Moved back', num: true, get: u => num(u.released) },
                 { name: 'Last', get: u => when(u.last) }
             ], d.users, u => go(`#/messages?${q({ user: u.user })}`)))];
     }
@@ -376,7 +382,7 @@
         const bulk = (action, done, ask) => postButton('/api/bulk', () => ({ action, keys: [...selected] }),
             (o) => `${done}: ${num(o.done)}${o.skipped ? ` (${num(o.skipped)} skipped: not in Spam, or already so)` : ''}${o.failed ? `, ${num(o.failed)} failed` : ''}.`, ask);
         bulkBar.append(count,
-            h('button', { class: 'btn', type: 'button', onclick: bulk('release', 'Released to the Inbox', 'Release the selected emails that are in Spam to the Inbox?') }, 'Release to Inbox'),
+            h('button', { class: 'btn', type: 'button', onclick: bulk('release', 'Moved back to the Inbox', 'Move the selected emails that are in Spam back to the Inbox?') }, 'Move back to Inbox'),
             h('button', { class: 'btn', type: 'button', onclick: bulk('false-alarm', 'Marked as false alarms') }, 'Mark false alarm'),
             h('button', { class: 'btn', type: 'button', onclick: bulk('phishing', 'Confirmed as phishing') }, 'Confirm phishing'),
             h('button', { class: 'linkbtn', type: 'button', onclick: () => { selected.clear(); all.checked = false; for (const [, c] of boxes) c.checked = false; changed(); } }, 'Clear'));
@@ -435,7 +441,7 @@
         const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : m.action === 'none' ? 'released' : 'flag';
         const act = async (path, body, done) => { acting++; try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; } };
         const actions = quiet ? null : h('div', { class: 'actions' },
-            m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Released: back in the Inbox.') }, 'Release to Inbox') : null,
+            m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Moved back to the Inbox.') }, 'Move back to Inbox') : null,
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
             m.falseAlarm !== false ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false }, 'Confirmed as phishing or spam.') }, 'Confirm phishing') : null);
         const verdictText = pasted ? 'Checked from a pasted copy: nothing was stored, moved or counted.'
@@ -447,11 +453,11 @@
             h('div', { class: 'grid detail' },
                 h('div', { class: 'grid' },
                     h('section', { class: 'card' }, h('h2', { text: 'What happened' }),
-                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Released by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
+                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Moved back to the Inbox by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
-                        m.evidence ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. The brakes never hold it.`
-                            : m.evidence === 'admin' ? 'A copy found by an admin\'s search for a campaign.' : 'Weaker evidence: nothing outside the email confirms it, so the campaign brake can hold its copies.' }) : null,
+                        m.evidence ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. Moving its campaign is never paused for it.`
+                            : m.evidence === 'admin' ? 'A copy found by an admin\'s search for a campaign.' : 'Weaker evidence: nothing outside the email confirms it, so moving its campaign\'s copies can pause for your decision (they stay in the Inbox meanwhile).' }) : null,
                         actions),
                     h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The extension's checks: score ${m.score === null || m.score === undefined ? '–' : m.score} (amber at 3, flagged at 5).` }),
                         m.signals.length ? h('ul', { class: 'signals' }, m.signals.slice().sort((a, b) => b.weight - a.weight).map(sg => h('li', {}, h('span', { class: `weight ${sg.weight >= 3 ? 'high' : ''}`, text: String(sg.weight) }), h('span', { text: sg.text })))) : h('div', { class: 'empty', text: 'No signs.' })),
@@ -460,7 +466,7 @@
                     h('section', { class: 'card' }, h('h2', { text: 'AI opinion' }),
                         ai === null ? h('div', { class: 'empty', text: 'The model gave no score.' }) : [
                             h('div', { class: 'kpi' }, h('div', { class: 'value', text: pct(ai) }), h('div', { class: 'note', text: `${m.ai.model}: how likely it is phishing` })),
-                            (() => { const mt = h('div', { class: `meter ${ai >= 0.85 ? 'hot' : ''}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(ai * 100), 'aria-label': 'AI score' }, h('div')); mt.firstChild.style.width = pct(ai); return mt; })(),
+                            (() => { const mt = h('div', { class: `meter ${ai >= aiThreshold ? 'hot' : ''}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(ai * 100), 'aria-label': 'AI score' }, h('div')); mt.firstChild.style.width = pct(ai); return mt; })(),
                             m.ai.reasons && m.ai.reasons.length ? [h('div', { class: 'small muted', text: 'What weighed most:' }), m.ai.reasons.map(r => h('div', { class: 'quote', text: r.facts ? 'Who sent it, the sender check and where its links go' : `“${r.sentence}”` }))] : null]),
                     h('section', { class: 'card' }, h('h2', { text: 'Details' }), h('dl', { class: 'kv' },
                         h('dt', { text: 'Sender check' }), h('dd', { text: m.auth ? `DMARC ${m.auth.dmarc || '–'}, SPF ${m.auth.spf || '–'}, DKIM ${m.auth.dkim || '–'}` : 'not recorded' }),
@@ -510,11 +516,11 @@
         const d = await api(`/api/health?days=${days}`);
         const reviewedRate = d.reviewed ? d.falseAlarms / d.reviewed : 0;
         return [h('h1', { text: 'Model health' }), h('p', { class: 'sub', text: 'Whether the move rules are right: how often each kind of move had to be undone. Use this to set the AI threshold.' }),
-            h('div', { class: 'grid kpis' }, kpi('Moved back by users', num(d.userReleased || 0), 'Not spam, or dragged to the Inbox'), kpi('Reviewed', num(d.reviewed), 'released, marked or confirmed'), kpi('Confirmed phishing', num(d.confirmed), ''), kpi('False alarms', num(d.falseAlarms), d.reviewed ? `${pct(reviewedRate, 1)} of reviewed` : ''), kpi('Move threshold', pct(d.threshold), 'AI_MOVE_THRESHOLD')),
+            h('div', { class: 'grid kpis' }, kpi('Moved back by users', num(d.userReleased || 0), 'Not spam, or dragged to the Inbox'), kpi('Reviewed', num(d.reviewed), 'moved back, marked or confirmed'), kpi('Confirmed phishing', num(d.confirmed), ''), kpi('False alarms', num(d.falseAlarms), d.reviewed ? `${pct(reviewedRate, 1)} of reviewed` : ''), kpi('Move threshold', pct(d.threshold), 'AI_MOVE_THRESHOLD')),
             h('div', { class: 'grid two' },
-                h('section', { class: 'card' }, h('h2', { text: 'Recorded emails by AI score' }), h('div', { class: 'sub', text: 'Each column is a 10-point range of the model\'s score; hover for how many were released.' }), h('div', { class: 'chart' }, histogram(d.buckets, d.threshold))),
-                h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Released ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
-                    dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Released', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
+                h('section', { class: 'card' }, h('h2', { text: 'Recorded emails by AI score' }), h('div', { class: 'sub', text: 'Each column is a 10-point range of the model\'s score; hover for how many were moved back.' }), h('div', { class: 'chart' }, histogram(d.buckets, d.threshold))),
+                h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Moved back ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
+                    dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Moved back', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
                     h('p', { class: 'small muted', text: `Model: ${d.model || 'unknown'}.` }))),
             trainingCard(d)];
     }
@@ -524,7 +530,7 @@
         const title = h('h2', { text: 'Examples for retraining the model' });
         const intro = h('div', { class: 'sub', text: `The emails an admin confirmed as phishing in the last ${days} days (and, if you tick it, the false alarms), one per campaign, newest first, up to 100, as training examples for the AI model. Each is read from Gmail when you download, with the people in it taken out. The file is the only copy: nothing is stored, and Activity notes who downloaded it.` });
         const guide = h('p', { class: 'small muted', text: 'Before the file goes anywhere, follow docs/RETRAINING.md: check every example (words marked ⟦like this⟧ may be names), run tools/check-training-file.js, then train.' });
-        if (!d.trainingExport) return h('section', { class: 'card spaced' }, title, intro, h('p', { class: 'small muted', text: 'Off. A dashboard admin can allow it in Settings.' }));
+        if (!d.trainingExport) return h('section', { class: 'card spaced' }, title, intro, h('p', { class: 'small muted', text: 'Off. A dashboard admin can allow it in Settings → Retraining.' }));
         if (MEMORY) return h('section', { class: 'card spaced' }, title, intro, h('p', { class: 'small muted', text: 'The clickable mockup has no emails to read: in the real dashboard, the download is here.' }), guide);
         const fa = h('input', { type: 'checkbox', 'aria-label': 'Include false alarms' });
         const warn = h('div', { class: 'alert warning', hidden: true }, h('div', { text: 'False alarms are real people\'s mail: parents, staff, companies. Check each one with care, and leave out any you can\'t make anonymous (anything about a student, health, grades or discipline).' }));
@@ -550,46 +556,70 @@
             h('div', { class: 'actions' }, btn), result, guide);
     }
 
-    async function settings() {
-        const d = await api('/api/settings');
-        showMode(d.mode);
-        const yes = (b) => (b ? 'Yes' : 'No');
-        const row = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
-        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'The policy below can be changed here, each change confirmed with the Google Cloud project ID; so can the weekly summary email and the retraining export. The rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
-            policyCard(d),
-            digestCard(d),
-            trainingSettingCard(d),
-            h('div', { class: 'grid two' },
-                h('section', { class: 'card' }, h('h2', { text: 'Policy' }), h('dl', { class: 'kv' },
-                    row('Move when', `${d.moveOnRules ? 'the rules flag it (score 5+), or ' : ''}the AI scores ${pct(d.aiThreshold)} or more`),
-                    row('AI alone, inside mail', d.aiMovesInside ? 'Moves it' : 'Never moves it (rules still can)'),
-                    row('Campaign hold', `Holds the copies of one campaign after ${num(d.campaignHoldAfter)} moved on weaker evidence, until you confirm or release it. Strong evidence is never held`),
-                    row('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Recent activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
-                    row('Never moved', [...d.allowDomains, d.allowAddresses ? `${d.allowAddresses} addresses` : ''].filter(Boolean).join(', ') || 'none set'),
-                    row('Label on moved mail', d.movedLabel))),
-                h('section', { class: 'card' }, h('h2', { text: 'Scope and records' }), h('dl', { class: 'kv' },
-                    row('Organization', d.orgDomains.join(', ') || '–'),
-                    row('Mailboxes watched', `${num(d.watched)}${[...(d.pilotGroups || []).map(g => `group ${g}`), d.pilotOu ? `unit ${d.pilotOu}` : ''].filter(Boolean).map(s => ` (${s})`).join('')}`),
-                    row('Records kept', `${d.retentionDays} days`),
-                    row('Version', d.version || ''),
-                    row('Subjects stored', yes(d.storeSubjects)),
-                    row('AI quotes stored', yes(d.storeAiQuotes)),
-                    row('Model', `${d.model.name} ${d.model.version}`),
-                    row('Engine', d.engine && d.engine.extensionVersion ? `S.P.R.U.C.E+ ${d.engine.extensionVersion} (${d.engine.commit || ''})` : 'bundled')))),
-            h('section', { class: 'card spaced' }, h('h2', { text: 'Network checks' }), h('div', { class: 'sub', text: 'Lookups made for every email, besides the offline checks. A lookup that fails leaves a link "not checked", never "safe".' }),
-                h('dl', { class: 'kv' },
-                    row('Cloudflare Security', d.checks && d.checks.cloudflare ? 'On: link sites and sender domains' : 'Off'),
-                    row('Google Safe Browsing', d.checks && d.checks.safeBrowsing ? 'On: links (no #part; one-time links without their query)' : 'Off (Cloudflare only for now)'),
-                    row('Phishing lists', d.checks && d.checks.phishingLists ? 'On: downloaded once a day, matched here' : 'Off'),
-                    row('Site age', d.checks && d.checks.siteAge ? 'On: up to 3 unfamiliar link sites and the sender\'s domain' : 'Off'),
-                    row('Short links', 'Not looked up (no outside unshortening service)')),
-                d.lists && d.lists.length ? dataTable([{ name: 'List', get: l => l.name }, { name: 'Kind', get: l => ({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind }, { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') }], d.lists) : null),
+    // --- Settings, in pages (a menu on the left): Policy, Allowlist, Mailboxes, Weekly summary, Retraining, About
+    async function settingsData() { const d = await api('/api/settings'); showMode(d.mode); return d; }
+    const kvRow = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
+    async function settings() {   // Policy
+        const d = await settingsData();
+        const allowed = ((d.policy && d.policy.allowDomains && d.policy.allowDomains.value) || d.allowDomains || []).length;
+        const addresses = d.policy && d.policy.allowAddresses ? d.policy.allowAddresses.value.length : d.allowAddresses;
+        return [h('h1', { text: 'Policy' }), h('p', { class: 'sub', text: 'What is moved to Spam, and when. The four settings below can be changed here, each change confirmed with the Google Cloud project ID; the rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
+            policyCard(d, POLICY_ROWS, 'Policy', 'Each change needs the Google Cloud project ID, applies within 30 seconds, is noted in Status → Activity, and is emailed as an alert (a time zone change is only noted). When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.'),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'How it decides' }), h('dl', { class: 'kv' },
+                kvRow('Moved to Spam', `${d.moveOnRules ? 'when the rules flag it (a score of 5 or more), or ' : 'when '}the AI scores ${pct(d.aiThreshold)} or more (senders outside the organization)`),
+                kvRow('Suspicious, not moved', `a rules score of 3 or more, or an AI score of 65% or more, below what moves it: recorded for review`),
+                kvRow('AI alone, inside mail', d.aiMovesInside ? 'Moves it' : 'Never moves it (the rules still can)'),
+                kvRow('Campaign pause', `After ${num(d.campaignHoldAfter)} copies of one campaign are moved on weaker evidence, moving its other copies pauses until you confirm it as phishing or dismiss it as a false alarm; until then they stay in the Inbox, like any email not moved. Strong evidence never pauses (CAMPAIGN_HOLD_AFTER)`),
+                kvRow('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Status → Activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
+                kvRow('Never moved', allowed || addresses ? `the allowlist: ${num(allowed)} domain${allowed === 1 ? '' : 's'} and ${num(addresses)} address${addresses === 1 ? '' : 'es'} (Settings → Allowlist)` : 'nothing allowlisted (Settings → Allowlist)'),
+                kvRow('Label on moved mail', d.movedLabel)))];
+    }
+    async function allowlist() {
+        const d = await settingsData();
+        return [h('h1', { text: 'Allowlist' }), h('p', { class: 'sub', text: 'Senders whose mail is never moved or marked suspicious, whatever the checks find, as long as Gmail\'s DMARC check passes for them (a forged address is judged like any other). Each change needs the Google Cloud project ID, and is emailed as an alert.' }),
+            h('div', { class: 'alert warning' }, h('div', {}, h('b', { text: 'Add only senders you trust. ' }), 'If one of their accounts is taken over, the phishing it sends isn\'t caught. Your own domains can\'t be added: a staff account taken over would never be moved. Single addresses in them can.')),
+            policyCard(d, ALLOW_ROWS, 'Allowlisted senders', 'A change applies within 30 seconds and is noted in Status → Activity. When deploy/settings.env (ALLOW_DOMAINS, ALLOW_ADDRESSES) says something else, deploy/install.sh asks which to keep, and writes the answer into settings.env.')];
+    }
+    async function mailboxes() {
+        const d = await settingsData();
+        return [h('h1', { text: 'Mailboxes' }), h('p', { class: 'sub', text: 'Who is watched, and whether Gmail\'s notifications arrive for each. The pilot group and unit are set when the service is deployed (deploy/settings.env).' }),
+            h('section', { class: 'card' }, h('dl', { class: 'kv' },
+                kvRow('Organization', d.orgDomains.join(', ') || '–'),
+                kvRow('Mailboxes watched', `${num(d.watched)}${[...(d.pilotGroups || []).map(g => `group ${g}`), d.pilotOu ? `unit ${d.pilotOu}` : ''].filter(Boolean).map(x => ` (${x})`).join('')}`))),
             h('section', { class: 'card spaced' }, h('h2', { text: 'Mailboxes watched' }),
                 renewBar(d.renew),
-                h('div', { class: 'sub', text: 'Who the pilot watches, and when Gmail last said each mailbox changed. "None yet" for a mailbox that does get mail means its notifications don\'t arrive. Recent activity says, after each daily re-read of the group, how many people it found and why any were left out.' }),
+                h('div', { class: 'sub', text: 'When Gmail last said each mailbox changed. "None yet" for a mailbox that does get mail means its notifications don\'t arrive. Status → Activity says, after each daily re-read of the group, how many people it found and why any were left out.' }),
                 d.mailboxes && d.mailboxes.length
                     ? dataTable([{ name: 'Mailbox', get: m => m.email }, { name: 'Last notification', get: m => (m.lastNotification ? when(m.lastNotification) : 'None yet') }, { name: 'Watch renews by', get: m => (m.watchExpiration ? when(m.watchExpiration) : '–') }], d.mailboxes)
                     : h('div', { class: 'empty', text: 'None: run the spruce-renew-watches job (docs/INSTALL.md, step 7).' }))];
+    }
+    async function summary() {
+        const d = await settingsData();
+        return [h('h1', { text: 'Weekly summary' }), digestCard(d)];
+    }
+    async function retraining() {
+        const d = await settingsData();
+        return [h('h1', { text: 'Retraining' }), trainingSettingCard(d)];
+    }
+    async function about() {
+        const d = await settingsData();
+        const yes = (b) => (b ? 'Yes' : 'No');
+        return [h('h1', { text: 'About' }), h('p', { class: 'sub', text: 'What this service runs, what it keeps, and what it looks up.' }),
+            h('section', { class: 'card' }, h('h2', { text: 'Version and records' }), h('dl', { class: 'kv' },
+                kvRow('Version', d.version || ''),
+                kvRow('Model', `${d.model.name} ${d.model.version}`),
+                kvRow('Engine', d.engine && d.engine.extensionVersion ? `S.P.R.U.C.E+ ${d.engine.extensionVersion} (${d.engine.commit || ''})` : 'bundled'),
+                kvRow('Records kept', `${d.retentionDays} days`),
+                kvRow('Subjects stored', yes(d.storeSubjects)),
+                kvRow('AI quotes stored', yes(d.storeAiQuotes)))),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Network checks' }), h('div', { class: 'sub', text: 'Lookups made for every email, besides the offline checks. A lookup that fails leaves a link "not checked", never "safe".' }),
+                h('dl', { class: 'kv' },
+                    kvRow('Cloudflare Security', d.checks && d.checks.cloudflare ? 'On: link sites and sender domains' : 'Off'),
+                    kvRow('Google Safe Browsing', d.checks && d.checks.safeBrowsing ? 'On: links (no #part; one-time links without their query)' : 'Off (Cloudflare only for now)'),
+                    kvRow('Phishing lists', d.checks && d.checks.phishingLists ? 'On: downloaded once a day, matched here' : 'Off'),
+                    kvRow('Site age', d.checks && d.checks.siteAge ? 'On: up to 3 unfamiliar link sites and the sender\'s domain' : 'Off'),
+                    kvRow('Short links', 'Not looked up (no outside unshortening service)')),
+                d.lists && d.lists.length ? dataTable([{ name: 'List', get: l => l.name }, { name: 'Kind', get: l => ({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind }, { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') }], d.lists) : null)];
     }
 
     // --- Keeping the page up to date --------------------------------------------------------------
@@ -654,8 +684,8 @@
                 kpi('Reviewed', num(r.reviewed), `${num(r.falseAlarms)} false alarms`),
                 kpi('Busiest hour', num(r.peakHour), `the brake stops at ${num(r.brakeLimit)}`),
                 kpi('Days so far', num(r.monitorDays), 'since the install')),
-            r.campaignsOverHold.length ? h('section', { class: 'card spaced' }, h('h2', { text: 'Campaigns the hold would have stopped' }),
-                h('div', { class: 'sub', text: `More than ${r.holdAfter} copies on weaker evidence: in enforce mode the rest would wait for your decision.` }),
+            r.campaignsOverHold.length ? h('section', { class: 'card spaced' }, h('h2', { text: 'Campaigns whose moving would have paused' }),
+                h('div', { class: 'sub', text: `More than ${r.holdAfter} copies on weaker evidence: in enforce mode, moving the rest would pause for your decision (they'd stay in the Inbox meanwhile).` }),
                 dataTable([{ name: 'Campaign', get: c => h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }) }, { name: 'Copies', num: true, get: c => num(c.count) }], r.campaignsOverHold)) : null];
     }
 
@@ -690,8 +720,7 @@
             h('div', { class: 'review-bar card' },
                 h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ' False alarm'),
                 h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), ' Phishing'),
-                h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided'),
-                h('a', { class: 'linkbtn', href: `#/message?${q({ key })}` }, 'Open it with its other buttons')),
+                h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided')),
             ...[].concat(emailView(m, { inReview: true }))];
     }
 
@@ -744,19 +773,29 @@
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
         { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE' };
-    function policyCard(d) {
+    const entries = (l, none) => {
+        const list = l || [];
+        if (!list.length) return h('div', { text: none });
+        return h('div', {}, h('ul', { class: 'entries' }, list.slice(0, 30).map(x => h('li', { text: x }))), list.length > 30 ? h('div', { class: 'small muted', text: `and ${num(list.length - 30)} more (Change shows them all)` }) : null);
+    };
+    const ALLOW_ROWS = [
+        { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
+        { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
+    ];
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES' };
+    function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
         pageBusy = () => !!openKey;
-        const short = (key, v) => (key === 'mode' ? v : key === 'aiThreshold' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
+        const short = (key, v) => (Array.isArray(v) ? (v.length ? `${num(v.length)} entr${v.length === 1 ? 'y' : 'ies'}` : 'none')
+            : key === 'mode' ? v : key === 'aiThreshold' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
         const source = (key) => {
             const p = P[key] || {};
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
             if (p.replaced) return `From settings.env (${ENV_NAME[key]}). It replaced ${short(key, p.replaced.value)}, set here by ${p.replaced.by}.`;
             return `From settings.env (${ENV_NAME[key]}).`;
         };
-        const rows = POLICY_ROWS.map(r => {
+        const rows = ROWS.map(r => {
             const value = (P[r.key] || {}).value !== undefined ? P[r.key].value : d[r.key];
             const slot = h('div', { class: 'policy-form-slot' });
             const button = h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false' }, 'Change');
@@ -770,12 +809,12 @@
             });
             return h('div', { class: 'policy-row' },
                 h('div', { class: 'policy-head' }, h('div', { class: 'policy-label', text: r.label }),
-                    h('div', { class: 'policy-value' }, h('div', { text: r.show(value, d) }), h('div', { class: 'small muted', text: source(r.key) })),
+                    h('div', { class: 'policy-value' }, (() => { const v = r.show(value, d); return v instanceof Node ? v : h('div', { text: v }); })(), h('div', { class: 'small muted', text: source(r.key) })),
                     d.projectKnown ? button : null),
                 slot);
         });
-        const box = h('section', { class: 'card spaced' }, h('h2', { text: 'Policy' }),
-            h('div', { class: 'sub', text: 'Each change needs the Google Cloud project ID, applies within 30 seconds, is noted in Status → Activity, and is emailed as an alert (the time zone is only noted). When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.' }),
+        const box = h('section', { class: 'card spaced' }, h('h2', { text: title }),
+            h('div', { class: 'sub', text: sub }),
             d.projectKnown ? null : h('div', { class: 'alert warning' }, h('div', { text: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT), so these can\'t be changed here yet. Run bash deploy/install.sh once.' })),
             rows);
         return box;
@@ -806,9 +845,9 @@
             read = () => choices.querySelector('input:checked').value;
             extra = [choices, agreeBox, value === 'enforce' ? h('div', { class: 'small muted', text: 'Monitor mode: nothing is moved from then on; emails already moved stay in Spam.' }) : null];
         } else if (key === 'aiThreshold') {
-            const input = h('input', { type: 'number', min: 51, max: 100, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI move threshold in percent', class: 'num-input' });
+            const input = h('input', { type: 'number', min: 65, max: 100, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI move threshold in percent', class: 'num-input' });
             read = () => Number(input.value) / 100;
-            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: 'Higher moves fewer emails on the AI score alone. Status → Model health shows how often moves on the AI score were undone.' })];
+            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: 'From 65% (where an email counts as suspicious) to 100%. Higher moves fewer emails on the AI score alone. Status → Model health shows how often moves on the AI score were undone.' })];
         } else if (key === 'brakePerHour') {
             const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
             const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });
@@ -818,6 +857,11 @@
             extra = [h('div', { class: 'choices' }, h('label', { class: 'choice' }, auto, h('span', { text: 'Automatic: half the watched mailboxes, at least 100' })),
                 h('label', { class: 'choice inline-choice' }, fixed, h('span', { text: 'A fixed limit:' }), n, h('span', { text: 'moves an hour' }))),
                 h('div', { class: 'small muted', text: 'After this many moves in one hour, moving stops everywhere until an admin resumes (Overview). Strong evidence still counts toward it.' })];
+        } else if (key === 'allowDomains' || key === 'allowAddresses') {
+            const ta = h('textarea', { rows: 8, spellcheck: 'false', autocapitalize: 'off', 'aria-label': key === 'allowDomains' ? 'Allowlisted domains, one per line' : 'Allowlisted addresses, one per line' });
+            ta.value = (value || []).join('\n');
+            read = () => ta.value;
+            extra = [ta, h('div', { class: 'small muted', text: key === 'allowDomains' ? 'One domain per line, for example vendor.example; its subdomains count too. Not your own domains.' : 'One address per line, for example billing@vendor.example. Addresses in your own domains can be added.' })];
         } else if (key === 'timeZone') {
             let zones = [];
             try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* an older browser: typed in */ }
@@ -895,7 +939,7 @@
             try {
                 await api('/api/renew-watches', { method: 'POST', body: {} });
                 toast('Asked: the group is read again within a minute. This page updates by itself.');
-                setTimeout(() => { if (/settings/.test(currentHash())) render({ quiet: true }); }, 10000);
+                setTimeout(() => { if (/mailboxes/.test(currentHash())) render({ quiet: true }); }, 10000);
             } catch (err) { toast(`Couldn't do that: ${err.message}`); b.disabled = false; }
             finally { acting--; }
         } }, 'Update group membership now') : null;
@@ -903,13 +947,14 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['users', 'Users']] },
-        status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] }
+        status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] },
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {
@@ -985,7 +1030,7 @@
             $('#orgLine').textContent = `Google Workspace · ${st.orgDomains.join(', ') || 'your organization'}`;
             showMode(st.mode);
             if (st.demo) $('.top-right').prepend(h('span', { class: 'demo-flag', text: 'DEMO · made-up data' }));
-            $('#foot').textContent = `Checks and AI model from S.P.R.U.C.E+ (${st.model.name} ${st.model.version}). Records hold sender, subject and the checks' findings, never email bodies, and are deleted after ${st.retentionDays} days.`;
+            $('#foot').textContent = `Checks and AI model from S.P.R.U.C.E+ (${st.model.name} ${st.model.version}). Records keep the sender, subject and the checks' findings, never email bodies, and are deleted after ${st.retentionDays} days.`;
         } catch (e) { /* the view shows the error */ }
         render();
     }

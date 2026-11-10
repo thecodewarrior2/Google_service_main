@@ -211,7 +211,7 @@ test('demo dashboard API: numbers agree with the records; release and marks work
         assert.equal(one.message.state, 'released');
         assert.equal((await fetch(`${base}/api/message?key=nope`)).status, 404);
         const health = await get('/api/health?days=30');
-        assert.equal(health.buckets.length, 10); assert.equal(health.threshold, 0.85);
+        assert.equal(health.buckets.length, 10); assert.equal(health.threshold, 0.9);
         const st = await get('/api/settings');
         assert.equal(st.demo, true);
         assert.equal(st.mailboxes.length, st.watched, 'each watched mailbox is listed');
@@ -283,4 +283,17 @@ test('hasMember: nested membership from Google; an unknown address is a no, an u
     assert.equal(await c.hasMember('dir@maple-schools.example', 'spruce-admins@maple-schools.example', 'x@maple-schools.example'), false);
     reply = { ok: false, status: 404, text: async () => 'Resource Not Found: groupKey' };
     await assert.rejects(c.hasMember('dir@maple-schools.example', 'typo@maple-schools.example', 'a@maple-schools.example'), GoogleApiError);
+});
+
+test('the clickable mockup builds, and every script in it parses (its stand-in API is written inside a template string)', () => {
+    const os = require('os'), path = require('path'), fs = require('fs'), vm = require('vm'), { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-mockup-'));
+    try {
+        const out = path.join(dir, 'mockup.html');
+        execFileSync(process.execPath, [path.join(__dirname, '..', 'tools', 'build-mockup.js'), out], { encoding: 'utf8' });
+        const scripts = [...fs.readFileSync(out, 'utf8').matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+        assert.ok(scripts.length >= 4, String(scripts.length));
+        for (const [i, code] of scripts.entries()) assert.doesNotThrow(() => new vm.Script(code, { filename: `mockup script ${i}` }), `script ${i}`);
+        assert.match(scripts.join('\n'), /case '\/api\/policy'/, 'the policy stand-in is there');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

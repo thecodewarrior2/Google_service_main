@@ -7,10 +7,10 @@ const list = (v) => String(v || '').split(/[,;]/).map(s => s.trim().toLowerCase(
 const num = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
 const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(String(v)));
 
-// The four settings an admin can also change on the dashboard (Settings → Policy). They read from a live
+// The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -41,7 +41,7 @@ function loadConfig(env = process.env) {
         // What moves an email: the extension's own verdict "flagged" (score 5 or more), and/or the AI
         // model's score at or above the threshold.
         moveOnRules: bool(env.MOVE_ON_RULES, true),
-        aiThreshold: num(env.AI_MOVE_THRESHOLD, 0.85),
+        aiThreshold: num(env.AI_MOVE_THRESHOLD, 0.9),
         aiMovesInside: bool(env.AI_MOVES_INSIDE, false),
         // Never moved, whatever the checks say.
         allowDomains: list(env.ALLOW_DOMAINS),
@@ -66,7 +66,7 @@ function loadConfig(env = process.env) {
         project: env.GOOGLE_CLOUD_PROJECT || '',
         region: env.CLOUD_RUN_REGION || '',
         movedLabel: env.MOVED_LABEL || 'SPRUCE/Moved',
-        releasedLabel: env.RELEASED_LABEL || 'SPRUCE/Released',
+        releasedLabel: env.RELEASED_LABEL || 'SPRUCE/Moved back',   // (SPRUCE/Released before 0.3.7)
         monitorLabel: env.MONITOR_LABEL || '',            // '' = monitor mode leaves mailboxes untouched
         // Network checks (src/intel). Cloudflare Security only, for now: Google Safe Browsing is OFF unless
         // SAFE_BROWSING=true, and then needs its API key (Secret Manager → SAFE_BROWSING_KEY).
@@ -122,7 +122,7 @@ function configProblems(c) {
         if (!c.adminEmails.length && !c.adminGroups.length) p.push('Neither ADMIN_EMAILS nor ADMIN_GROUP is set: nobody could use the dashboard.');
         if (c.adminGroups.length && !c.directoryAdmin) p.push('ADMIN_GROUP needs DIRECTORY_ADMIN (an admin the service may act as to check who is in the group).');
     }
-    if (!(c.aiThreshold > 0.5 && c.aiThreshold <= 1)) p.push('AI_MOVE_THRESHOLD must be between 0.5 and 1.');
+    if (!(c.aiThreshold >= 0.65 && c.aiThreshold <= 1)) p.push('AI_MOVE_THRESHOLD must be between 0.65 (where an email counts as suspicious) and 1.');
     return p;
 }
 

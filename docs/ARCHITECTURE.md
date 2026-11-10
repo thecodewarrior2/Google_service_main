@@ -16,7 +16,7 @@ Pub/Sub topic gmail-spruce ──push (OIDC: spruce-invoker)──▶ spruce-wor
                                                            Firestore (records, counters, state)
                                                                ▲
 Admins ──Identity-Aware Proxy──▶ spruce-admin (Cloud Run, ROLE=admin): dashboard + /api/*
-                                   release → messages.modify (Inbox)
+                                   move back → messages.modify (Inbox)
 
 Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watch lasts 7 days)
                            ──▶ worker /tasks/purge (daily; RETENTION_DAYS)
@@ -56,14 +56,15 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   - **The sync position only moves forward,** whichever notification finishes last. History is read
     4,000 messages at a time; a longer backlog is read in parts, never skipped.
 - **Brakes for a whole district** (`brakes` in `src/pipeline.js`). A move first passes:
-  - **an admin's decision on the campaign** (released: not moved; confirmed: moved);
-  - **the campaign hold**, for weak evidence only (no outside confirmation): past `CAMPAIGN_HOLD_AFTER`
-    copies of one campaign, the rest wait. Strong evidence is never held;
+  - **an admin's decision on the campaign** (a false alarm: not moved; confirmed: moved);
+  - **the campaign pause**, for weak evidence only (no outside confirmation): past `CAMPAIGN_HOLD_AFTER`
+    copies of one campaign, moving the rest pauses. Strong evidence never pauses;
   - **the domain-wide brake**, a last resort: a slot is reserved in the hour's count before each move, in
     up to 32 Firestore shards whose limits add up to the limit exactly.
 
-  Held copies stay in the Inbox, recorded as "would move", and can be moved later: on **Resume and move
-  held mail**, or when the campaign is confirmed (`moveHeld`). The counters are spread so one busy
+  Copies not moved meanwhile stay in the Inbox like any other email, recorded as "would move" (`held` on
+  the record), and can be moved later: on **Resume, and move those to Spam**, or when the campaign is
+  confirmed (`moveHeld`). Nothing is ever withheld from a mailbox. The counters are spread so one busy
   campaign doesn't make every move wait for one Firestore document; the daily stats are spread too.
 - **Alerts.** The service logs each alert as a structured line (`spruceAlert`, `message`) and adds it to
   Recent activity. Cloud Monitoring emails them, and any failed Cloud Scheduler job, to `ALERT_EMAIL`
@@ -73,13 +74,13 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   checked (it went to Spam first) is checked when its Inbox label shows in the history, and never moved.
   After a gap in a mailbox's history, its Inbox since the last notification is checked in batches of 25
   with the next notifications.
-- **The weekly summary** (`src/digest.js`; off until an admin turns it on in Settings) is put straight into
+- **The weekly summary** (`src/digest.js`; off until an admin turns it on in Settings → Weekly summary) is put straight into
   each admin's Inbox with the Gmail API's `messages.insert`, which the `gmail.modify` scope already allows.
   Nothing is sent, nothing leaves Google, and no mailbox or new permission is needed. The hourly job sends
   it on Monday from 7 AM in `TIME_ZONE`, once a week whichever instance runs. The service never judges its
   own summary: it is marked as seen, and has the `X-SPRUCE-Summary` header with no `Received:` header,
   which mail from outside always has.
-- **The retraining export** (`src/training.js`; off until an admin allows it in Settings). The emails an
+- **The retraining export** (`src/training.js`; off until an admin allows it in Settings → Retraining). The emails an
   admin marked are read from Gmail when an admin downloads them: one per campaign, the newest copy still
   in a mailbox. Each is judged again as on arrival, with `analyze(..., { keepAiFacts: true })`, to get
   what the model read. It is then written in the extension's training format (`{ name, label, note, facts }`,
@@ -93,7 +94,7 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   vocabulary doesn't have, when they start a sentence; most capitalized words in the middle of one.
   Nothing is stored or counted. `tools/check-training-file.js` refuses a file with leftovers, and
   `docs/RETRAINING.md` covers the rest.
-- **The policy, changed on the dashboard** (Settings → Policy).
+- **The policy, changed on the dashboard** (Settings → Policy, Settings → Allowlist).
   - **Which settings:** `MODE`, `AI_MOVE_THRESHOLD`, `BRAKE_PER_HOUR` and `TIME_ZONE`, kept in Firestore
     as `state/policy-<key>`.
   - **How they apply:** in `loadConfig` these four are live values; everything else is frozen.
@@ -116,11 +117,11 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.
 - **The user has the last word.** When a user takes a moved email back to the Inbox ("Not spam", or
   dragging it out of Spam), the history shows the Inbox label added back.
-  - The record becomes "released by the user" and counts as a false alarm until an admin marks it
+  - The record becomes "moved back by the user" and counts as a false alarm until an admin marks it
     otherwise. The service never moves that email again.
   - Only a label added after the service read the email counts. The label an email arrived with can show
     in the same history, and the two are told apart by their history IDs.
-  - An admin's own release is noted on the record first, so it isn't counted as the user's.
+  - An admin's own move back is noted on the record first, so it isn't counted as the user's.
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
 

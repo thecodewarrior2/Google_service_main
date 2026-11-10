@@ -36,7 +36,7 @@ For emails the policy moved, would have moved, or found suspicious, it keeps:
 - Gmail's DMARC, SPF and DKIM results;
 - attachment names;
 - its Message-ID (the header Google Workspace's Email log search uses), and Gmail's ID of the copy;
-- the decision, and who released or marked it (including "moved back by the user" when a user takes a
+- the decision, and who moved it back or marked it (including "moved back by the user" when a user takes a
   moved email out of Spam themselves).
 
 **Never kept:** email bodies or attachments.
@@ -60,7 +60,7 @@ To delete what the dashboard shows sooner, all at once: `bash deploy/clear-data.
 
 - **The dashboard:** only through Identity-Aware Proxy, and only for the addresses in `ADMIN_EMAILS` or
   the members of `ADMIN_GROUP` (accounts in your own domains).
-  Every release and mark records who did it.
+  Every move back to the Inbox, mark and setting change records who did it.
 - **The service's own accounts:** in your Cloud project, under IAM. Limit project access to the people
   who run the service.
 - **The weekly summary** (off by default) goes into the Inbox of each dashboard admin. It has the week's
@@ -117,8 +117,8 @@ The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Fi
 
 ## What users notice
 
-- A moved email lands in Spam with the label `SPRUCE/Moved`. A released one returns to the Inbox with
-  `SPRUCE/Released`.
+- A moved email lands in Spam with the label `SPRUCE/Moved`. One an admin moves back returns to the Inbox
+  with `SPRUCE/Moved back`. Nothing is withheld: every email reaches the mailbox, in the Inbox or in Spam.
 - A user can always move a moved email back ("Not spam"). The service sees the Inbox label come back,
   never moves that email again, and shows admins that the user took it back.
 - Monitor mode changes nothing in mailboxes (unless `MONITOR_LABEL` is set).

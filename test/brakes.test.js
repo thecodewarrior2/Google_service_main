@@ -75,7 +75,7 @@ test('weak evidence: the copies of one campaign beyond CAMPAIGN_HOLD_AFTER are h
     const recs = await store.listRecords({});
     const held = recs.filter(r => r.held === 'campaign');
     assert.equal(held.length, 5); assert.ok(held.every(r => r.action === 'would-move' && r.state === 'inbox' && r.evidence === 'weak'));
-    assert.match(held[0].why, /held: over 5 copies of this campaign/);
+    assert.match(held[0].why, /moving this campaign is paused after 5 copies/);
     assert.equal(alerts.filter(a => a.spruceAlert === 'campaign-held').length, 1, 'one alert, not one per copy');
     const key = recs[0].campaign;
     assert.equal((await store.getCampaign(key)).weakMoves, 5);
@@ -107,9 +107,9 @@ test('releasing a campaign as a false alarm: every moved copy back in the Inbox,
     assert.ok((await store.listRecords({})).every(r => r.state === 'released' && r.falseAlarm === true));
     await deliver(svc, gmail, list.slice(3), raw);
     const last = await store.getRecord(`${list[3]}|m1`);
-    assert.equal(last.action, 'flag'); assert.match(last.why, /an admin released this campaign/);
+    assert.equal(last.action, 'flag'); assert.match(last.why, /an admin dismissed this campaign as a false alarm/);
     assert.equal(gmail.modified.filter(m => m.add.includes('SPAM')).length, 3, 'never moved again');
-    assert.ok((await store.listEvents()).some(e => e.kind === 'campaign' && /released "/.test(e.text)));
+    assert.ok((await store.listEvents()).some(e => e.kind === 'campaign' && /dismissed "/.test(e.text)));
 });
 
 test('the domain-wide brake: half the watched mailboxes (at least 100) by default, exact even when moves run at once; resuming can move the held mail', async () => {
@@ -133,7 +133,7 @@ test('the domain-wide brake: half the watched mailboxes (at least 100) by defaul
     assert.equal(out.held.moved, 4);
     assert.equal(gmail.modified.length, 12);
     assert.equal(await store.getState('brake'), null);
-    assert.match((await store.listEvents()).find(e => e.kind === 'resume').text, /4 held emails moved/);
+    assert.match((await store.listEvents()).find(e => e.kind === 'resume').text, /4 emails left in the Inbox while the brake was on were moved to Spam/);
 });
 
 test('resuming without moving leaves the held mail in the Inbox; monitor mode never moves held or confirmed mail', async () => {

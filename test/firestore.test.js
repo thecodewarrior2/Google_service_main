@@ -154,7 +154,7 @@ test('deploy/clear-data.sh against Firestore: sees the brake and held campaigns,
         fs.writeFileSync(log, '');
         const bad = spawnSync('bash', ['deploy/clear-data.sh', '--yes'], { cwd: dir, encoding: 'utf8', input: '',
             env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_LOG: log, FAKE_DIR: home, SPRUCE_FIRESTORE_URL: `http://${HOST}/v1`, FAKE_TOKEN: 'not-a-jwt' }) });
-        assert.equal(bad.status, 1, bad.stdout); assert.match(bad.stdout + bad.stderr, /Couldn't check whether the brake or a campaign hold is on/);
+        assert.equal(bad.status, 1, bad.stdout); assert.match(bad.stdout + bad.stderr, /Couldn't check whether the brake or a campaign pause is on/);
         assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /bulk-delete/);
         await s.setState('brake', { at: 1, moves: 5, limit: 5 });
         let r = run('--yes');
@@ -162,7 +162,7 @@ test('deploy/clear-data.sh against Firestore: sees the brake and held campaigns,
         await s.setState('brake', null);
         await s.campaignHold('clear-h', 0, Date.now(), 'held.example: x');     // held, no decision yet
         r = run('--yes');
-        assert.equal(r.code, 1, r.out); assert.match(r.out, /[1-9]\d* campaign\(s\) are held for a decision/); assert.doesNotMatch(r.out, /The brake is on/);
+        assert.equal(r.code, 1, r.out); assert.match(r.out, /Moving is paused for [1-9]\d* campaign\(s\), waiting for a decision/); assert.doesNotMatch(r.out, /The brake is on/);
         await s.setState('installedAt', 12345);
         r = run('--yes', '--even-if-held', '--reset-clock');
         assert.equal(r.code, 0, r.out);
@@ -183,7 +183,7 @@ test('deploy/dashboard-policy.sh against Firestore: reads the changes as the ser
     // Changes made on the dashboard, by the service itself.
     const svc = new Service({ cfg: loadConfig({ STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', PILOT_USERS: U, MODE: 'monitor' }), store: s, gmail: {}, log: { error() {}, warn() {} } });
     await svc.setPolicy('mode', 'enforce', 'it.head@maple-schools.example');
-    await svc.setPolicy('aiThreshold', 0.9, 'it.head@maple-schools.example');
+    await svc.setPolicy('aiThreshold', 0.95, 'it.head@maple-schools.example');
     await svc.setPolicy('brakePerHour', 250, 'it.head@maple-schools.example');
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-policy-'));
     const bin = path.join(home, 'bin'); fs.mkdirSync(bin);
@@ -198,17 +198,17 @@ test('deploy/dashboard-policy.sh against Firestore: reads the changes as the ser
         const rows = r.stdout.trim().split('\n').map(l => l.split('\t'));
         assert.deepEqual(rows.map(x => [x[0], x[1], x[2], x[3], x[5], x[6]]), [
             ['mode', 'enforce', 'enforce', 'it.head@maple-schools.example', 'differs', 'monitor'],
-            ['aiThreshold', '0.9', '90%', 'it.head@maple-schools.example', 'unset', 'not set'],
+            ['aiThreshold', '0.95', '95%', 'it.head@maple-schools.example', 'unset', 'not set'],
             ['brakePerHour', '250', '250 moves an hour', 'it.head@maple-schools.example', 'same', '250 moves an hour']]);
         assert.match(rows[0][4], /^\d{4}-\d\d-\d\d$/);
         // Reconciled (no terminal: the dashboard's kept), written into the file, then removed and noted.
         r = run(`dashboard_policy_read ${PROJECT} monitor '' 250 ''; dashboard_policy_reconcile ${file}; echo "MODE=$MODE AI=$AI_MOVE_THRESHOLD"; dashboard_policy_finish ${PROJECT} 9.9.9`);
         assert.equal(r.status, 0, r.stderr);
-        assert.match(r.stdout, /MODE=enforce AI=0\.9/);
-        assert.match(fs.readFileSync(file, 'utf8'), /^MODE=enforce\nBRAKE_PER_HOUR=250\nAI_MOVE_THRESHOLD=0\.9\n$/);
+        assert.match(r.stdout, /MODE=enforce AI=0\.95/);
+        assert.match(fs.readFileSync(file, 'utf8'), /^MODE=enforce\nBRAKE_PER_HOUR=250\nAI_MOVE_THRESHOLD=0\.95\n$/);
         for (const k of ['mode', 'aiThreshold', 'brakePerHour']) assert.equal(await s.getState(`policy-${k}`), null, `policy-${k} removed`);
         const e = (await s.listEvents(Date.now() - 60000)).find(x => /installed 9\.9\.9 with deploy\/install\.sh/.test(x.text || ''));
         assert.ok(e, 'noted in Activity'); assert.equal(e.kind, 'settings');
-        assert.match(e.text, /kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(90%\)/);
+        assert.match(e.text, /kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(95%\)/);
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

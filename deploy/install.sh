@@ -58,7 +58,7 @@ gcloud config set project "$PROJECT" --quiet >/dev/null
 # The policy settings changed on the dashboard (Settings → Policy): taken where settings.env doesn't set
 # them, asked about where the two differ, and written into settings.env (deploy/dashboard-policy.sh).
 . deploy/dashboard-policy.sh
-dashboard_policy_read "$PROJECT" "$MODE" "$AI_MOVE_THRESHOLD" "$BRAKE_PER_HOUR" "$TIME_ZONE"
+dashboard_policy_read "$PROJECT" "$MODE" "$AI_MOVE_THRESHOLD" "$BRAKE_PER_HOUR" "$TIME_ZONE" "$ALLOW_DOMAINS" "$ALLOW_ADDRESSES"
 dashboard_policy_reconcile "$SETTINGS"
 case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
 TZ_NAME="${TIME_ZONE:-UTC}"
@@ -326,6 +326,6 @@ cat <<EOF
   The watches start within a minute. To see the worker's log:
       gcloud run services logs read spruce-worker --region=$REGION --limit=50
   After you change the group's members, apply it now (otherwise daily at 3:17 AM, $TZ_NAME), or press
-  Settings > Update group membership now in the dashboard:
+  Settings → Mailboxes → Update group membership now in the dashboard:
       gcloud scheduler jobs run spruce-renew-watches --location=$REGION
 EOF

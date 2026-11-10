@@ -8,7 +8,7 @@
 #     bash deploy/clear-data.sh --yes              # no question (scripts)
 #
 # Deleted (Firestore): records (every email the dashboard lists), stats (the daily counts), campaigns
-# (holds and admins' campaign decisions), moveCounts (the brake's hourly counters), and events (the
+# (campaign pauses and admins' campaign decisions), moveCounts (the brake's hourly counters), and events (the
 # Activity page) unless --keep-activity.
 # Kept: the watched mailboxes, which emails were already checked, your Settings switches, the brake's
 # state, sender history and the phishing lists. Nothing in Gmail changes.
@@ -29,7 +29,7 @@ for a in "$@"; do
         --keep-activity) KEEP_ACTIVITY=1 ;;
         --reset-clock) RESET_CLOCK=1 ;;
         --yes) YES=1 ;;
-        --even-if-held) EVEN_IF_HELD=1 ;;
+        --even-if-paused | --even-if-held) EVEN_IF_HELD=1 ;;   # (--even-if-held: its name before 0.3.7)
         *) fail "unknown option $a (see the top of deploy/clear-data.sh)." ;;
     esac
 done
@@ -44,10 +44,10 @@ TOKEN="$(gcloud auth print-access-token)"
 FS="${SPRUCE_FIRESTORE_URL:-https://firestore.googleapis.com/v1}/projects/$PROJECT/databases/(default)/documents"
 fs() { curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT" -H 'content-type: application/json' "$@"; }
 
-# --- 1. What is held now -------------------------------------------------------------------------
-# Emails the brake or a campaign hold kept in the Inbox are listed only in the records: cleared, they
+# --- 1. Is moving paused now? --------------------------------------------------------------------
+# Emails the brake or a campaign pause left in the Inbox are listed only in the records: cleared, they
 # are no longer tracked (they stay in the Inbox, and resuming no longer moves them). An answer that
-# isn't what was asked for reads as "couldn't check" (?), never as "nothing held".
+# isn't what was asked for reads as "couldn't check" (?), never as "nothing paused".
 TMPB="$(mktemp)"; trap 'rm -f "$TMPB"' EXIT
 code="$(curl -sS -o "$TMPB" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT" "$FS/state/brake" 2>/dev/null || true)"
 case "$code" in
@@ -74,7 +74,7 @@ cat <<EOF
 
 Clear the dashboard's data in $PROJECT:
   Deleted: every recorded email (Overview, every page under Email, Model health and Readiness),
-           the daily counts, campaign holds and decisions, the brake's hourly counters$( [ -n "$KEEP_ACTIVITY" ] || printf ',\n           and Status → Activity')
+           the daily counts, campaign pauses and decisions, the brake's hourly counters$( [ -n "$KEEP_ACTIVITY" ] || printf ',\n           and Status → Activity')
   Kept:    the watched mailboxes, the emails already checked (none is judged twice), your Settings
            switches, the brake's state, sender history, the phishing lists$( [ -z "$KEEP_ACTIVITY" ] || printf ', Status → Activity')
   $( [ -n "$RESET_CLOCK" ] && echo 'Also:    the monitor-mode clock restarts (Readiness counts days again; 14 days of learning senders)' || echo 'Not:     the monitor-mode clock (add --reset-clock to restart it)')
@@ -82,13 +82,13 @@ Clear the dashboard's data in $PROJECT:
 EOF
 if [ "$brake" != off ] || [ "$held" != 0 ]; then
     echo
-    [ "$brake" != on ] || echo "  The brake is on: the emails it held in the Inbox would no longer be tracked."
-    [ "$held" = '?' ] || [ "$held" -eq 0 ] || echo "  $held campaign(s) are held for a decision: their held copies would no longer be tracked."
+    [ "$brake" != on ] || echo "  The brake is on: the emails it left in the Inbox would no longer be tracked, so resuming couldn't move them."
+    [ "$held" = '?' ] || [ "$held" -eq 0 ] || echo "  Moving is paused for $held campaign(s), waiting for a decision: the copies left in the Inbox would no longer be tracked."
     if [ "$brake" = '?' ] || [ "$held" = '?' ]; then
-        echo "  Couldn't check whether the brake or a campaign hold is on (Firestore didn't answer as expected)."
+        echo "  Couldn't check whether the brake or a campaign pause is on (Firestore didn't answer as expected)."
     fi
-    echo "  Decide first on the dashboard (Overview: resume; Email → Campaigns: confirm or release)."
-    [ -n "$EVEN_IF_HELD" ] || fail "something is or may be held. Check the dashboard's Overview first, then add --even-if-held to clear anyway."
+    echo "  Decide first on the dashboard (Overview: resume; Email → Campaigns: confirm, or dismiss as a false alarm)."
+    [ -n "$EVEN_IF_HELD" ] || fail "moving is or may be paused. Check the dashboard's Overview first, then add --even-if-paused to clear anyway."
 fi
 
 if [ -z "$YES" ]; then

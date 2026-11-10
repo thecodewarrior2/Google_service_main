@@ -8,7 +8,9 @@ The version is in `package.json` and `CHANGELOG.md`.
 S.P.R.U.C.E+ Mail Protection checks every new email in your Google Workspace domain with the same
 checks and AI model as the S.P.R.U.C.E+ browser extension. It moves suspicious ones to Spam, or in
 monitor mode only records them. An admin dashboard shows what was moved, why, which campaigns came in
-and who was affected, and lets IT release an email back to the Inbox.
+and who was affected, and lets IT move an email back to the Inbox. Nothing is ever withheld: every email
+reaches the user's mailbox, and the service only moves the suspicious ones to Spam (or not, in monitor
+mode).
 
 - **Runs in your own Google Cloud project** (Cloud Run, Pub/Sub, Firestore). Email is read through the
   Gmail API with domain-wide delegation and is not sent to any other service.
@@ -19,25 +21,28 @@ and who was affected, and lets IT release an email back to the Inbox.
   - **Monitor mode** (records, moves nothing) until you switch to enforce mode.
   - **The AI score alone never moves mail from inside the organization.** The rules still can, for
     example when a staff account is compromised.
-  - **Allowlisted senders and domains** are never moved.
+  - **Allowlisted senders and domains** are never moved (Settings → Allowlist, or `ALLOW_DOMAINS` and
+    `ALLOW_ADDRESSES`). Your own domains can't be allowlisted, so a staff account taken over can still be
+    caught.
   - **Both need DMARC to pass.** The allowlist and "inside the organization" go by the From address,
     which anyone can write. They count only when Gmail's own DMARC check passed for its domain. A
     forged allowlisted or staff address is judged like any mail from outside, and the record says so.
   - **Brakes that still protect a whole district** (`src/pipeline.js`, `brakes`):
-    - **Clear phishing is never held.** "Strong evidence" means the rules flag it *and* something outside
+    - **Moving clear phishing is never paused.** "Strong evidence" means the rules flag it *and* something outside
       the email confirms it: a blocked or listed link, a listed or blocked sender, a brand-new look-alike
       domain, or DMARC failing. Every copy is moved, to every mailbox.
-    - **Weaker evidence is held per campaign.** Once `CAMPAIGN_HOLD_AFTER` (25) copies of one campaign
-      were moved without outside confirmation, the rest wait (in the Inbox, recorded) for an admin:
-      **Confirm phishing** moves every copy, **False alarm** releases them. Other mail keeps moving.
+    - **On weaker evidence, moving pauses per campaign.** Once `CAMPAIGN_HOLD_AFTER` (25) copies of one
+      campaign were moved without outside confirmation, the others are left in the Inbox, like any email
+      not moved, and recorded, until an admin decides: **Confirm phishing** moves every copy to Spam,
+      **False alarm** moves the moved ones back to the Inbox. Other mail keeps moving.
     - **A domain-wide brake as a last resort:** more than `BRAKE_PER_HOUR` moves in an hour (by default
       half the watched mailboxes, at least 100) stops moving everywhere. That is a misfire on many
-      unrelated emails, not one campaign. Counted exactly. **Resume and move held mail** moves what it
-      held.
-    - **Alerts by email** when a brake engages, a campaign is held, a large campaign arrives, Gmail goes
+      unrelated emails, not one campaign. Counted exactly. While it is on, emails are left in the Inbox;
+      **Resume, and move those to Spam** moves them afterwards.
+    - **Alerts by email** when a brake engages, moving a campaign pauses, a large campaign arrives, Gmail goes
       quiet, or a scheduled job fails (`ALERT_EMAIL`, Cloud Monitoring).
   - **Every move can be undone** from the dashboard, and by the user: an email the user moves back
-    out of Spam stays in the Inbox. It is recorded as released by the user (a false alarm unless an
+    out of Spam stays in the Inbox. It is recorded as moved back by the user (a false alarm unless an
     admin marks it phishing), and an alert asks an admin to check when the checks had flagged it.
 
 ## How it decides
@@ -63,11 +68,11 @@ For each new Inbox message:
 | Situation | Action |
 |---|---|
 | The rules flag it (score 5+) | **Move to Spam** (label `SPRUCE/Moved`) |
-| The AI scores **85%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing) | **Move to Spam** |
-| Same, in monitor mode, or held by a brake (a campaign on weaker evidence, or the domain-wide brake) | Recorded as "would move" (a held one can be moved later) |
-| An admin released the campaign (a false alarm) | Recorded as suspicious, not moved |
+| The AI scores **90%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing) | **Move to Spam** |
+| Same, in monitor mode, or while moving is paused (a campaign on weaker evidence, or the domain-wide brake) | Left in the Inbox, recorded as "would move" (a paused one can be moved later) |
+| An admin dismissed the campaign as a false alarm | Recorded as suspicious, not moved |
 | The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
-| Amber, or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious |
+| A rules score of 3 or more, or an AI score of **65%** or more, below what moves it; or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious, not moved |
 | Allowlisted sender, DMARC passing | Nothing |
 
 It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is sent where):
@@ -89,8 +94,8 @@ The dashboard keeps itself up to date: the page you're on is fetched again every
 the tab is visible (not while you're typing in it, or using it otherwise). The bar under the tabs says
 when it last updated, and **Pause updates** stops it.
 
-The dashboard has four tabs: **Overview**, **Email**, **Status** and **Settings**. Email and Status
-each have a menu on the left (a row of buttons above the page on a phone).
+The dashboard has four tabs: **Overview**, **Email**, **Status** and **Settings**. Email, Status and
+Settings each have a menu on the left (a row of buttons above the page on a phone).
 
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per
   day by trigger; top reasons; largest campaigns; alerts.
@@ -99,10 +104,10 @@ each have a menu on the left (a row of buttons above the page on a phone).
     false alarm, **P** phishing, **N** next. The menu shows how many are left.
   - **Campaigns:** each opens the list of emails behind it, with **Confirm phishing: move every copy**
     (optionally searching every watched mailbox for copies the service didn't record), **False alarm:
-    release every copy**, and **Find other copies**.
+    move every copy back**, and **Find other copies**.
   - **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download
     CSV** gives the same list.
-    - Tick several to **release**, **mark false alarm** or **confirm phishing** them at once.
+    - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once.
     - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
       most, the sender check, and how strong the evidence was. Buttons: **Release to Inbox**, **Mark
       false alarm**, **Confirm phishing**.
@@ -123,7 +128,7 @@ each have a menu on the left (a row of buttons above the page on a phone).
     `deploy/doctor.sh` checks the rest from Cloud Shell.
   - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
     often by users themselves). This is the number to tune the threshold with.
-    - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings, off by
+    - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings → Retraining, off by
       default) gives the emails admins marked, read from Gmail at that moment with the people taken
       out, as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says
       how to check the file and train the model with it.
@@ -132,22 +137,25 @@ each have a menu on the left (a row of buttons above the page on a phone).
     - staff mail failing DMARC, and the busiest hour against the brake;
     - notifications arriving, and the group re-read reaching the service.
   - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
-- **Settings:** the policy in force, and each watched mailbox with the last time Gmail notified the
-  service about it.
+- **Settings:**
   - **Policy:** **Change** the mode, the AI move threshold, the brake (automatic, or a fixed number of
-    moves an hour) or the time zone.
+    moves an hour) or the time zone, and how the rest decides (read-only).
     - Each change needs the Google Cloud project ID; five wrong ones lock it for 10 minutes.
     - Switching to enforce mode also needs **I agree**, next to how many Readiness checks pass.
     - A change applies everywhere within 30 seconds, is noted in Activity, and is emailed as an alert
       (a time zone change is only noted).
     - Each setting says where its value comes from: settings.env, or changed here, by whom and when.
-  - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
-    run. It also says when the group was last read and whether that reached the service.
-  - **Weekly summary email** (off by default; changed here, like the retraining export): every Monday
-    from 7 AM (`TIME_ZONE`), the week's numbers, what waits, and the largest campaigns go into each
-    dashboard admin's Inbox. **Preview** and **Send one now** are next to it.
-  - **Retraining export** (off by default): allows **Download for retraining** on Status → Model health.
-- **The browser tab's title** counts what needs you: the brake, held campaigns, users who took flagged
+  - **Allowlist:** the domains and addresses never moved (when Gmail's DMARC check passes for them),
+    changed the same way, one per line. Your own domains can't be added; single addresses in them can.
+  - **Mailboxes:** each watched mailbox with the last time Gmail notified the service about it, and
+    **Update group membership now**, which re-reads the pilot group at once instead of waiting for the
+    daily run, and says whether that reached the service.
+  - **Weekly summary** (off by default): every Monday from 7 AM (`TIME_ZONE`), the week's numbers, what
+    waits, and the largest campaigns go into each dashboard admin's Inbox. **Preview** and **Send one
+    now** are next to it.
+  - **Retraining** (off by default): allows **Download for retraining** on Status → Model health.
+  - **About:** the version, the AI model, what is kept, and the network checks.
+- **The browser tab's title** counts what needs you: the brake, paused campaigns, users who took flagged
   mail back.
 
 Each page keeps its own address (`#/review`, `#/health`…), so links to a page keep working.
@@ -234,7 +242,7 @@ training examples, and a better AI model.
 | `src/engine/` | MIME and HTML reading, the extension's checks and model (`spruce.js` loads `vendor/spruce/`); `network.js` applies the lookups |
 | `src/intel/` | Cloudflare Security DNS, Google Safe Browsing, the phishing lists, registry dates; request limits |
 | `src/policy.js` | What happens to an analyzed email |
-| `src/pipeline.js` | Notifications → messages → decisions → actions → records; release, brake, watches, retention |
+| `src/pipeline.js` | Notifications → messages → decisions → actions → records; moving back, brake, watches, retention |
 | `src/gmail/` | Keyless domain-wide delegation, Gmail and Directory API calls |
 | `src/store/` | Firestore (production) and memory (demo, tests) |
 | `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |

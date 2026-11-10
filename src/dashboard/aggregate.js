@@ -72,7 +72,7 @@
         for (const r of records) {
             if (r.processedAt < since || (r.action !== 'move' && r.action !== 'would-move')) continue;
             const cats = new Set((r.signals || []).filter(s => s.weight >= 2).map(signalCategory));
-            if (r.ai && r.ai.probability >= 0.85) cats.add('AI: reads like phishing');
+            if (r.ai && r.ai.probability >= 0.65) cats.add('AI: reads like phishing');   // (policy.js AI_SUSPICIOUS)
             for (const c of cats) counts[c] = (counts[c] || 0) + 1;
         }
         return Object.entries(counts).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
@@ -168,7 +168,7 @@
             { id: 'staff', ok: staffUnverified.length === 0, text: staffUnverified.length ? `${staffUnverified.length} emails from a staff address didn't pass DMARC and weren't confirmed as phishing: check they are forged, not your own staff's mail.` : 'No staff address failed DMARC (or each one was confirmed as phishing).' },
             { id: 'brake', ok: peak < ctx.brakeLimit, text: `At most ${peak} emails would have been moved in one hour; the brake stops at ${ctx.brakeLimit}.` },
             { id: 'notifications', ok: quietFor !== null && quietFor < ctx.quietHours * 3600 * 1000, text: quietFor === null ? 'No notification from Gmail yet.' : `Gmail's last notification: ${Math.round(quietFor / 60000)} minutes ago, for ${ctx.watched} watched mailboxes.` },
-            { id: 'renew', ok: !!(ctx.renew && ctx.renew.at && !ctx.renew.code), text: ctx.renew && ctx.renew.at ? (ctx.renew.code ? 'The last re-read of the group didn\'t reach the service (Settings → Mailboxes watched).' : 'The last re-read of the group reached the service.') : 'The group hasn\'t been re-read from the dashboard\'s job yet.' }
+            { id: 'renew', ok: !!(ctx.renew && ctx.renew.at && !ctx.renew.code), text: ctx.renew && ctx.renew.at ? (ctx.renew.code ? 'The last re-read of the group didn\'t reach the service (Settings → Mailboxes).' : 'The last re-read of the group reached the service.') : 'The group hasn\'t been re-read from the dashboard\'s job yet.' }
         ];
         return { mode: ctx.mode, days: ctx.days, monitorDays, wouldMove: would.length, reviewed: reviewed.length, falseAlarms: falseAlarms.length, falseAlarmRate: rate,
                  strongShare: would.length ? strong / would.length : null, staffUnverified: staffUnverified.length, peakHour: peak, brakeLimit: ctx.brakeLimit,

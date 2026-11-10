@@ -287,19 +287,19 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `IAP_AUDIENCE` | none | the dashboard's Identity-Aware Proxy audience |
 | `RENEW_JOB` (dashboard) | none | the job "Update group membership now" runs: `projects/PROJECT/locations/REGION/jobs/spruce-renew-watches`. Without it the button isn't shown |
 | `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
-| `AI_MOVE_THRESHOLD` | `0.85` | AI score that moves (outside senders) |
+| `AI_MOVE_THRESHOLD` | `0.9` (from `0.65`, where an email counts as suspicious) | AI score that moves (outside senders) |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
 | `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside) |
-| `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain |
+| `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain (also on the dashboard: Settings → Allowlist). Your own domains can't be allowlisted |
 | `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
-| `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before the rest wait for an admin; strong evidence is never held |
+| `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before moving the rest pauses for an admin's decision (they stay in the Inbox meanwhile); strong evidence never pauses |
 | `CAMPAIGN_ALERT_AFTER` | `50` | a campaign moved this many times sends an alert |
 | `TIME_ZONE` | `UTC` | the time zone (IANA name) of the scheduled jobs (`--time-zone`) and of the weekly summary (Monday from 7 AM) |
 | `DASHBOARD_URL` | none | the dashboard's address, in the weekly summary (install.sh: `https://spruce-admin-NUMBER.REGION.run.app`) |
 | `GOOGLE_CLOUD_PROJECT`, `CLOUD_RUN_REGION` | none | where the services run, for the dashboard's Status page |
 | `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |
 | `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none |
-| `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |
+| `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Moved back` | labels added to mail moved to Spam, and to mail an admin moved back to the Inbox (`SPRUCE/Released` before 0.3.7) |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |
 | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off for now; `true` needs the key (Secret Manager) |

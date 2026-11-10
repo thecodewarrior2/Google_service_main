@@ -46,7 +46,10 @@ test('policy: rules or the AI move in enforce mode; monitor records; the AI alon
     assert.deepEqual([decide(r('flagged', 0.1), enforce).action, decide(r('flagged', 0.1), enforce).trigger], ['move', 'rules']);
     assert.deepEqual([decide(r('clean', 0.9), enforce).action, decide(r('clean', 0.9), enforce).trigger], ['move', 'ai']);
     assert.equal(decide(r('flagged', 0.99), enforce).trigger, 'rules+ai');
-    assert.equal(decide(r('clean', 0.84), enforce).action, 'flag', 'below 85%: recorded as suspicious only');
+    assert.equal(decide(r('clean', 0.84), enforce).action, 'flag', 'below 90%: recorded as suspicious only');
+    assert.equal(decide(r('clean', 0.89), enforce).action, 'flag', 'the move threshold is 90% by default');
+    assert.equal(decide(r('clean', 0.65), enforce).action, 'flag', 'suspicious from 65%');
+    assert.equal(decide(r('clean', 0.64), enforce).action, 'none', 'below 65%: not recorded');
     assert.equal(decide(r('clean', 0.2), enforce).action, 'none');
     assert.equal(decide(r('caution', 0.2, false, 3), enforce).action, 'flag');
     assert.equal(decide(r('clean', 0.99), monitor).action, 'would-move');
@@ -145,8 +148,8 @@ test('release puts a moved email back in the Inbox, records who did it and count
     await svc.handleNotification({ emailAddress: USER, historyId: '2' });
     const out = await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example');
     assert.equal(out.record.state, 'released'); assert.equal(out.record.releasedBy, 'it.admin@maple-schools.example'); assert.equal(out.record.falseAlarm, true);
-    assert.deepEqual(gmail.modified[1], { user: USER, id: 'm1', add: ['INBOX', 'L_SPRUCE/Released'], remove: ['SPAM', 'L_SPRUCE/Moved'] });
-    assert.match((await svc.release(`${USER}|m1`, 'x')).error, /already released/);
+    assert.deepEqual(gmail.modified[1], { user: USER, id: 'm1', add: ['INBOX', 'L_SPRUCE/Moved back'], remove: ['SPAM', 'L_SPRUCE/Moved'] });
+    assert.match((await svc.release(`${USER}|m1`, 'x')).error, /already back in the Inbox/);
     assert.equal((await svc.release('nope', 'x')).error, 'not found');
     assert.equal((await svc.mark(`${USER}|m1`, false, 'it.admin@maple-schools.example')).record.falseAlarm, false);
 });
@@ -170,7 +173,7 @@ test('a user who moves a moved email back to the Inbox: recorded as released by 
     const stats = await store.getStats('2000-01-01', '2999-01-01');
     assert.equal(stats.reduce((a, s) => a + (s.userReleased || 0), 0), 1);
     assert.equal(stats.reduce((a, s) => a + (s.released || 0), 0), 1);
-    assert.equal((await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example')).error, 'it is already released');
+    assert.equal((await svc.release(`${USER}|m1`, 'it.admin@maple-schools.example')).error, 'it is already back in the Inbox');
     assert.equal((await svc.mark(`${USER}|m1`, false, 'it.admin@maple-schools.example')).record.falseAlarm, false);
 });
 
@@ -465,6 +468,6 @@ test('configuration: real use needs every safety setting; demo mode refuses Clou
     assert.deepEqual(configProblems(loadConfig({ DEMO: '1' })), []);
     assert.match(configProblems(loadConfig({ DEMO: '1', K_SERVICE: 'spruce' }))[0], /refuses to run on Cloud Run/);
     const c = loadConfig({});
-    assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.85); assert.equal(c.aiMovesInside, false);
+    assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.9); assert.equal(c.aiMovesInside, false);
     assert.match(configProblems(loadConfig({ AI_MOVE_THRESHOLD: '0.3' })).join(' '), /AI_MOVE_THRESHOLD/);
 });

@@ -82,21 +82,41 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains }) {
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
+const LIST_KEYS = ['allowDomains', 'allowAddresses'];
+const MAX_ALLOWED = 500;
+const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+// A list as kept: lower case, no repeats, sorted (from a list, or text with one per line or commas).
+// (one per line, or separated by commas or semicolons: an entry with a space in it is reported whole)
+const asList = (v) => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\r\n,;]+/)).map(x => String(x).trim().toLowerCase()).filter(Boolean))].sort();
 const POLICY_REFRESH_MS = 30 * 1000;
 const OWN_ENV = Symbol('envPolicy of this configuration');
-const sameSetting = (a, b) => (typeof a === 'number' || typeof b === 'number' ? Number(a) === Number(b) : String(a) === String(b));
+const sameSetting = (a, b) => (Array.isArray(a) || Array.isArray(b) ? asList(a).join(',') === asList(b).join(',')
+    : typeof a === 'number' || typeof b === 'number' ? Number(a) === Number(b) : String(a) === String(b));
 function validTimeZone(z) { try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return true; } catch (e) { return false; } }
-// The value as stored, or an error (status 400) saying what is allowed.
-function policyValue(key, v) {
+// The value as stored, or an error (status 400) saying what is allowed. orgDomains: the organization's
+// own domains, which can't be allowlisted (a staff account taken over would never be moved).
+function policyValue(key, v, orgDomains = []) {
     const bad = (msg) => { throw Object.assign(new Error(msg), { status: 400 }); };
+    if (LIST_KEYS.includes(key)) {
+        const items = asList(v);
+        if (items.length > MAX_ALLOWED) bad(`At most ${MAX_ALLOWED} entries.`);
+        for (const x of items) {
+            const domain = key === 'allowDomains' ? x : x.split('@')[1] || '';
+            if (key === 'allowAddresses' && !/^[^\s@]+@[^\s@]+$/.test(x)) bad(`"${x.slice(0, 80)}" isn't an email address.`);
+            if (!DOMAIN_RE.test(domain)) bad(`"${x.slice(0, 80)}" isn't a domain${key === 'allowAddresses' ? ' at the end of an address' : ''}.`);
+            if (key === 'allowDomains' && orgDomains.some(d => x === d || x.endsWith(`.${d}`) || d.endsWith(`.${x}`))) bad(`${x} is your organization's own domain: it can't be allowlisted, or a staff account taken over would never be moved. Allowlist single addresses instead.`);
+        }
+        return items;
+    }
     if (key === 'mode') return v === 'monitor' || v === 'enforce' ? v : bad('The mode is monitor or enforce.');
-    if (key === 'aiThreshold') { const n = Number(v); return Number.isFinite(n) && n > 0.5 && n <= 1 ? Math.round(n * 1000) / 1000 : bad('The AI move threshold is more than 50% and at most 100%.'); }
+    if (key === 'aiThreshold') { const n = Number(v); return Number.isFinite(n) && n >= 0.65 && n <= 1 ? Math.round(n * 1000) / 1000 : bad('The AI move threshold is from 65% (where an email counts as suspicious) to 100%.'); }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
     return bad('That setting can\'t be changed on the dashboard.');
 }
 function policyWords(key, v) {
+    if (LIST_KEYS.includes(key)) { const l = asList(v); return l.length ? (l.length > 5 ? `${l.length} entries` : l.join(', ')) : 'none'; }
     if (key === 'mode') return v === 'enforce' ? 'enforce' : 'monitor';
     if (key === 'aiThreshold') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
@@ -149,7 +169,7 @@ class Service {
     // (the time zone: noted only).
     async setPolicy(key, raw, by) {
         if (!POLICY_KEYS.includes(key)) throw Object.assign(new Error('That setting can\'t be changed on the dashboard.'), { status: 400 });
-        const value = policyValue(key, raw);
+        const value = policyValue(key, raw, this.cfg.orgDomains);
         await this.refreshPolicy({ force: true });
         const before = this.cfg[key];
         if (sameSetting(before, value)) return { key, value, unchanged: true };
@@ -157,7 +177,13 @@ class Service {
         await this.store.setState(`policy-${key}`, rec);
         this.policyState[key] = rec; this.applyPolicy();
         const how = key === 'mode' && value === 'enforce' ? 'confirmed with the project ID, and agreed' : 'confirmed with the project ID';
-        const text = key === 'mode'
+        const listChange = () => {
+            const was = asList(before), now = asList(value);
+            const added = now.filter(x => !was.includes(x)), removed = was.filter(x => !now.includes(x));
+            const part = (verb, l) => (l.length ? `${verb} ${l.length > 10 ? `${l.length} entries` : l.join(', ')}` : '');
+            return `${by} changed the allowlisted ${key === 'allowDomains' ? 'domains' : 'addresses'} on the dashboard (${how}): ${[part('added', added), part('removed', removed)].filter(Boolean).join('; ')}. Mail from them is never moved when Gmail's DMARC check passes for it.`;
+        };
+        const text = LIST_KEYS.includes(key) ? listChange() : key === 'mode'
             ? (value === 'enforce' ? `${by} switched to enforce mode on the dashboard (${how}): from now on, emails the policy flags are moved to Spam.`
                 : `${by} switched to monitor mode on the dashboard (${how}): nothing is moved from now on, and emails already moved stay in Spam.`)
             : `${by} changed ${({ aiThreshold: 'the AI move threshold', brakePerHour: 'the brake', timeZone: 'the time zone' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
@@ -432,14 +458,14 @@ class Service {
     // Held copies are recorded as "would move" and can be moved later (moveHeld).
     async brakes(decision, result, campaignKey, campaignLabel, now) {
         const cs = await this.store.getCampaign(campaignKey);
-        const released = (d) => ({ decision: { action: 'flag', trigger: d.trigger, why: `${d.why}; an admin released this campaign (a false alarm), so its copies aren't moved` }, held: null });
+        const released = (d) => ({ decision: { action: 'flag', trigger: d.trigger, why: `${d.why}; an admin dismissed this campaign as a false alarm, so its copies aren't moved` }, held: null });
         if (cs && cs.decision === 'released') return released(decision);
         if (!result.strong && !(cs && cs.decision === 'confirmed')) {
             const h = await this.store.campaignHold(campaignKey, this.cfg.campaignHoldAfter, now, campaignLabel);
             if (h.decision === 'released') return released(decision);
             if (h.held) {
-                if (h.first) await this.alert('campaign-held', `Copies of "${campaignLabel}" are held: more than ${this.cfg.campaignHoldAfter} were moved on evidence nothing outside the email confirms. Confirm it as phishing (every copy is moved) or release it: on the dashboard, Email → Campaigns, then open the campaign.`, { campaign: campaignKey });
-                return { decision: { action: 'would-move', trigger: decision.trigger, why: `${decision.why} (held: over ${this.cfg.campaignHoldAfter} copies of this campaign on evidence nothing outside the email confirms; an admin confirms or releases it)` }, held: 'campaign' };
+                if (h.first) await this.alert('campaign-held', `Moving copies of "${campaignLabel}" is paused: more than ${this.cfg.campaignHoldAfter} were moved on evidence nothing outside the email confirms, so the next ones stay in the Inbox, like any email not moved. Confirm it as phishing (every copy is moved to Spam) or dismiss it as a false alarm (the moved ones go back to the Inbox): on the dashboard, Email → Campaigns, then open the campaign.`, { campaign: campaignKey });
+                return { decision: { action: 'would-move', trigger: decision.trigger, why: `${decision.why} (not moved: moving this campaign is paused after ${this.cfg.campaignHoldAfter} copies on evidence nothing outside the email confirms, until an admin confirms it or dismisses it)` }, held: 'campaign' };
             }
         }
         const resumedAt = Number(await this.store.getState('brakeResumedAt')) || 0;
@@ -458,7 +484,7 @@ class Service {
     }
     async tripBrake(now, count, limit) {
         if (!(await this.store.setStateIfUnset('brake', { at: now, moves: count, limit }))) return;
-        await this.alert('brake', `${count} emails were moved within the hour (limit ${limit}). Moving has stopped in every mailbox: suspicious mail is held until an admin resumes on the dashboard, which can also move the held mail.`);
+        await this.alert('brake', `${count} emails were moved within the hour (limit ${limit}). Moving has stopped in every mailbox: from now on, emails that would be moved stay in the Inbox, like any other email, until an admin resumes on the dashboard (Overview), which can also move them then.`);
     }
 
     // An alert: in Recent activity, and a log line Cloud Monitoring emails to ALERT_EMAIL (install.sh).
@@ -475,7 +501,7 @@ class Service {
         await this.store.setState('brakeResumedAt', this.now());
         await this.store.setState('brake', null);
         const out = moveHeld && brake ? await this.moveHeld(r => r.held === 'brake' && r.processedAt >= brake.at, by, 'resumed moving') : null;
-        await this.store.addEvent({ kind: 'resume', text: `Moving resumed by ${by}${out ? (out.monitor ? '' : `; ${out.moved} held emails moved to Spam${out.gone ? `, ${out.gone} no longer in the Inbox` : ''}`) : ''}.` });
+        await this.store.addEvent({ kind: 'resume', text: `Moving resumed by ${by}${out ? (out.monitor ? '' : `; ${out.moved} emails left in the Inbox while the brake was on were moved to Spam${out.gone ? `, ${out.gone} no longer in the Inbox` : ''}`) : ''}.` });
         return { ok: true, held: out };
     }
 
@@ -533,7 +559,7 @@ class Service {
                 else if (r.falseAlarm !== true) await this.store.updateRecord(r.key, { falseAlarm: true, markedBy: by });
             } catch (e) { failed++; this.log.error(`release ${r.key}:`, e); }
         });
-        await this.store.addEvent({ kind: 'campaign', campaign: key, text: `${by} released "${recs[0].campaignLabel}" as a false alarm: ${released} copies back in the Inbox${failed ? `, ${failed} couldn't be released` : ''}. Later copies aren't moved.` });
+        await this.store.addEvent({ kind: 'campaign', campaign: key, text: `${by} dismissed "${recs[0].campaignLabel}" as a false alarm: ${released} copies moved back to the Inbox${failed ? `, ${failed} couldn't be moved back` : ''}. Later copies aren't moved.` });
         return { released, failed };
     }
     // Copies of a campaign the service didn't record (judged clean when they came, or before the pilot):
@@ -585,7 +611,7 @@ class Service {
     async release(key, by, { quiet = false } = {}) {
         const rec = await this.store.getRecord(key);
         if (!rec) return { error: 'not found' };
-        if (rec.state !== 'moved') return { error: `it is ${rec.state === 'released' ? 'already released' : 'still in the Inbox'}` };
+        if (rec.state !== 'moved') return { error: `it is ${rec.state === 'released' ? 'already back in the Inbox' : 'still in the Inbox'}` };
         const released = await this.gmail.labelId(rec.user, this.cfg.releasedLabel);
         const moved = await this.gmail.labelId(rec.user, this.cfg.movedLabel);
         // Noted first: the Inbox label this adds comes back in the history, and must not read as the user's.
@@ -594,7 +620,7 @@ class Service {
         const now = this.now();
         const out = await this.store.updateRecord(key, { state: 'released', releasedBy: by, releasedByUser: false, releasedAt: now, falseAlarm: rec.falseAlarm === null ? true : rec.falseAlarm, markedBy: rec.markedBy || by });
         await this.store.incStat(dayOf(now), 'released');
-        if (!quiet) await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} released an email from ${rec.sender.address} to ${rec.user}.` });
+        if (!quiet) await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} moved an email from ${rec.sender.address} to ${rec.user} back to the Inbox.` });
         return { record: out };
     }
     // The user moved an email the service had put in Spam back to the Inbox (or marked it "Not spam"). The
@@ -830,7 +856,7 @@ class Service {
                 if (r && r.record) out.done++; else out.skipped++;
             } catch (e) { out.failed++; this.log.error(`bulk ${action} ${key}:`, e); }
         });
-        const what = { release: 'released', 'false-alarm': 'marked as false alarms', phishing: 'confirmed as phishing' }[action];
+        const what = { release: 'moved back to the Inbox', 'false-alarm': 'marked as false alarms', phishing: 'confirmed as phishing' }[action];
         if (out.done) await this.store.addEvent({ kind: action === 'release' ? 'release' : 'mark', text: `${by} ${what} ${out.done} email${out.done === 1 ? '' : 's'} at once.` });
         return out;
     }
@@ -856,7 +882,7 @@ class Service {
             await once('quietAlertAt', 'quiet', `No notification from Gmail for ${Math.round((now - since) / HOUR)} hours, for any of the ${users.length} watched mailboxes. Gmail's notifications may be refused before they reach the service: docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".`);
         }
         out.expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + DAY).length;
-        if (out.expiring) await once('expiringAlertAt', 'watch-expiring', `${out.expiring} mailbox watches end within a day and weren't renewed: the daily re-read of the group (spruce-renew-watches) may be failing. Settings → Mailboxes watched says when it last reached the service.`);
+        if (out.expiring) await once('expiringAlertAt', 'watch-expiring', `${out.expiring} mailbox watches end within a day and weren't renewed: the daily re-read of the group (spruce-renew-watches) may be failing. Settings → Mailboxes says when it last reached the service.`);
         return out;
     }
 }

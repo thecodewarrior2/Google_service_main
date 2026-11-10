@@ -231,15 +231,15 @@ test('clear-data.sh: deletes only what the dashboard shows, says who did it in A
         assert.match(deletes(r)[0], /--collection-ids=records,stats,campaigns,moveCounts --quiet$/);
         assert.ok(has(r.calls, /curl .*-X DELETE .*\/documents\/state\/installedAt$/));
         assert.match(event().text.stringValue, /^Someone in Cloud Shell cleared .*campaign decisions; the monitor-mode clock restarts\./);
-        // Held: the brake, or campaigns waiting for a decision. Refused unless --even-if-held.
+        // Paused: the brake, or campaigns waiting for a decision. Refused unless --even-if-paused (or its old name).
         r = w.run('clear-data.sh', { FAKE_BRAKE: 'on' }, ['--yes']);
-        assert.equal(r.code, 1); assert.match(r.out, /The brake is on/); assert.match(r.out, /add --even-if-held/); assert.equal(deletes(r).length, 0);
+        assert.equal(r.code, 1); assert.match(r.out, /The brake is on/); assert.match(r.out, /add --even-if-paused/); assert.equal(deletes(r).length, 0);
         r = w.run('clear-data.sh', { FAKE_BRAKE: 'resumed' }, ['--yes']);
         assert.equal(r.code, 0, `a resumed brake isn't held: ${r.out}`);
         r = w.run('clear-data.sh', { FAKE_BRAKE: 'error' }, ['--yes']);
         assert.equal(r.code, 1); assert.match(r.out, /Couldn't check whether the brake/); assert.equal(deletes(r).length, 0);
         r = w.run('clear-data.sh', { FAKE_HELD: '2' }, ['--yes']);
-        assert.equal(r.code, 1); assert.match(r.out, /2 campaign\(s\) are held for a decision/); assert.equal(deletes(r).length, 0);
+        assert.equal(r.code, 1); assert.match(r.out, /Moving is paused for 2 campaign\(s\), waiting for a decision/); assert.equal(deletes(r).length, 0);
         r = w.run('clear-data.sh', { FAKE_HELD: '2' }, ['--yes', '--even-if-held']);
         assert.equal(r.code, 0, r.out); assert.equal(deletes(r).length, 1);
         assert.equal(w.run('clear-data.sh', {}, ['--everything']).code, 1, 'an unknown option stops it');
@@ -297,5 +297,13 @@ test('the dashboard\'s policy changes when installing: taken where settings.env 
         // The same value on both sides: nothing to ask.
         r = w.run('install.sh', { FAKE_POLICY_mode: 'monitor|enforce' });
         assert.equal(r.code, 0, r.out); assert.doesNotMatch(r.out, /say different things/);
+        // The allowlists: compared as lists (order and case aside), taken where settings.env has none.
+        fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), `${SETTINGS}ALLOW_DOMAINS=Vendor.example;news.example\n`);
+        r = w.run('install.sh', { FAKE_POLICY_allowDomains: 'news.example,vendor.example|', FAKE_POLICY_allowAddresses: 'billing@vendor.example,a&b@bus.example|' });
+        assert.equal(r.code, 0, r.out);
+        assert.doesNotMatch(r.out, /say different things/, 'the same domains in another order and case');
+        assert.match(r.out, /The allowlisted addresses come from the dashboard|The allowlisted addresses comes from the dashboard/);
+        assert.match(settings(), /^ALLOW_ADDRESSES=a&b@bus\.example,billing@vendor\.example$/m, 'written as it is (& kept)');
+        assert.match(envOf('spruce-worker'), /^ALLOW_ADDRESSES: "a&b@bus\.example,billing@vendor\.example"$/m);
     } finally { w.cleanup(); }
 });

@@ -13,7 +13,7 @@ What the service doesn't do yet, roughly in the order it would help.
    `docs/RETRAINING.md`. Still to do: a first round of training with the district's examples, and a
    held-out set that grows with each round.
 3. **Campaign actions** are in (0.3.0). Still out: a campaign search over more than the last 7 days.
-4. **Notifications.** Email alerts to IT are in (0.3.0: brakes, held campaigns, large campaigns, Gmail
+4. **Notifications.** Email alerts to IT are in (0.3.0: brakes, paused campaigns, large campaigns, Gmail
    gone quiet, failed jobs). Still out: chat alerts, and an optional daily digest to users of what was
    moved for them.
 5. **Composite Firestore indexes**, for districts big enough that the dashboard's bounded reads (the

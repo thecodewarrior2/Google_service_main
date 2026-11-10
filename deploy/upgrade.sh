@@ -62,7 +62,7 @@ echo "Upgrade S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION): $FROM -> $VERS
 echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')"
 # The mode, and what the installer will take from the dashboard or ask about (deploy/dashboard-policy.sh).
 . deploy/dashboard-policy.sh
-dashboard_policy_read "$PROJECT" "$(get MODE)" "$(get AI_MOVE_THRESHOLD)" "$(get BRAKE_PER_HOUR)" "$(get TIME_ZONE)"
+dashboard_policy_read "$PROJECT" "$(get MODE)" "$(get AI_MOVE_THRESHOLD)" "$(get BRAKE_PER_HOUR)" "$(get TIME_ZONE)" "$(get ALLOW_DOMAINS)" "$(get ALLOW_ADDRESSES)"
 ENVMODE="$(get MODE)"; [ "$ENVMODE" = enforce ] || ENVMODE=monitor
 DASHMODE="$(printf '%s' "$DASHBOARD_POLICY" | awk -F '\t' '$1 == "mode" { print $2 }')"
 if [ -n "$DASHMODE" ] && [ "$DASHMODE" != "$ENVMODE" ]; then echo "Mode now: $DASHMODE (set on the dashboard; settings.env says $ENVMODE)"
