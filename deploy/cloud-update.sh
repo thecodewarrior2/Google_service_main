@@ -4,7 +4,8 @@
 # steps clone google_service_main into /workspace/release and run this file's phases in order:
 #
 #   check   (gcloud image)  an update was asked for in the last 30 minutes (state/updateRequest), for a
-#                           version newer than the one running; noted as "building" (state/update)
+#                           version newer than the one running, and no other build is on it; noted as
+#                           "building" (state/update)
 #   pick    (git image)     the commit asked for is on google_service_main's main branch, has that version,
 #                           and doesn't change the installation itself (installLevel); its files are put
 #                           in /workspace/build (release stays as downloaded, so every phase runs this
@@ -53,6 +54,16 @@ s = lambda k: v.get(k, {}).get("stringValue", "")
 print("\t".join([s("version"), s("commit"), s("by"), str(v.get("at", {}).get("integerValue", "0"))]))' 2>/dev/null || true)"
     IFS=$'\t' read -r VERSION COMMIT BY AT <<< "$req"
     [ -n "${VERSION:-}" ] && [ -n "${COMMIT:-}" ] || { echo "No update was asked for: nothing to do."; touch "$W/skip"; exit 0; }
+    # Another build already on it (the job run twice: by the button and by hand, say): this one leaves it
+    # alone, and changes nothing. A build "building" for longer than the build's timeout (45 minutes) has stopped.
+    cur="$(fs "$FS/state/update" 2>/dev/null | python3 -c '
+import json, sys
+v = (json.load(sys.stdin).get("fields", {}).get("value") or {}).get("mapValue", {}).get("fields", {})
+print("\t".join([v.get("phase", {}).get("stringValue", ""), str(v.get("at", {}).get("integerValue", "0")), v.get("build", {}).get("stringValue", "") or "-"]))' 2>/dev/null || true)"
+    IFS=$'\t' read -r CUR_PHASE CUR_AT CUR_BUILD <<< "$cur"
+    if [ "${CUR_PHASE:-}" = building ] && [ $(( $(now_ms) - ${CUR_AT:-0} )) -lt 2700000 ] && [ "${CUR_BUILD:-}" != "${BUILD:-}" ]; then
+        echo "An update is already under way (build ${CUR_BUILD}): this build leaves it to that one."; touch "$W/skip"; exit 0
+    fi
     FROM="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(metadata.labels.spruce-version)' 2>/dev/null | tr '-' '.')"
     LEVEL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(metadata.labels.spruce-install-level)' 2>/dev/null)"
     refuse() {

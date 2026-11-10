@@ -115,7 +115,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
           return Object.assign(base, { started: { from: D.settings.version, to: '9.9.9', demo: true } });
         }
         return Object.assign(base, { installed: { version: D.settings.version, installLevel: 1 }, newest: { version: '9.9.9', commit: '0'.repeat(40), date: new Date().toISOString(), model: D.settings.model.version, installLevel: 1, repo: 'mockup (GitHub not read)' },
-          newer: [{ version: '9.9.9', title: 'A made-up newer version (mockup)', body: '- The mockup reads no GitHub: this entry is made up, so you can try the page.' }], changelog: D.changelog, canUpdate: true, why: null, status: null, running: false, setUp: true });
+          newer: [{ version: '9.9.9', title: 'A made-up newer version (mockup)', body: '- The mockup reads no GitHub: this entry is made up, so you can try the page.' }], changelog: D.changelog, canUpdate: true, why: null, progress: null, running: false, setUp: true });
       case '/api/training-export/allow': D.settings.trainingExport = { enabled: body.enabled === true, updatedBy: ADMIN, updatedAt: Date.now() }; return Object.assign(base, { enabled: body.enabled === true });
       case '/api/bulk': return Object.assign(base, { done: (body.keys || []).length, skipped: 0, failed: 0 });
       case '/api/campaign/confirm': return Object.assign(base, { moved: { moved: 0, gone: 0, failed: 0, left: 0 }, found: null });

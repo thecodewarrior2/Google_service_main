@@ -801,7 +801,7 @@
             kvRow('Installed', d.installed.version),
             kvRow('Newest approved', n ? `${n.version}${n.model ? ` (AI model phish-tiny ${n.model})` : ''}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
             kvRow('From', n ? n.repo : '–'))));
-        const st = d.status;
+        const st = d.progress;
         if (st && st.phase) {
             const at = st.at ? when(st.at) : '';
             const box = { requested: ['warning', '⏳', `An update to ${st.version} was asked for by ${st.by}, ${at}.`, 'Cloud Build starts within a minute; building and deploying takes about 10 minutes. This page shows the new version when it is done (reload it if it doesn\'t).'],

@@ -137,6 +137,23 @@ test('the dashboard\'s routes (demo mode: GitHub isn\'t read; a made-up newer ve
         assert.equal(await store.getState('updateRequest'), null, 'demo mode: nothing requested');
         res = await fetch(`${base}/api/update`, { method: 'POST', headers: H, body: JSON.stringify(Object.assign({}, OK, { projectId: 'demo-project', email: 'x@example.org' })) });
         assert.equal(res.status, 403);
+        // An update under way (or done, or failed): the page still loads, with its progress. (In 0.3.9 to
+        // 0.3.11 its "status" was taken as the HTTP status code, and the page failed with "internal error".)
+        for (const phase of ['requested', 'building', 'done', 'failed']) {
+            await store.setState('update', { phase, version: '9.9.9', from: PKG.version, by: 'demo-admin@example.org', at: Date.now(), message: 'it stopped' });
+            res = await fetch(`${base}/api/update`);
+            assert.equal(res.status, 200, phase);
+            const p = (await res.json()).progress;
+            assert.equal(p.phase, phase); assert.equal(p.version, '9.9.9');
+        }
+        // About a version already installed or passed (installed from Cloud Shell since): history, so not
+        // shown, and it doesn't hold the button back. The one installed, done: shown.
+        await store.setState('update', { phase: 'requested', version: '0.0.1', from: '0.0.0', by: 'demo-admin@example.org', at: Date.now() });
+        let d2 = await (await fetch(`${base}/api/update`)).json();
+        assert.equal(d2.progress, null); assert.equal(d2.running, false); assert.equal(d2.canUpdate, true);
+        await store.setState('update', { phase: 'done', version: PKG.version, from: '0.0.1', by: 'demo-admin@example.org', at: Date.now() });
+        d2 = await (await fetch(`${base}/api/update`)).json();
+        assert.equal(d2.progress.phase, 'done');
     } finally { await new Promise(r => srv.close(r)); }
 });
 
@@ -241,6 +258,18 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
         assert.equal(r.event.kind.stringValue, 'update');
         assert.equal(r.event.text.stringValue, `The update from 0.3.8 to 9.9.9 finished: both services run 9.9.9 (started by it.head@${ORG} on the dashboard).`);
         assert.match(r.calls, /curl .*-X DELETE .*\/state\/updateRequest/);
+        // The job run twice (the button, and by hand): a build that finds another one building leaves it
+        // alone, and changes nothing. One building for longer than the build's timeout has stopped.
+        const progressDoc = (phase, ageMs, build) => JSON.stringify({ fields: { value: { mapValue: { fields: { phase: { stringValue: phase }, at: { integerValue: String(Date.now() - ageMs) }, build: { stringValue: build } } } } } });
+        r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1', FAKE_UPDATE: progressDoc('building', 60000, 'b-first'), BUILD: 'b-second' });
+        assert.match(r.codes['check.out'], /An update is already under way \(build b-first\): this build leaves it to that one\./);
+        assert.ok(Object.entries(r.codes).filter(([k]) => !k.includes('.')).every(([, c]) => c === 0), JSON.stringify(r.codes));
+        assert.doesNotMatch(r.calls, /run deploy|docker build|-X (PATCH|POST|DELETE)/);
+        assert.deepEqual(r.states, []); assert.equal(r.event, null);
+        r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1', FAKE_UPDATE: progressDoc('building', 46 * 60000, 'b-first'), BUILD: 'b-second' });
+        assert.deepEqual(r.states.map(s => s.phase), ['building', 'done'], 'a build stopped long ago doesn\'t block the next');
+        r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1', FAKE_UPDATE: progressDoc('requested', 1000, '') });
+        assert.deepEqual(r.states.map(s => s.phase), ['building', 'done'], 'the dashboard\'s "requested" is the usual start');
         // A commit that isn't on main (a fork's, say): refused, nothing built.
         git(path.join(sb.ws, 'release'), 'checkout', '-q', 'main');
         git(path.join(sb.ws, 'release'), 'fetch', '-q', 'origin', 'not-approved');

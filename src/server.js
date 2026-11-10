@@ -403,7 +403,10 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                 if (req.method === 'POST') cache.stale();
                 if (out && typeof out.csv === 'string') return send(res, 200, out.csv, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${out.filename}"` });
                 if (out && out.download) return send(res, 200, out.download.body, out.download.type, Object.assign({ 'content-disposition': `attachment; filename="${out.download.filename}"` }, out.download.headers));
-                return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold }, out));
+                // A route's status is the HTTP status code only when it is one (a field of that name holding
+                // anything else, such as an update's progress, broke Settings → Update in 0.3.9 to 0.3.11).
+                const code = out && Number.isInteger(out.status) && out.status >= 100 && out.status <= 599 ? out.status : (out && out.error ? 400 : 200);
+                return send(res, code, Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold }, out));
             }
             if (req.method === 'GET') {
                 const rel = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');

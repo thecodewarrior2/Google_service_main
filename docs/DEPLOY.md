@@ -259,7 +259,8 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 - **The build** runs as `spruce-updater` and logs to Cloud Logging (tag `spruce-update`). Its steps
   download `google_service_main` and run `deploy/cloud-update.sh` from it:
   1. **check:** there is a request from the last 30 minutes, for a version newer than the worker's
-     `spruce-version` label; the commit is 40 hex characters;
+     `spruce-version` label; the commit is 40 hex characters; no other build is on it (the job run
+     twice: a build that finds another one "building" in the last 45 minutes changes nothing);
   2. **pick:** the commit is on main (`git merge-base --is-ancestor`), its `package.json` has that
      version, and its `installLevel` isn't higher than the worker's `spruce-install-level` label;
   3. **image:** that commit's files built and pushed to Artifact Registry

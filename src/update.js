@@ -11,7 +11,8 @@
 // To start one an admin ticks the agreement and types the Google Cloud project ID and their own email
 // address. A version whose installLevel (package.json) is higher than the one installed changes the
 // installation itself (permissions, jobs, settings): that one is updated from Cloud Shell
-// (bash deploy/update.sh). Progress is in state/update: requested, building, done or failed.
+// (bash deploy/update.sh). Progress is in state/update: requested, building, done or failed, and in the
+// page's answer as progress (never status: the server takes a status as the HTTP status code).
 const { compareVersions } = require('./releases');
 
 const PKG = require('../package.json');
@@ -20,7 +21,10 @@ const RUNNING_MS = 45 * 60 * 1000;   // a build still "requested" or "building" 
 // What the page shows, and whether (and why not) the button is offered.
 async function updateInfo({ cfg, store, releases }) {
     const installed = { version: PKG.version, installLevel: Number(PKG.installLevel) || 0 };
-    const status = await store.getState('update');
+    // The last update's progress, when it is about a newer version (or is the one installed, done). One
+    // about a version already installed or passed (installed from Cloud Shell since, say) is history.
+    const last = await store.getState('update');
+    const status = last && (compareVersions(last.version, installed.version) > 0 || (last.phase === 'done' && compareVersions(last.version, installed.version) === 0)) ? last : null;
     const running = !!(status && ['requested', 'building'].includes(status.phase) && Date.now() - status.at < RUNNING_MS);
     let newest = null, error = null;
     try { newest = await releases.newest(); } catch (e) { error = `Couldn't read the approved versions from GitHub: ${String(e.message).slice(0, 200)}`; }
@@ -33,7 +37,7 @@ async function updateInfo({ cfg, store, releases }) {
     else if (running) why = `An update to ${status.version} is under way (started by ${status.by}).`;
     const newer = newest ? newest.changelog.filter(c => compareVersions(c.version, installed.version) > 0) : [];
     return { installed, newest: newest && { version: newest.version, commit: newest.commit, date: newest.date, model: newest.model, installLevel: newest.installLevel, repo: newest.repo },
-        newer, changelog: newest ? newest.changelog.slice(0, 20) : [], canUpdate: !why, why, status: status || null, running, setUp: !!cfg.updateJob };
+        newer, changelog: newest ? newest.changelog.slice(0, 20) : [], canUpdate: !why, why, progress: status || null, running, setUp: !!cfg.updateJob };
 }
 
 // The button: the checks, then the request and the job. Returns { started } or { error, status }.

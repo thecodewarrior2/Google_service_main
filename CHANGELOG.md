@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.12: Settings → Update loads while an update is under way
+
+- **Fixed: "Couldn't load this page. internal error." on Settings → Update** as soon as **Update to …**
+  was pressed, and from then on. The page's answer had a field named `status` (the update's progress),
+  which the dashboard's server took as the HTTP status code. In 0.3.9 to 0.3.11 the page loaded only
+  until the first update was asked for. The update itself was asked for, and the job run.
+  - The progress is now `progress`, and the server takes a route's status as the HTTP status code only
+    when it is one (a number from 100 to 599).
+- **A second build for the same update changes nothing.** Pressing the button and also running the
+  `spruce-update` job by hand started two builds for one request. A build that finds another one
+  "building" (in the last 45 minutes) now leaves it to that one, and says so in its log.
+- **Old progress isn't shown as current.** An update's progress about a version already installed or
+  passed (installed from Cloud Shell since, say) no longer shows as "under way" or "didn't finish", and
+  doesn't hold the button back.
+- **Install this version from Cloud Shell** (`bash deploy/update.sh`, or `upgrade.sh` with the zip): the
+  Update page of 0.3.9 to 0.3.11 can't load once an update was asked for. Nothing in the installation
+  changes (`installLevel` stays 1), so later versions can come from the dashboard.
+- **Tests:** 103: the page through the dashboard's server with an update requested, building, done or
+  failed (it failed with HTTP 500 before); old progress left out; a second build standing aside, one
+  stopped long ago not blocking, and the dashboard's "requested" as the usual start.
+- **Docs:** `docs/DEPLOY.md`.
+
 ## 0.3.11: Review suspicious emails that weren't moved
 
 - **Email → Review has two queues**, chosen at the top, each with how many are left:
