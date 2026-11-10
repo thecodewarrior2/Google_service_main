@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# A stand-in for gcloud (test/install.test.js): logs every call, answers what the deploy scripts read,
+# and fails what the FAKE_* variables say. Nothing reaches Google.
+echo "gcloud $*" >> "$FAKE_LOG"
+a="$*"
+case "$a" in
+  "projects describe"*) echo 123456789 ;;
+  "billing projects describe"*billingEnabled*) echo "${FAKE_BILLING:-True}" ;;
+  "billing projects describe"*) echo billingAccounts/000000-000000-000000 ;;
+  "billing accounts describe"*) echo USD ;;
+  "billing budgets list"*) ;;
+  "firestore databases describe"*) exit 0 ;;
+  "iam service-accounts describe"*oauth2ClientId*) echo 111122223333 ;;
+  "iam service-accounts describe"*) exit 0 ;;
+  "run services describe spruce-worker"*"--format=json"*) if [ "${FAKE_IAP:-off}" = on ]; then printf '{\n  "metadata": {\n    "annotations": {\n      "run.googleapis.com/iap-enabled": "true"\n    }\n  }\n}\n'; else echo '{}'; fi ;;
+  "run services describe spruce-worker"*"containers[0].image"*) echo "us-east1-docker.pkg.dev/test-proj/spruce/mail-protection:${FAKE_INSTALLED:-0.2.14}-20261101-000000" ;;
+  "run services describe"*status.url*) echo https://spruce-worker-abc.a.run.app ;;
+  "scheduler jobs describe spruce-renew-watches"*lastAttemptTime*) date -u +%Y-%m-%dT%H:%M:%S.000000Z ;;
+  "scheduler jobs describe spruce-renew-watches"*status.code*) [ "${FAKE_JOB:-ok}" = refused ] && echo 2 ;;
+  "scheduler jobs describe spruce-renew-watches"*state*) echo "${FAKE_JOB_STATE:-ENABLED}" ;;
+  "scheduler jobs describe"*) exit 1 ;;
+  "logging read"*) printf 'UNAUTHENTICATED: URL_ERROR-ERROR_AUTHENTICATION. Original HTTP response code number = 401\n' ;;
+  "pubsub subscriptions describe"*) exit 1 ;;
+  "beta monitoring channels create"*) echo projects/test-proj/notificationChannels/42 ;;
+  "monitoring policies create"*) f="${a##*--policy-from-file=}"; f="${f%% *}"; cp "$f" "$FAKE_DIR/policy-$(ls "$FAKE_DIR" | wc -l).json" ;;
+  "builds submit"*) [ "${FAKE_BUILD:-ok}" = ok ] || { echo "ERROR: build failed" >&2; exit 1; } ;;
+esac
+exit 0

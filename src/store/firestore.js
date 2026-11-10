@@ -5,10 +5,13 @@
 //   seen/{user|messageId}   messages being or already analyzed: state working (claimed by one instance),
 //                           retry (a try failed) or done (also an older document with no state)
 //   records/{key}           see store/memory.js
-//   stats/{yyyy-mm-dd}      counters: scanned, moved, wouldMove, flagged, released, falseAlarms, errors
+//   stats/{yyyy-mm-dd}~{i}  counters: scanned, moved, wouldMove, flagged, released, falseAlarms, errors, in
+//                           STAT_SHARDS documents a day (each document takes about one write a second; a
+//                           district's mail is more), summed when read. stats/{yyyy-mm-dd} (before 0.3.0) too.
 //   senders/{hash}          firstSeen (sender addresses as a 64-bit hash only, as in the extension)
 //   state/{name}            brake, installedAt, watchedCount, …
-//   moveCounts/{hour|resume} moves in a clock hour (the domain-wide brake; reserved before each move)
+//   moveCounts/{hour|resume}~{i} moves in a clock hour (the domain-wide brake; a slot reserved before each
+//                           move), in up to 32 shards whose limits add up to the brake's limit exactly
 //   campaigns/{key}         the campaign brake: weak moves, held, an admin's decision; moves (alerts)
 //   events/{auto}           alerts and errors for the dashboard
 //   blobs/{name}, ~{i}      the phishing lists (gzip, in chunks), shared by every instance
@@ -20,6 +23,8 @@ const { Firestore, FieldValue } = require('@google-cloud/firestore');
 const { movesForward } = require('./history');
 
 const safeId = (s) => String(s).replace(/[/\s]/g, '_').slice(0, 1400);
+const STAT_SHARDS = 10;
+const shuffled = (n) => { const a = [...Array(n).keys()]; for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 class FirestoreStore {
     constructor(cfg) { this.db = new Firestore({ databaseId: cfg.firestoreDatabase, ignoreUndefinedProperties: true }); }
@@ -70,10 +75,18 @@ class FirestoreStore {
         const q = await this.col('records').where('processedAt', '>=', sinceMs).where('processedAt', '<', untilMs).orderBy('processedAt', 'desc').limit(limit).get();
         return q.docs.map(d => d.data());
     }
-    async incStat(day, field, n = 1) { await this.col('stats').doc(day).set({ day, [field]: FieldValue.increment(n) }, { merge: true }); }
+    async incStat(day, field, n = 1) {
+        await this.col('stats').doc(`${day}~${Math.floor(Math.random() * STAT_SHARDS)}`).set({ day, [field]: FieldValue.increment(n) }, { merge: true });
+    }
     async getStats(fromDay, toDay) {
         const q = await this.col('stats').where('day', '>=', fromDay).where('day', '<=', toDay).orderBy('day').get();
-        return q.docs.map(d => d.data());
+        const byDay = new Map();
+        for (const d of q.docs) {
+            const v = d.data(), s = byDay.get(v.day) || { day: v.day };
+            for (const [k, x] of Object.entries(v)) if (k !== 'day' && typeof x === 'number') s[k] = (s[k] || 0) + x;
+            byDay.set(v.day, s);
+        }
+        return [...byDay.values()];
     }
     async senderFirstSeen(hash, now) {
         const ref = this.col('senders').doc(hash);
@@ -84,20 +97,33 @@ class FirestoreStore {
             return now;
         });
     }
-    // The brakes' counters, each read and changed in one transaction, so instances moving at the same
-    // moment can't pass a limit together.
+    // The domain-wide brake: a slot is reserved before each move, in one transaction on one of up to 32
+    // shards (tried in random order), each with its share of the limit, so the shares add up to the limit
+    // exactly and instances moving at the same moment rarely wait for each other.
     async reserveMove(bucket, limit, now = Date.now()) {
-        const ref = this.col('moveCounts').doc(safeId(bucket));
-        return this.db.runTransaction(async (t) => {
-            const d = await t.get(ref);
-            const count = d.exists ? d.data().count || 0 : 0;
-            if (count >= limit) return { ok: false, count };
-            t.set(ref, { count: count + 1, at: now }, { merge: true });
-            return { ok: true, count: count + 1 };
-        });
+        const n = Math.max(1, Math.min(32, limit));
+        const cap = (i) => Math.floor(limit / n) + (i < limit % n ? 1 : 0);
+        for (const i of shuffled(n)) {
+            const ref = this.col('moveCounts').doc(safeId(`${bucket}~${i}`));
+            const got = await this.db.runTransaction(async (t) => {
+                const d = await t.get(ref);
+                const count = d.exists ? d.data().count || 0 : 0;
+                if (count >= cap(i)) return false;
+                t.set(ref, { count: count + 1, at: now }, { merge: true });
+                return true;
+            });
+            if (got) return { ok: true };
+        }
+        return { ok: false, count: limit };
     }
+    // The campaign hold: a transaction only while the campaign is under its limit (at most holdAfter of
+    // them, plus the one that marks it held); copies after that only read it.
     async campaignHold(key, holdAfter, now = Date.now(), label = '') {
         const ref = this.col('campaigns').doc(safeId(key));
+        const seen = await ref.get();
+        const v = seen.exists ? seen.data() : {};
+        if (v.decision) return { decision: v.decision, held: false };
+        if ((v.weakMoves || 0) >= holdAfter && v.heldAt) return { held: true, first: false };
         return this.db.runTransaction(async (t) => {
             const d = await t.get(ref);
             const c = Object.assign({ key, label, weakMoves: 0, heldAt: null, decision: null }, d.exists ? d.data() : {});
@@ -111,13 +137,18 @@ class FirestoreStore {
             return { held: false, count: c.weakMoves + 1 };
         });
     }
-    async campaignMoved(key, now = Date.now()) {
+    // Counts a campaign's moves (an increment, no transaction); true once, for the move that reached
+    // alertAt first (the "large campaign" alert).
+    async campaignMoved(key, alertAt, now = Date.now()) {
         const ref = this.col('campaigns').doc(safeId(key));
+        await ref.set({ key, moves: FieldValue.increment(1), at: now }, { merge: true });
+        const v = (await ref.get()).data() || {};
+        if ((v.moves || 0) < alertAt || v.alertedAt) return false;
         return this.db.runTransaction(async (t) => {
             const d = await t.get(ref);
-            const moves = (d.exists ? d.data().moves || 0 : 0) + 1;
-            t.set(ref, { key, moves, at: now }, { merge: true });
-            return moves;
+            if (d.data().alertedAt) return false;
+            t.set(ref, { alertedAt: now }, { merge: true });
+            return true;
         });
     }
     async getCampaign(key) { const d = await this.col('campaigns').doc(safeId(key)).get(); return d.exists ? d.data() : null; }

@@ -25,7 +25,7 @@ gcloud scheduler jobs "$verb" http spruce-stop-watches --location="$REGION" --sc
     --oidc-service-account-email="$SA_INVOKER" --oidc-token-audience="https://spruce-worker-$NUMBER.$REGION.run.app" --quiet >/dev/null
 gcloud scheduler jobs resume spruce-stop-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
 gcloud scheduler jobs run spruce-stop-watches --location="$REGION" --quiet
-echo "   (waiting for it to run)"; sleep 45
+echo "   (waiting for it to run)"; sleep "${SPRUCE_STOP_WAIT:-45}"   # (the tests make it shorter)
 # Paused, so it never runs again by itself; deploy/install.sh deletes it.
 gcloud scheduler jobs pause spruce-stop-watches --location="$REGION" --quiet >/dev/null
 

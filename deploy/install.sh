@@ -16,7 +16,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
-AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT=
+AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +24,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -33,6 +33,10 @@ for k in PROJECT REGION ORG_DOMAINS PILOT_GROUP DIRECTORY_ADMIN; do [ -n "${!k}"
 WHO="$(echo "$ADMIN_GROUP;$ADMIN_EMAILS" | tr ',' ';' | sed 's/;;*/;/g; s/^;//; s/;$//')"   # for messages
 case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
 BUDGET_ALERT="${BUDGET_ALERT:-1}"
+# Where alerts are emailed: ALERT_EMAIL, else the dashboard's group, else its first address; off = none.
+ALERT_TO="${ALERT_EMAIL:-$(echo "$ADMIN_GROUP;$ADMIN_EMAILS" | tr ',;' '  ' | awk '{print $1}')}"
+[ "$ALERT_EMAIL" != off ] || ALERT_TO=
+case "$ALERT_TO" in '' | *@*.*) ;; *) fail "ALERT_EMAIL must be an email address, or off." ;; esac
 [[ "$BUDGET_ALERT" =~ ^(off|[0-9]+(\.[0-9]{1,2})?)$ ]] || fail "BUDGET_ALERT must be an amount (like 1 or 5) or off."
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
@@ -58,7 +62,7 @@ BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(b
 step "1/9 APIs and the budget alert"
 gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleapis.com run.googleapis.com \
     firestore.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com iap.googleapis.com \
-    cloudbuild.googleapis.com artifactregistry.googleapis.com billingbudgets.googleapis.com --quiet
+    cloudbuild.googleapis.com artifactregistry.googleapis.com billingbudgets.googleapis.com monitoring.googleapis.com --quiet
 
 # A budget alert: Google emails the billing account's admins as soon as this project is charged at all
 # (1% of the amount), and again at half and all of it. It warns; it doesn't stop the service.
@@ -163,7 +167,7 @@ env_file() {
 }
 WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
-COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR")
+COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER")
 
 step "7/9 Worker (reads the pilot mailboxes; only Pub/Sub and Scheduler may call it)"
 # Never behind Identity-Aware Proxy: Pub/Sub and Cloud Scheduler can't sign in through it, so every
@@ -187,7 +191,7 @@ gcloud run services add-iam-policy-binding spruce-worker --region="$REGION" --me
 
 step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAILS only)"
 AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
-    RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches")"
+    RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
     --memory=512Mi --max-instances=3 --env-vars-file="$AF" --quiet
 gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
@@ -228,7 +232,7 @@ job() { # name, schedule, path, extra flags...
 job_reached_worker() {
     local name="$1" since="$2" i t code why
     for i in $(seq 1 12); do
-        sleep 5
+        sleep "${SPRUCE_WAIT_STEP:-5}"   # (the tests make it shorter)
         t="$(gcloud scheduler jobs describe "$name" --location="$REGION" --format='value(lastAttemptTime)' 2>/dev/null || true)"
         code="$(gcloud scheduler jobs describe "$name" --location="$REGION" --format='value(status.code)' 2>/dev/null || true)"
         if [[ "$t" > "$since" ]] && { [ -z "$code" ] || [ "$code" = 0 ]; }; then echo "  $name reached the service."; return 0; fi
@@ -239,7 +243,41 @@ job_reached_worker() {
 }
 job spruce-renew-watches "17 3 * * *" /tasks/renew-watches
 job spruce-purge "41 4 * * *" /tasks/purge
-job spruce-sync-feeds "23 5 * * *" /tasks/sync-feeds --attempt-deadline=300s
+# Hourly: the health check (alerts when Gmail has gone quiet), and the phishing lists once a day.
+job spruce-sync-feeds "23 * * * *" /tasks/sync-feeds --attempt-deadline=300s
+
+# Alerts by email (Cloud Monitoring), from log lines: what the service reports (the brake, a held
+# campaign, Gmail gone quiet, a user taking flagged mail into the Inbox) and any failed scheduled job.
+# Log-based alerts read no metrics, so no charge is expected; the budget alert would say otherwise.
+policy() { # display name, log filter (JSON-escaped), label extractors (JSON), what to do, channel
+    local f="$TMP/policy.json" id
+    printf '%s\n' '{' \
+        "  \"displayName\": \"$1\"," \
+        "  \"documentation\": { \"content\": \"$4\", \"mimeType\": \"text/markdown\" }," \
+        '  "combiner": "OR",' \
+        "  \"conditions\": [ { \"displayName\": \"$1\", \"conditionMatchedLog\": { \"filter\": \"$2\", \"labelExtractors\": $3 } } ]," \
+        '  "alertStrategy": { "notificationRateLimit": { "period": "300s" }, "autoClose": "1800s" },' \
+        "  \"notificationChannels\": [ \"$5\" ]" \
+        '}' > "$f"
+    id="$(gcloud monitoring policies list --filter="displayName=\"$1\"" --format='value(name)' 2>/dev/null | head -1)"
+    if [ -n "$id" ]; then gcloud monitoring policies update "$id" --policy-from-file="$f" --quiet >/dev/null
+    else gcloud monitoring policies create --policy-from-file="$f" --quiet >/dev/null; fi
+}
+alerts() {
+    local channel
+    channel="$(gcloud beta monitoring channels list --filter="type=\"email\" AND labels.email_address=\"$ALERT_TO\"" --format='value(name)' 2>/dev/null | head -1)"
+    [ -n "$channel" ] || channel="$(gcloud beta monitoring channels create --display-name="SPRUCE Mail Protection alerts" --type=email --channel-labels=email_address="$ALERT_TO" --format='value(name)' --quiet)" || return 1
+    [ -n "$channel" ] || return 1
+    policy "SPRUCE Mail Protection: an alert from the service" 'resource.type=\"cloud_run_revision\" AND jsonPayload.spruceAlert:*' \
+        '{ "alert": "EXTRACT(jsonPayload.spruceAlert)", "message": "EXTRACT(jsonPayload.message)" }' \
+        "The service reported something to look at: the message says what. Open the dashboard (Overview, Activity)." "$channel" || return 1
+    policy "SPRUCE Mail Protection: a scheduled job failed" 'resource.type=\"cloud_scheduler_job\" AND severity>=ERROR AND resource.labels.job_id:\"spruce-\"' \
+        '{ "job": "EXTRACT(resource.labels.job_id)", "why": "EXTRACT(jsonPayload.debugInfo)" }' \
+        "A scheduled job couldn't reach the worker. If it says 401 or 403, see docs/INSTALL.md, Troubleshooting, The jobs and notifications are refused." "$channel" || return 1
+}
+if [ -z "$ALERT_TO" ]; then echo "  Alerts: not emailed (ALERT_EMAIL=off); they show in the dashboard's Recent activity."
+elif alerts; then echo "  Alerts: emailed to $ALERT_TO (the brake, held campaigns, Gmail gone quiet, failed jobs)."
+else echo "  (Alerts couldn't be set up from here; they still show in the dashboard's Recent activity. docs/INSTALL.md, Troubleshooting.)"; fi
 gcloud scheduler jobs run spruce-sync-feeds --location="$REGION" --quiet
 if [ -n "$STOPPED" ]; then
     gcloud scheduler jobs pause spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true
@@ -259,6 +297,7 @@ cat <<EOF
   Dashboard:  $ADMIN_URL   (for: $WHO)
   Mode:       $MODE$( [ "$MODE" = monitor ] && echo " (nothing is moved; would-be moves are recorded)")
   Watching:   members of $PILOT_GROUP. Settings in the dashboard shows how many mailboxes are watched.
+  Alerts:     $( [ -n "$ALERT_TO" ] && echo "emailed to $ALERT_TO" || echo "off (Recent activity only)")
 
   The watches start within a minute. To see the worker's log:
       gcloud run services logs read spruce-worker --region=$REGION --limit=50

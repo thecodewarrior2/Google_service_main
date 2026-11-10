@@ -1,5 +1,6 @@
-# The tests on every pull request (Dependabot's too) and on main, and a check for known vulnerabilities
-# in what the service installs. A pull request is merged only when both are green.
+# The tests on every pull request (Dependabot's too) and on main: the unit tests, the deploy scripts
+# against stand-ins (test/install.test.js), the Firestore store against Google's emulator, and a check
+# for known vulnerabilities in what the service installs. A pull request is merged only when all are green.
 name: Tests
 on:
   pull_request:
@@ -18,6 +19,31 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+  # The Firestore store's transactions against Google's Firestore emulator (test/firestore.test.js).
+  firestore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: cloud-firestore-emulator
+      - run: npm ci
+      - name: Start the Firestore emulator
+        run: |
+          gcloud emulators firestore start --host-port=127.0.0.1:8786 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8786/ >/dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/emulator.log"; exit 1
+      - run: node --test test/firestore.test.js
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8786
   audit:
     runs-on: ubuntu-latest
     steps:

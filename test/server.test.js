@@ -115,6 +115,43 @@ test('"Update group membership now": runs the re-read job, at most once a minute
     } finally { await app2.close(); }
 });
 
+test('dashboard: CSV export (formulas written as text), activity by kind, readiness checks, campaign state and decisions', async () => {
+    const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
+    const { store } = await buildDemo({ cfg, now: Date.now() });
+    const gm = Object.assign({}, gmail, { labels: async () => ['INBOX'], search: async () => ({ ids: [], next: null }) });
+    const service = new Service({ cfg, store, gmail: gm });
+    const { base, close } = await serve(createApp({ cfg, store, service }));
+    const get = async (p) => (await fetch(base + p)).json();
+    const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: JSON.stringify(body) });
+    try {
+        const csv = await fetch(`${base}/api/export.csv?days=90&action=move`);
+        assert.equal(csv.status, 200);
+        assert.match(csv.headers.get('content-type'), /^text\/csv/);
+        assert.match(csv.headers.get('content-disposition'), /^attachment; filename="spruce-messages-\d{4}-\d{2}-\d{2}\.csv"$/);
+        const lines = (await csv.text()).trim().split('\r\n');
+        assert.equal(lines[0].split(',')[0], 'checked');
+        const moves = (await get('/api/messages?days=90&action=move')).total;
+        assert.equal(lines.length - 1, Math.min(moves, 20000), 'one line per record shown on Messages');
+        const all = (await get('/api/activity?days=30')).events, alerts = (await get('/api/activity?days=30&kind=alert')).events;
+        assert.ok(all.length >= alerts.length && alerts.every(e => e.alert));
+        const r = (await get('/api/readiness?days=30')).readiness;
+        assert.deepEqual(r.checks.map(c => c.id), ['time', 'reviewed', 'falseAlarms', 'staff', 'brake', 'notifications', 'renew']);
+        assert.equal(typeof r.ready, 'boolean'); assert.equal(r.brakeLimit, 100);
+        // A campaign: state, then released as a false alarm (every moved copy back).
+        const top = (await get('/api/campaigns?days=30')).campaigns.find(c => c.moved > 0);
+        const c = (await get(`/api/campaign?key=${encodeURIComponent(top.campaign)}`)).campaign;
+        // (the Campaigns list counts every copy moved; here "moved" is those still in Spam, not taken back)
+        assert.ok(c.moved > 0 && c.moved <= top.moved); assert.equal(c.decision, null);
+        const rel = await (await post('/api/campaign/release', { key: top.campaign })).json();
+        assert.equal(rel.released, c.moved);
+        assert.equal((await get(`/api/campaign?key=${encodeURIComponent(top.campaign)}`)).campaign.decision, 'released');
+        assert.equal((await post('/api/campaign/release', { key: top.campaign })).status, 429, 'no double clicks');
+        assert.equal((await get('/api/campaign?key=nope')).error, 'not found');
+        const st = await get('/api/settings');
+        assert.equal(st.brakeLimit, 100); assert.equal(st.campaignHoldAfter, 25);
+    } finally { await close(); }
+});
+
 test('demo dashboard API: numbers agree with the records; release and marks work; POST needs the dashboard header; no path tricks', async () => {
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
     const { store } = await buildDemo({ cfg, now: Date.now() });

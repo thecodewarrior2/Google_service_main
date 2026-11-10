@@ -292,8 +292,9 @@ class Service {
         await this.store.saveRecord(rec);
         await this.store.incStat(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
         if (decision.action === 'move') {
-            const moves = await this.store.campaignMoved(campaign.key, now);
-            if (moves === this.cfg.campaignAlertAfter) await this.alert('campaign', `A large campaign: ${moves} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Campaigns page lists who received it.`, { campaign: campaign.key });
+            if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now)) {
+                await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Campaigns page lists who received it.`, { campaign: campaign.key });
+            }
         }
         if (userPlaced && result.status === 'flagged') {
             await this.alert('user-inbox', `${user} moved an email from ${rec.sender.address} into their Inbox (it didn't arrive there), and the checks flag it (score ${rec.score}). Make sure it's safe, or confirm it as phishing and warn them.`, { user, key: rec.key });

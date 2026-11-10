@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# A stand-in for docker (test/install.test.js).
+echo "docker $*" >> "$FAKE_LOG"
+case "$1" in
+  info) [ "${FAKE_DOCKER:-up}" = up ] ;;
+  build) [ "${FAKE_DBUILD:-ok}" = ok ] ;;
+  push) [ "${FAKE_PUSH:-ok}" = ok ] || { echo 'dial tcp 173.194.215.82:443: connect: connection refused' >&2; exit 1; } ;;
+esac

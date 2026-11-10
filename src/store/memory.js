@@ -81,10 +81,13 @@ class MemoryStore {
         c.weakMoves++; c.at = now; this.campaignState.set(key, c);
         return { held: false, count: c.weakMoves };
     }
-    async campaignMoved(key, now = Date.now()) {
+    async campaignMoved(key, alertAt, now = Date.now()) {
         const c = Object.assign({ key, weakMoves: 0, moves: 0, alertedAt: null }, this.campaignState.get(key));
-        c.moves = (c.moves || 0) + 1; c.at = now; this.campaignState.set(key, c);
-        return c.moves;
+        c.moves = (c.moves || 0) + 1; c.at = now;
+        const alert = c.moves >= alertAt && !c.alertedAt;
+        if (alert) c.alertedAt = now;
+        this.campaignState.set(key, c);
+        return alert;
     }
     async getCampaign(key) { const c = this.campaignState.get(key); return c ? JSON.parse(JSON.stringify(c)) : null; }
     async setCampaign(key, patch) { this.campaignState.set(key, Object.assign({ key }, this.campaignState.get(key) || {}, patch, { at: Date.now() })); }
