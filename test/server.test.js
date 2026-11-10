@@ -297,3 +297,15 @@ test('the clickable mockup builds, and every script in it parses (its stand-in A
         assert.match(scripts.join('\n'), /case '\/api\/policy'/, 'the policy stand-in is there');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('text from emails wraps inside its card: long links, addresses and subjects have places to break', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'app.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => ({ sel: m[1].split(',').map(s => s.trim()), body: m[2] }));
+    const wraps = (sel) => rules.some(r => r.sel.includes(sel) && /overflow-wrap:\s*anywhere/.test(r.body));
+    // The email's page (the AI's quotes, signs found, flagged links, details), its subject and sender line,
+    // alerts, Activity, and the Status and Readiness checks: all can show an email's subject, an address or a link.
+    for (const sel of ['.detail', '.quote', '.signals li', 'dl.kv dd', 'h1', '.pasted-title', '.sub', '.alert', '.decision', '.events li', '.checks li']) assert.ok(wraps(sel), `${sel} lets long words break`);
+    // Columns that may shrink below their longest word (otherwise the word pushes the card wider than the page).
+    for (const sel of ['.signals li', 'dl.kv']) assert.ok(rules.some(r => r.sel.includes(sel) && /grid-template-columns:[^;]*minmax\(0, 1fr\)/.test(r.body)), `${sel}'s text column can shrink`);
+    assert.ok(rules.some(r => r.sel.includes('.alert .grow') && /min-width:\s*0/.test(r.body)), 'an alert\'s text can shrink');
+});

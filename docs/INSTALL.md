@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.9.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.10.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.9.zip
+   unzip spruce-mail-protection-0.3.10.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.9
+   cd spruce-mail-protection-0.3.10
    ```
 
 4. Make your settings file:

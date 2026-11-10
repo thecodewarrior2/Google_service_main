@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.10: Long links and addresses stay inside their cards
+
+- **On an email's page** (Email → Review, and an email opened from Messages), text with no place to
+  break now wraps inside its card instead of running out of it and making the page scroll sideways:
+  - the AI's quotes ("What weighed most"), which are often a tracking link;
+  - **Flagged links**, and the links named in **Signs found**;
+  - the subject, the sender and recipient line, and **What happened**.
+- **The same elsewhere:** alerts, Overview's recent alerts, Status → Activity, and the Status and
+  Readiness checks, which can name a subject, an address or a link.
+- **Signs found:** the score badge stays one line tall at the top of a sign that wraps over several
+  lines.
+- Nothing else changes: the AI's quotes and the links are shown in full, as before.
+- **Tests:** 101 (from 100): the dashboard's styles let long words break wherever email text is shown.
+
 ## 0.3.9: Updating from the dashboard (Settings → Update)
 
 - **Settings → Update**, its own page in the Settings menu:
