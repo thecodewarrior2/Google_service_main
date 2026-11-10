@@ -29,7 +29,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         records: await store.listRecords({ sinceMs: 0, limit: 100000 }),
         stats: await store.getStats('2000-01-01', '2999-12-31'),
         events: await store.listEvents(0),
-        settings: { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
+        settings: { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                     orgDomains: ['maple-schools.example'], pilotOu: '/Staff', pilotUsers: 0, allowDomains: [], allowAddresses: 0, retentionDays: cfg.retentionDays,
                     storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true,
                     mailboxes: (await store.listUsers()).sort((a, b) => a.email.localeCompare(b.email)).map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
@@ -37,7 +37,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     brakePerHour: 0, brakeLimit: 100, campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: 'spruce-admins@maple-schools.example',
                     digest: { enabled: false }, trainingExport: { enabled: false }, timeZone: 'America/New_York',
                     projectKnown: true, demoProjectId: 'demo-project',
-                    policy: { mode: { value: cfg.mode, env: cfg.mode, changed: null, replaced: null }, aiThreshold: { value: cfg.aiThreshold, env: cfg.aiThreshold, changed: null, replaced: null },
+                    policy: { mode: { value: cfg.mode, env: cfg.mode, changed: null, replaced: null }, aiThreshold: { value: cfg.aiThreshold, env: cfg.aiThreshold, changed: null, replaced: null }, aiSuspicious: { value: cfg.aiSuspicious, env: cfg.aiSuspicious, changed: null, replaced: null },
                               brakePerHour: { value: 0, env: 0, changed: null, replaced: null }, timeZone: { value: 'America/New_York', env: 'America/New_York', changed: null, replaced: null },
                               allowDomains: { value: [], env: [], changed: null, replaced: null }, allowAddresses: { value: [], env: [], changed: null, replaced: null } }, version: require('../package.json').version,
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }

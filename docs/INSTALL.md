@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.7.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.8.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.7.zip
+   unzip spruce-mail-protection-0.3.8.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.7
+   cd spruce-mail-protection-0.3.8
    ```
 
 4. Make your settings file:
@@ -164,8 +164,8 @@ When it finishes, it prints the **dashboard address**.
 - **Changing a setting:** edit `deploy/settings.env` and run `bash deploy/install.sh`. It doesn't rebuild
   when the files are the same as last time (about a minute). `FORCE_BUILD=1 bash deploy/install.sh`
   rebuilds anyway.
-- **Mode, AI move threshold, brake and time zone** can also be changed on the dashboard: **Settings →
-  Policy → Change**.
+- **Mode, AI move threshold, AI suspicious line, brake and time zone** can also be changed on the
+  dashboard: **Settings → Policy → Change** (and the allowlist on **Settings → Allowlist**).
   - Each change needs the Google Cloud project ID, and switching to enforce mode also needs **I agree**.
   - A change applies everywhere within 30 seconds, is noted in Status → Activity, and is emailed as an
     alert (a time zone change is only noted).

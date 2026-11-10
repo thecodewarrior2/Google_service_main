@@ -267,8 +267,9 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 
 ## Settings (environment variables)
 
-`MODE`, `AI_MOVE_THRESHOLD`, `BRAKE_PER_HOUR` and `TIME_ZONE` can also be changed on the dashboard
-(Settings → Policy, with the project ID, which the dashboard checks against `GOOGLE_CLOUD_PROJECT`).
+`MODE`, `AI_MOVE_THRESHOLD`, `AI_SUSPICIOUS_THRESHOLD`, `BRAKE_PER_HOUR`, `TIME_ZONE`, `ALLOW_DOMAINS`
+and `ALLOW_ADDRESSES` can also be changed on the dashboard (Settings → Policy, Settings → Allowlist,
+with the project ID, which the dashboard checks against `GOOGLE_CLOUD_PROJECT`).
 Those changes are kept in Firestore (`state/policy-<key>`) and read by both services at least every
 30 seconds. A change stays in force until settings.env has another value for the same setting:
 `deploy/install.sh` asks which to keep, then writes it into settings.env (docs/INSTALL.md).
@@ -287,7 +288,8 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `IAP_AUDIENCE` | none | the dashboard's Identity-Aware Proxy audience |
 | `RENEW_JOB` (dashboard) | none | the job "Update group membership now" runs: `projects/PROJECT/locations/REGION/jobs/spruce-renew-watches`. Without it the button isn't shown |
 | `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
-| `AI_MOVE_THRESHOLD` | `0.9` (from `0.65`, where an email counts as suspicious) | AI score that moves (outside senders) |
+| `AI_MOVE_THRESHOLD` | `0.9` | AI score that moves (outside senders); from `AI_SUSPICIOUS_THRESHOLD` to `1` |
+| `AI_SUSPICIOUS_THRESHOLD` | `0.65` | AI score from which an email not moved is recorded as suspicious (for review); from `0.5` to `AI_MOVE_THRESHOLD` |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
 | `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside) |
 | `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain (also on the dashboard: Settings → Allowlist). Your own domains can't be allowlisted |

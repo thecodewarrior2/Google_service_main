@@ -174,7 +174,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             const trainingExport = Object.assign({ enabled: false }, await store.getState('trainingExport'));
             const policy = service.policyInfo ? service.policyInfo() : null;
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
-            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
+            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
@@ -267,7 +267,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             if (cfg.demo) return { sent: 0, to: [], failed: [], demo: true };
             try { return await service.sendDigest({ by: admin.email }); } catch (e) { return { error: `Couldn't send it: ${String(e.message).slice(0, 200)}`, status: 502 }; }
         },
-        // A policy setting changed on the dashboard: mode, aiThreshold, brakePerHour or timeZone. Needs the
+        // A policy setting changed on the dashboard (POLICY_KEYS: the mode, the AI lines, the brake, the time
+        // zone, the allowlists). Needs the
         // project ID typed in; switching to enforce mode also needs the agreement ticked.
         'POST /api/policy': async (q, body, admin) => {
             const key = String(body.key || '');

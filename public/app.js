@@ -563,11 +563,11 @@
         const d = await settingsData();
         const allowed = ((d.policy && d.policy.allowDomains && d.policy.allowDomains.value) || d.allowDomains || []).length;
         const addresses = d.policy && d.policy.allowAddresses ? d.policy.allowAddresses.value.length : d.allowAddresses;
-        return [h('h1', { text: 'Policy' }), h('p', { class: 'sub', text: 'What is moved to Spam, and when. The four settings below can be changed here, each change confirmed with the Google Cloud project ID; the rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
+        return [h('h1', { text: 'Policy' }), h('p', { class: 'sub', text: 'What is moved to Spam, and when. The settings below can be changed here, each change confirmed with the Google Cloud project ID; the rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
             policyCard(d, POLICY_ROWS, 'Policy', 'Each change needs the Google Cloud project ID, applies within 30 seconds, is noted in Status → Activity, and is emailed as an alert (a time zone change is only noted). When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.'),
             h('section', { class: 'card spaced' }, h('h2', { text: 'How it decides' }), h('dl', { class: 'kv' },
                 kvRow('Moved to Spam', `${d.moveOnRules ? 'when the rules flag it (a score of 5 or more), or ' : 'when '}the AI scores ${pct(d.aiThreshold)} or more (senders outside the organization)`),
-                kvRow('Suspicious, not moved', `a rules score of 3 or more, or an AI score of 65% or more, below what moves it: recorded for review`),
+                kvRow('Suspicious, not moved', `a rules score of 3 or more, or an AI score of ${pct(d.aiSuspicious || 0.65)} or more, below what moves it: recorded for review`),
                 kvRow('AI alone, inside mail', d.aiMovesInside ? 'Moves it' : 'Never moves it (the rules still can)'),
                 kvRow('Campaign pause', `After ${num(d.campaignHoldAfter)} copies of one campaign are moved on weaker evidence, moving its other copies pauses until you confirm it as phishing or dismiss it as a false alarm; until then they stay in the Inbox, like any email not moved. Strong evidence never pauses (CAMPAIGN_HOLD_AFTER)`),
                 kvRow('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Status → Activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
@@ -770,6 +770,7 @@
     const POLICY_ROWS = [
         { key: 'mode', label: 'Mode', show: (v) => (v === 'enforce' ? 'Enforce: emails the policy flags are moved to Spam' : 'Monitor: emails are checked and recorded, nothing is moved') },
         { key: 'aiThreshold', label: 'AI move threshold', show: (v) => `${pct(v)}: an email the AI scores this high or higher is moved (rules aside)` },
+        { key: 'aiSuspicious', label: 'AI suspicious line', show: (v) => `${pct(v)}: an email the AI scores this high or higher, but not moved, is recorded as suspicious for review` },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
         { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` }
     ];
@@ -782,13 +783,13 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
         pageBusy = () => !!openKey;
         const short = (key, v) => (Array.isArray(v) ? (v.length ? `${num(v.length)} entr${v.length === 1 ? 'y' : 'ies'}` : 'none')
-            : key === 'mode' ? v : key === 'aiThreshold' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
+            : key === 'mode' ? v : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
         const source = (key) => {
             const p = P[key] || {};
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
@@ -845,9 +846,15 @@
             read = () => choices.querySelector('input:checked').value;
             extra = [choices, agreeBox, value === 'enforce' ? h('div', { class: 'small muted', text: 'Monitor mode: nothing is moved from then on; emails already moved stay in Spam.' }) : null];
         } else if (key === 'aiThreshold') {
-            const input = h('input', { type: 'number', min: 65, max: 100, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI move threshold in percent', class: 'num-input' });
+            const floor = Math.max(51, Math.round((d.aiSuspicious || 0.65) * 100));
+            const input = h('input', { type: 'number', min: floor, max: 100, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI move threshold in percent', class: 'num-input' });
             read = () => Number(input.value) / 100;
-            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: 'From 65% (where an email counts as suspicious) to 100%. Higher moves fewer emails on the AI score alone. Status → Model health shows how often moves on the AI score were undone.' })];
+            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: `From the suspicious line (${floor}%) to 100%. Higher moves fewer emails on the AI score alone. Status → Model health shows how often moves on the AI score were undone.` })];
+        } else if (key === 'aiSuspicious') {
+            const ceiling = Math.round((d.aiThreshold || 0.9) * 100);
+            const input = h('input', { type: 'number', min: 50, max: ceiling, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI suspicious line in percent', class: 'num-input' });
+            read = () => Number(input.value) / 100;
+            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: `From 50% to the move threshold (${ceiling}%). Lower records more emails for review (Email → Review), higher fewer; nothing more or less is moved. Below the line, and with a rules score under 3, an email isn't recorded at all.` })];
         } else if (key === 'brakePerHour') {
             const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
             const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });

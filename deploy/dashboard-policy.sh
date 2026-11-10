@@ -1,8 +1,8 @@
 # S.P.R.U.C.E+ Mail Protection: the policy settings changed on the dashboard (Settings → Policy), for
 # deploy/install.sh and deploy/upgrade.sh, which source this file (it isn't run on its own).
 #
-# The dashboard keeps its changes of MODE, AI_MOVE_THRESHOLD, BRAKE_PER_HOUR, TIME_ZONE, ALLOW_DOMAINS and
-# ALLOW_ADDRESSES in Firestore (state/policy-<key>). When installing, for each of them:
+# The dashboard keeps its changes of MODE, AI_MOVE_THRESHOLD, AI_SUSPICIOUS_THRESHOLD, BRAKE_PER_HOUR,
+# TIME_ZONE, ALLOW_DOMAINS and ALLOW_ADDRESSES in Firestore (state/policy-<key>). When installing, for each of them:
 #   - settings.env doesn't set it (empty or missing), the dashboard does: the dashboard's is used;
 #   - settings.env sets it, the dashboard doesn't: settings.env's is used;
 #   - both, the same: nothing to choose;
@@ -14,6 +14,7 @@
 # Reading never stops the script: when Firestore can't be read (none yet, no access), settings.env is used.
 #
 #   dashboard_policy_read PROJECT MODE AI_MOVE_THRESHOLD BRAKE_PER_HOUR TIME_ZONE ALLOW_DOMAINS ALLOW_ADDRESSES
+#                         AI_SUSPICIOUS_THRESHOLD
 #       fills DASHBOARD_POLICY, one line per setting the dashboard changed, tab-separated:
 #       key, value, value in words, by, date, settings.env (unset, same or differs), settings.env's in words
 #   dashboard_policy_summary     (upgrade.sh) what the installer will take or ask about
@@ -27,7 +28,7 @@ DASHBOARD_POLICY='' DASHBOARD_NOTES=''
 DASHBOARD_POLICY_PY='
 import json, sys
 from datetime import datetime, timezone
-key, f_mode, f_ai, f_brake, f_tz, f_dom, f_addr = sys.argv[1:8]   # (settings.env as it is; empty: the default)
+key, f_mode, f_ai, f_brake, f_tz, f_dom, f_addr, f_susp = sys.argv[1:9]   # (settings.env as it is; empty: the default)
 def val(v):
     if not isinstance(v, dict): return None
     if "stringValue" in v: return v["stringValue"]
@@ -40,18 +41,18 @@ import re
 def as_list(v): return sorted(set(x.strip().lower() for x in (v if isinstance(v, list) else re.split(r"[\r\n,;]+", str(v or ""))) if x and x.strip()))
 o = val(json.load(sys.stdin).get("fields", {}).get("value"))
 if not isinstance(o, dict) or o.get("value") is None: sys.exit(0)
-raw_file = {"mode": f_mode, "aiThreshold": f_ai, "brakePerHour": f_brake, "timeZone": f_tz, "allowDomains": f_dom, "allowAddresses": f_addr}[key].strip()
-numeric = key in ("aiThreshold", "brakePerHour")
+raw_file = {"mode": f_mode, "aiThreshold": f_ai, "aiSuspicious": f_susp, "brakePerHour": f_brake, "timeZone": f_tz, "allowDomains": f_dom, "allowAddresses": f_addr}[key].strip()
+numeric = key in ("aiThreshold", "aiSuspicious", "brakePerHour")
 listed = key in ("allowDomains", "allowAddresses")
 def words(v):
     if listed:
         l = as_list(v)
         return "none" if not l else (", ".join(l) if len(l) <= 5 else "%d entries" % len(l))
-    if key == "aiThreshold": return "%g%%" % round(float(v) * 100, 1)
+    if key in ("aiThreshold", "aiSuspicious"): return "%g%%" % round(float(v) * 100, 1)
     if key == "brakePerHour": return ("%d moves an hour" % int(float(v))) if float(v) else "automatic"
     return str(v)
 v = o["value"]
-raw = ",".join(as_list(v)) if listed else ("%g" % float(v) if key == "aiThreshold" else str(int(float(v)))) if numeric else str(v)
+raw = ",".join(as_list(v)) if listed else ("%g" % float(v) if key in ("aiThreshold", "aiSuspicious") else str(int(float(v)))) if numeric else str(v)
 if raw_file == "": state, fw = "unset", "not set"
 else:
     try:
@@ -65,9 +66,9 @@ when = datetime.fromtimestamp(at / 1000, timezone.utc).strftime("%Y-%m-%d") if i
 print("\t".join([key, raw, words(v), str(o.get("by") or "an admin"), when, state, fw]))
 '
 
-dashboard_label() { case "$1" in mode) echo mode ;; aiThreshold) echo 'AI move threshold' ;; brakePerHour) echo brake ;; timeZone) echo 'time zone' ;; allowDomains) echo 'allowlisted domains' ;; allowAddresses) echo 'allowlisted addresses' ;; esac; }
+dashboard_label() { case "$1" in mode) echo mode ;; aiThreshold) echo 'AI move threshold' ;; aiSuspicious) echo 'AI suspicious line' ;; brakePerHour) echo brake ;; timeZone) echo 'time zone' ;; allowDomains) echo 'allowlisted domains' ;; allowAddresses) echo 'allowlisted addresses' ;; esac; }
 dashboard_comes() { case "$1" in allowDomains | allowAddresses) echo come ;; *) echo comes ;; esac; }   # (the allowlists are plural)
-dashboard_env_name() { case "$1" in mode) echo MODE ;; aiThreshold) echo AI_MOVE_THRESHOLD ;; brakePerHour) echo BRAKE_PER_HOUR ;; timeZone) echo TIME_ZONE ;; allowDomains) echo ALLOW_DOMAINS ;; allowAddresses) echo ALLOW_ADDRESSES ;; esac; }
+dashboard_env_name() { case "$1" in mode) echo MODE ;; aiThreshold) echo AI_MOVE_THRESHOLD ;; aiSuspicious) echo AI_SUSPICIOUS_THRESHOLD ;; brakePerHour) echo BRAKE_PER_HOUR ;; timeZone) echo TIME_ZONE ;; allowDomains) echo ALLOW_DOMAINS ;; allowAddresses) echo ALLOW_ADDRESSES ;; esac; }
 dashboard_fs() {   # dashboard_fs PROJECT CURL-ARGS...: a Firestore REST call as the Cloud Shell account
     local project="$1"; shift
     [ -n "${DASHBOARD_TOKEN:-}" ] || DASHBOARD_TOKEN="$(gcloud auth print-access-token 2>/dev/null)" || return 1
@@ -79,9 +80,9 @@ dashboard_base() { echo "${SPRUCE_FIRESTORE_URL:-https://firestore.googleapis.co
 dashboard_policy_read() {
     DASHBOARD_POLICY=''
     local project="$1" key doc line
-    for key in mode aiThreshold brakePerHour timeZone allowDomains allowAddresses; do
+    for key in mode aiThreshold aiSuspicious brakePerHour timeZone allowDomains allowAddresses; do
         doc="$(dashboard_fs "$project" "$(dashboard_base "$project")/state/policy-$key" 2>/dev/null)" || continue
-        line="$(printf '%s' "$doc" | python3 -c "$DASHBOARD_POLICY_PY" "$key" "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" 2>/dev/null || true)"
+        line="$(printf '%s' "$doc" | python3 -c "$DASHBOARD_POLICY_PY" "$key" "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" "${8:-}" 2>/dev/null || true)"
         [ -z "$line" ] || DASHBOARD_POLICY="$DASHBOARD_POLICY$line"$'\n'
     done
     return 0

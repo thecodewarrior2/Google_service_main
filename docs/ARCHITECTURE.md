@@ -95,8 +95,9 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   Nothing is stored or counted. `tools/check-training-file.js` refuses a file with leftovers, and
   `docs/RETRAINING.md` covers the rest.
 - **The policy, changed on the dashboard** (Settings → Policy, Settings → Allowlist).
-  - **Which settings:** `MODE`, `AI_MOVE_THRESHOLD`, `BRAKE_PER_HOUR` and `TIME_ZONE`, kept in Firestore
-    as `state/policy-<key>`.
+  - **Which settings:** `MODE`, `AI_MOVE_THRESHOLD`, `AI_SUSPICIOUS_THRESHOLD`, `BRAKE_PER_HOUR`,
+    `TIME_ZONE`, `ALLOW_DOMAINS` and `ALLOW_ADDRESSES`, kept in Firestore as `state/policy-<key>`. The
+    suspicious line is checked against the move threshold both ways (`policyValue`).
   - **How they apply:** in `loadConfig` these four are live values; everything else is frozen.
     `Service.refreshPolicy` reads them at least every 30 s (on each notification, each job, each
     dashboard request). Every check reads them when it runs, so a change applies everywhere within

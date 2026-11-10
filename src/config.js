@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -42,6 +42,8 @@ function loadConfig(env = process.env) {
         // model's score at or above the threshold.
         moveOnRules: bool(env.MOVE_ON_RULES, true),
         aiThreshold: num(env.AI_MOVE_THRESHOLD, 0.9),
+        // From this AI score an email is recorded as suspicious (when it isn't moved): at most the threshold.
+        aiSuspicious: num(env.AI_SUSPICIOUS_THRESHOLD, 0.65),
         aiMovesInside: bool(env.AI_MOVES_INSIDE, false),
         // Never moved, whatever the checks say.
         allowDomains: list(env.ALLOW_DOMAINS),
@@ -122,7 +124,8 @@ function configProblems(c) {
         if (!c.adminEmails.length && !c.adminGroups.length) p.push('Neither ADMIN_EMAILS nor ADMIN_GROUP is set: nobody could use the dashboard.');
         if (c.adminGroups.length && !c.directoryAdmin) p.push('ADMIN_GROUP needs DIRECTORY_ADMIN (an admin the service may act as to check who is in the group).');
     }
-    if (!(c.aiThreshold >= 0.65 && c.aiThreshold <= 1)) p.push('AI_MOVE_THRESHOLD must be between 0.65 (where an email counts as suspicious) and 1.');
+    if (!(c.aiSuspicious >= 0.5 && c.aiSuspicious <= 1)) p.push('AI_SUSPICIOUS_THRESHOLD must be between 0.5 and 1.');
+    if (!(c.aiThreshold > 0.5 && c.aiThreshold <= 1 && c.aiThreshold >= c.aiSuspicious)) p.push('AI_MOVE_THRESHOLD must be between AI_SUSPICIOUS_THRESHOLD (where an email counts as suspicious) and 1.');
     return p;
 }
 

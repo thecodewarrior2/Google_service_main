@@ -30,7 +30,7 @@ case "$method $url" in
     arr() { local out='' x; IFS=',' read -ra xs <<< "$1"; for x in "${xs[@]}"; do [ -z "$x" ] || out="$out${out:+,}{\"stringValue\":\"$x\"}"; done; printf '{"arrayValue":{"values":[%s]}}' "$out"; }
     case "$key" in
       allowDomains | allowAddresses) vj="$(arr "$v")"; ej="$(arr "$e")" ;;
-      aiThreshold) vj="{\"doubleValue\":$v}"; ej="{\"doubleValue\":$e}" ;;
+      aiThreshold | aiSuspicious) vj="{\"doubleValue\":$v}"; ej="{\"doubleValue\":$e}" ;;
       brakePerHour) vj="{\"integerValue\":\"$v\"}"; ej="{\"integerValue\":\"$e\"}" ;;
       *) vj="{\"stringValue\":\"$v\"}"; ej="{\"stringValue\":\"$e\"}" ;;
     esac

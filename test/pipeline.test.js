@@ -50,6 +50,10 @@ test('policy: rules or the AI move in enforce mode; monitor records; the AI alon
     assert.equal(decide(r('clean', 0.89), enforce).action, 'flag', 'the move threshold is 90% by default');
     assert.equal(decide(r('clean', 0.65), enforce).action, 'flag', 'suspicious from 65%');
     assert.equal(decide(r('clean', 0.64), enforce).action, 'none', 'below 65%: not recorded');
+    const higher = cfgOf({ MODE: 'enforce', AI_SUSPICIOUS_THRESHOLD: '0.75' });
+    assert.equal(decide(r('clean', 0.7), higher).action, 'none', 'the suspicious line is a setting');
+    assert.equal(decide(r('clean', 0.76), higher).action, 'flag');
+    assert.equal(decide(r('caution', 0.1, false, 3), higher).action, 'flag', 'the rules\' amber still counts');
     assert.equal(decide(r('clean', 0.2), enforce).action, 'none');
     assert.equal(decide(r('caution', 0.2, false, 3), enforce).action, 'flag');
     assert.equal(decide(r('clean', 0.99), monitor).action, 'would-move');
@@ -468,6 +472,6 @@ test('configuration: real use needs every safety setting; demo mode refuses Clou
     assert.deepEqual(configProblems(loadConfig({ DEMO: '1' })), []);
     assert.match(configProblems(loadConfig({ DEMO: '1', K_SERVICE: 'spruce' }))[0], /refuses to run on Cloud Run/);
     const c = loadConfig({});
-    assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.9); assert.equal(c.aiMovesInside, false);
+    assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.9); assert.equal(c.aiSuspicious, 0.65); assert.equal(c.aiMovesInside, false);
     assert.match(configProblems(loadConfig({ AI_MOVE_THRESHOLD: '0.3' })).join(' '), /AI_MOVE_THRESHOLD/);
 });

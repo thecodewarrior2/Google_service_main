@@ -257,7 +257,7 @@ test('the dashboard\'s policy changes when installing: taken where settings.env 
     const event = () => JSON.parse(fs.readFileSync(path.join(w.fake, 'event.json'), 'utf8')).fields.text.stringValue;
     // The dashboard switched to enforce (settings.env says monitor), and set a threshold and a time zone
     // settings.env doesn't set.
-    const dash = { FAKE_POLICY_mode: 'enforce|monitor', FAKE_POLICY_aiThreshold: '0.9|0.85', FAKE_POLICY_timeZone: 'America/Chicago|UTC' };
+    const dash = { FAKE_POLICY_mode: 'enforce|monitor', FAKE_POLICY_aiThreshold: '0.9|0.85', FAKE_POLICY_aiSuspicious: '0.7|0.65', FAKE_POLICY_timeZone: 'America/Chicago|UTC' };
     try {
         // Nothing changed on the dashboard: nothing asked, removed or noted.
         let r = w.run('install.sh');
@@ -274,13 +274,15 @@ test('the dashboard\'s policy changes when installing: taken where settings.env 
         assert.match(r.out, /Keeping the dashboard's mode: enforce \(now in deploy\/settings\.env too\)/);
         assert.match(r.out, /The time zone comes from the dashboard: America\/Chicago/);
         assert.match(settings(), /^MODE=enforce$/m); assert.match(settings(), /^AI_MOVE_THRESHOLD=0\.9$/m); assert.match(settings(), /^TIME_ZONE=America\/Chicago$/m);
+        assert.match(settings(), /^AI_SUSPICIOUS_THRESHOLD=0\.7$/m); assert.match(envOf('spruce-worker'), /^AI_SUSPICIOUS_THRESHOLD: "0\.7"$/m);
+        assert.match(r.out, /The AI suspicious line comes from the dashboard: 70%/);
         for (const svc of ['spruce-worker', 'spruce-admin']) { assert.match(envOf(svc), /^MODE: "enforce"$/m); assert.match(envOf(svc), /^AI_MOVE_THRESHOLD: "0\.9"$/m); assert.match(envOf(svc), /^TIME_ZONE: "America\/Chicago"$/m); }
         assert.ok(has(r.calls, /scheduler jobs create http spruce-renew-watches .*--time-zone=America\/Chicago/), 'the jobs in the dashboard\'s time zone');
         assert.match(r.out, /Mode: {7}enforce\n/);
         // The dashboard's copies go only after both services are deployed (until then they are in force).
         const at = (re) => r.calls.findIndex(c => re.test(c));
         for (const k of ['mode', 'aiThreshold', 'timeZone']) assert.ok(at(new RegExp(`curl .*-X DELETE .*/state/policy-${k}$`)) > at(/run deploy spruce-admin/), k);
-        assert.match(event(), /^it\.admin@district-test\.example installed \d+\.\d+\.\d+ with deploy\/install\.sh; settings\.env now holds the policy: kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(90%\), which settings\.env didn't set; took the dashboard's time zone \(America\/Chicago\), which settings\.env didn't set\.$/);
+        assert.match(event(), /^it\.admin@district-test\.example installed \d+\.\d+\.\d+ with deploy\/install\.sh; settings\.env now holds the policy: kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(90%\), which settings\.env didn't set; took the dashboard's AI suspicious line \(70%\), which settings\.env didn't set; took the dashboard's time zone \(America\/Chicago\), which settings\.env didn't set\.$/);
 
         // The same differences again, choosing settings.env's (SPRUCE_SETTINGS=file).
         fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), SETTINGS);
@@ -293,7 +295,7 @@ test('the dashboard\'s policy changes when installing: taken where settings.env 
         // When the dashboard's copy can't be removed, it says what stays in force.
         r = w.run('install.sh', Object.assign({ SPRUCE_SETTINGS: 'file', FAKE_DELETE: 'refused' }, dash));
         assert.equal(r.code, 0, r.out);
-        assert.match(r.out, /Couldn't remove the dashboard's copy of: MODE AI_MOVE_THRESHOLD TIME_ZONE\. Where you chose settings\.env's, the dashboard's stays in force/);
+        assert.match(r.out, /Couldn't remove the dashboard's copy of: MODE AI_MOVE_THRESHOLD AI_SUSPICIOUS_THRESHOLD TIME_ZONE\. Where you chose settings\.env's, the dashboard's stays in force/);
         // The same value on both sides: nothing to ask.
         r = w.run('install.sh', { FAKE_POLICY_mode: 'monitor|enforce' });
         assert.equal(r.code, 0, r.out); assert.doesNotMatch(r.out, /say different things/);

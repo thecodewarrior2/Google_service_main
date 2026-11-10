@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.8: The AI suspicious line, a setting
+
+- **Settings → Policy → AI suspicious line** (`AI_SUSPICIOUS_THRESHOLD`, 65% by default): the AI score
+  from which an email that isn't moved is recorded as suspicious for review.
+  - Lower records more emails for Email → Review, higher fewer. Nothing more or less is moved.
+  - Below the line, and with a rules score under 3, an email isn't recorded at all.
+- **Changed like the rest of the policy:** the project ID, noted in Activity, emailed as an alert,
+  everywhere within 30 seconds.
+- **It is never above the move threshold, and the threshold is never below it,** checked both ways:
+  - on the dashboard: "To go higher, raise the move threshold first" / "To go lower, lower the
+    suspicious line first";
+  - in settings.env: the service doesn't start with them the wrong way round.
+  - The move threshold is no longer held at 65% or more: its floor is the suspicious line.
+- **The installer** carries it like the others: `install.sh` compares it with settings.env and asks when
+  they differ. `upgrade.sh` adds `AI_SUSPICIOUS_THRESHOLD=` (empty: 65%).
+- **Tests:** 93 (from 92): the line as a setting in the decision, both checks, the alert, the config
+  check, and the installer taking it.
+- **Docs:** `README.md`, `docs/INSTALL.md`, `docs/DEPLOY.md`, `docs/ARCHITECTURE.md`.
+
 ## 0.3.7: The allowlist and Settings in pages; the AI lines at 65% and 90%; clearer words
 
 - **The AI's two lines:**

@@ -72,7 +72,7 @@ For each new Inbox message:
 | Same, in monitor mode, or while moving is paused (a campaign on weaker evidence, or the domain-wide brake) | Left in the Inbox, recorded as "would move" (a paused one can be moved later) |
 | An admin dismissed the campaign as a false alarm | Recorded as suspicious, not moved |
 | The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
-| A rules score of 3 or more, or an AI score of **65%** or more, below what moves it; or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious, not moved |
+| A rules score of 3 or more, or an AI score of **65%** or more (`AI_SUSPICIOUS_THRESHOLD`), below what moves it; or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious, not moved |
 | Allowlisted sender, DMARC passing | Nothing |
 
 It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is sent where):
@@ -138,8 +138,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - notifications arriving, and the group re-read reaching the service.
   - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
 - **Settings:**
-  - **Policy:** **Change** the mode, the AI move threshold, the brake (automatic, or a fixed number of
-    moves an hour) or the time zone, and how the rest decides (read-only).
+  - **Policy:** **Change** the mode, the AI move threshold, the AI suspicious line, the brake (automatic,
+    or a fixed number of moves an hour) or the time zone, and how the rest decides (read-only). The
+    suspicious line is never above the move threshold.
     - Each change needs the Google Cloud project ID; five wrong ones lock it for 10 minutes.
     - Switching to enforce mode also needs **I agree**, next to how many Readiness checks pass.
     - A change applies everywhere within 30 seconds, is noted in Activity, and is emailed as an alert
@@ -228,7 +229,8 @@ The last command writes `build/mockup.html`, a single file to share the look and
 
 Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` again. It reuses the image
 built from the same files, so it only redeploys, in about a minute. The mode, the AI move threshold, the
-brake and the time zone can also be changed on the dashboard (Settings → Policy). When the two differ,
+AI suspicious line, the brake, the time zone and the allowlist can also be changed on the dashboard
+(Settings → Policy, Settings → Allowlist). When the two differ,
 `install.sh` asks which to keep, and writes the answer into settings.env.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).

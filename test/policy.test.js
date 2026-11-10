@@ -92,7 +92,7 @@ test('the dashboard: the project ID is required, wrong ones lock it for a while,
         r = await s.post({ key: 'mode', value: 'enforce', projectId: ' Demo-Project ', agree: true });
         assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.changed.value, 'enforce'); assert.equal(cfg.mode, 'enforce');
         r = await s.post({ key: 'aiThreshold', value: 0.3, projectId: 'demo-project' });
-        assert.equal(r.status, 400); assert.match(r.body.error, /from 65% \(where an email counts as suspicious\) to 100%.*Nothing was changed\./);
+        assert.equal(r.status, 400); assert.match(r.body.error, /from the suspicious line \(65%\) to 100%.*Nothing was changed\./);
         r = await s.post({ key: 'timeZone', value: 'America/Denver', projectId: 'demo-project' });
         assert.equal(r.status, 200);
         st = await s.settings();
@@ -144,4 +144,30 @@ test('the allowlist on the dashboard: lists checked (never the organization\'s o
     const c = new Service({ cfg: loadConfig(Object.assign({}, ENV, { ALLOW_DOMAINS: 'news.example;vendor.example' })), store, gmail: gmail(), log: { error() {} } });
     await c.refreshPolicy({ force: true });
     assert.deepEqual(c.cfg.allowDomains, ['news.example', 'vendor.example'], 'settings.env changed since the dashboard\'s change: settings.env applies');
+});
+
+test('the AI suspicious line on the dashboard: never above the move threshold, nor the threshold below it; noted and alerted', async () => {
+    const store = new MemoryStore();
+    const warned = [];
+    const svc = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {}, warn: (x) => warned.push(JSON.parse(x)) } });
+    const { decide } = require('../src/policy');
+    const r = (p) => ({ status: 'clean', score: 0, inside: false, ai: { probability: p } });
+    assert.equal(decide(r(0.7), svc.cfg).action, 'flag');
+    await assert.rejects(svc.setPolicy('aiSuspicious', 0.95, 'x'), { status: 400, message: /from 50% to the move threshold \(90%\)\. To go higher, raise the move threshold first/ });
+    await assert.rejects(svc.setPolicy('aiSuspicious', 0.4, 'x'), { status: 400 });
+    assert.deepEqual(await svc.setPolicy('aiSuspicious', 0.75, `it.head@${ORG}`), { key: 'aiSuspicious', value: 0.75, before: 0.65 });
+    assert.equal(decide(r(0.7), svc.cfg).action, 'none', 'in force at once');
+    await assert.rejects(svc.setPolicy('aiThreshold', 0.7, 'x'), { status: 400, message: /from the suspicious line \(75%\) to 100%\. To go lower, lower the suspicious line first/ });
+    await svc.setPolicy('aiThreshold', 0.8, `it.head@${ORG}`);
+    await svc.setPolicy('aiSuspicious', 0.8, `it.head@${ORG}`);   // (equal to the threshold: allowed)
+    const texts = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
+    assert.ok(texts.includes(`it.head@${ORG} changed the AI suspicious line from 65% to 75% on the dashboard (confirmed with the project ID).`));
+    assert.equal(warned.length, 3, 'each emailed as an alert');
+    const b = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {} } });
+    await b.refreshPolicy({ force: true });
+    assert.deepEqual([b.cfg.aiSuspicious, b.cfg.aiThreshold], [0.8, 0.8]);
+    // settings.env: the suspicious line above the threshold isn't started.
+    const { configProblems } = require('../src/config');
+    assert.ok(configProblems(loadConfig(Object.assign({}, ENV, { AI_SUSPICIOUS_THRESHOLD: '0.95' }))).some(p => /AI_MOVE_THRESHOLD must be between AI_SUSPICIOUS_THRESHOLD/.test(p)));
+    assert.ok(configProblems(loadConfig(Object.assign({}, ENV, { AI_SUSPICIOUS_THRESHOLD: '0.3' }))).some(p => /AI_SUSPICIOUS_THRESHOLD must be between 0\.5 and 1/.test(p)));
 });

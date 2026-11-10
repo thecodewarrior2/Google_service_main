@@ -82,7 +82,7 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains }) {
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
 const LIST_KEYS = ['allowDomains', 'allowAddresses'];
 const MAX_ALLOWED = 500;
 const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -94,9 +94,12 @@ const OWN_ENV = Symbol('envPolicy of this configuration');
 const sameSetting = (a, b) => (Array.isArray(a) || Array.isArray(b) ? asList(a).join(',') === asList(b).join(',')
     : typeof a === 'number' || typeof b === 'number' ? Number(a) === Number(b) : String(a) === String(b));
 function validTimeZone(z) { try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return true; } catch (e) { return false; } }
-// The value as stored, or an error (status 400) saying what is allowed. orgDomains: the organization's
-// own domains, which can't be allowlisted (a staff account taken over would never be moved).
-function policyValue(key, v, orgDomains = []) {
+// The value as stored, or an error (status 400) saying what is allowed. now: the settings in force, for
+// the checks between them: orgDomains (the organization's own domains, which can't be allowlisted, or a
+// staff account taken over would never be moved), and the two AI lines (the suspicious line is never
+// above the move threshold).
+function policyValue(key, v, now = {}) {
+    const orgDomains = Array.isArray(now) ? now : now.orgDomains || [];
     const bad = (msg) => { throw Object.assign(new Error(msg), { status: 400 }); };
     if (LIST_KEYS.includes(key)) {
         const items = asList(v);
@@ -110,7 +113,17 @@ function policyValue(key, v, orgDomains = []) {
         return items;
     }
     if (key === 'mode') return v === 'monitor' || v === 'enforce' ? v : bad('The mode is monitor or enforce.');
-    if (key === 'aiThreshold') { const n = Number(v); return Number.isFinite(n) && n >= 0.65 && n <= 1 ? Math.round(n * 1000) / 1000 : bad('The AI move threshold is from 65% (where an email counts as suspicious) to 100%.'); }
+    const pc = (x) => `${Math.round(Number(x) * 1000) / 10}%`;
+    if (key === 'aiThreshold') {
+        const n = Number(v), floor = typeof now.aiSuspicious === 'number' ? now.aiSuspicious : 0.5;
+        return Number.isFinite(n) && n > 0.5 && n >= floor && n <= 1 ? Math.round(n * 1000) / 1000
+            : bad(`The AI move threshold is from the suspicious line (${pc(floor)}) to 100%. To go lower, lower the suspicious line first.`);
+    }
+    if (key === 'aiSuspicious') {
+        const n = Number(v), ceiling = typeof now.aiThreshold === 'number' ? now.aiThreshold : 1;
+        return Number.isFinite(n) && n >= 0.5 && n <= ceiling ? Math.round(n * 1000) / 1000
+            : bad(`The AI suspicious line is from 50% to the move threshold (${pc(ceiling)}). To go higher, raise the move threshold first.`);
+    }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
     return bad('That setting can\'t be changed on the dashboard.');
@@ -118,7 +131,7 @@ function policyValue(key, v, orgDomains = []) {
 function policyWords(key, v) {
     if (LIST_KEYS.includes(key)) { const l = asList(v); return l.length ? (l.length > 5 ? `${l.length} entries` : l.join(', ')) : 'none'; }
     if (key === 'mode') return v === 'enforce' ? 'enforce' : 'monitor';
-    if (key === 'aiThreshold') return `${Math.round(Number(v) * 1000) / 10}%`;
+    if (key === 'aiThreshold' || key === 'aiSuspicious') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
     return String(v);
 }
@@ -169,7 +182,7 @@ class Service {
     // (the time zone: noted only).
     async setPolicy(key, raw, by) {
         if (!POLICY_KEYS.includes(key)) throw Object.assign(new Error('That setting can\'t be changed on the dashboard.'), { status: 400 });
-        const value = policyValue(key, raw, this.cfg.orgDomains);
+        const value = policyValue(key, raw, { orgDomains: this.cfg.orgDomains, aiThreshold: this.cfg.aiThreshold, aiSuspicious: this.cfg.aiSuspicious });
         await this.refreshPolicy({ force: true });
         const before = this.cfg[key];
         if (sameSetting(before, value)) return { key, value, unchanged: true };
@@ -186,7 +199,7 @@ class Service {
         const text = LIST_KEYS.includes(key) ? listChange() : key === 'mode'
             ? (value === 'enforce' ? `${by} switched to enforce mode on the dashboard (${how}): from now on, emails the policy flags are moved to Spam.`
                 : `${by} switched to monitor mode on the dashboard (${how}): nothing is moved from now on, and emails already moved stay in Spam.`)
-            : `${by} changed ${({ aiThreshold: 'the AI move threshold', brakePerHour: 'the brake', timeZone: 'the time zone' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
+            : `${by} changed ${({ aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', brakePerHour: 'the brake', timeZone: 'the time zone' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
               + (key === 'timeZone' ? ' The weekly summary uses it now; the nightly jobs move to it the next time deploy/install.sh runs.' : '');
         if (key === 'timeZone') await this.store.addEvent({ kind: 'settings', text });
         else await this.alert('settings', text, { policy: key });

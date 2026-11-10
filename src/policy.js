@@ -5,9 +5,9 @@
 //               extension moves flagged email), or the AI model's score is at or above the threshold
 //               (90% by default) for a sender outside the organization.
 //   would-move  the same, in monitor mode or while the brake is on: recorded, nothing moved.
-//   flag        suspicious but not moved (amber verdict, an AI score of AI_SUSPICIOUS or more below the
+//   flag        suspicious but not moved (amber verdict, an AI score of cfg.aiSuspicious or more below the
 //               threshold, or a high one the policy doesn't act on, such as an inside sender): recorded.
-//   (A move threshold below AI_SUSPICIOUS isn't allowed: config.js and pipeline.js policyValue.)
+//   (The suspicious line is never above the move threshold: config.js and pipeline.js policyValue.)
 //   none        nothing to record.
 //
 // Never moved, whatever the checks say: allowlisted senders and domains ("trusted"). Mail from inside
@@ -15,7 +15,8 @@
 // AI score alone, unless AI_MOVES_INSIDE is set. Both rely on the From address, so both need Gmail's
 // DMARC check to have passed for it (engine/analyze.js senderVerified): a forged allowlisted or staff
 // address is judged like any other mail from outside.
-// From this AI score an email counts as suspicious (recorded, not moved, below the move threshold).
+// From this AI score an email counts as suspicious (recorded, not moved, below the move threshold): the
+// default of AI_SUSPICIOUS_THRESHOLD (cfg.aiSuspicious; Settings → Policy).
 const AI_SUSPICIOUS = 0.65;
 
 function isAllowed(cfg, address) {
@@ -35,7 +36,7 @@ function decide(result, cfg, state = {}) {
                    result.ownAddress && !result.inside ? 'the address is the organization\'s, but DMARC didn\'t pass, so it isn\'t treated as inside' : ''].filter(Boolean);
     const noted = (s) => [s, ...notes].filter(Boolean).join('; ');
     if (!ruleMove && !aiMove) {
-        const suspicious = result.status === 'caution' || result.status === 'flagged' || aiHigh || (p !== null && p >= AI_SUSPICIOUS);
+        const suspicious = result.status === 'caution' || result.status === 'flagged' || aiHigh || (p !== null && p >= (typeof cfg.aiSuspicious === 'number' ? cfg.aiSuspicious : AI_SUSPICIOUS));
         return { action: suspicious ? 'flag' : 'none', trigger: null,
                  why: noted(aiHigh && result.inside ? `AI ${Math.round(p * 100)}%, but the sender is inside the organization (the AI alone doesn't move those)` : (suspicious ? 'suspicious, below the move rules' : '')) };
     }
