@@ -31,6 +31,10 @@ in `Google_service_main`). Then follow its section below.
   change the extension, then `node tools/sync-engine.js <extension folder>` and run the tests.
 - Every behavior change gets a version bump in `package.json` and an entry in `CHANGELOG.md`, and
   matching updates to `README.md` and `docs/`.
+- When `deploy/install.sh` sets up something new or different (a role, a service account, a job, an
+  API, a setting the services need), also raise `installLevel` in `package.json` by one. Settings →
+  Update only installs versions whose `installLevel` isn't higher than the installed one; the others
+  need `install.sh` from Cloud Shell. Never lower it.
 
 ## Releasing to google_service_main
 

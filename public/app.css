@@ -251,7 +251,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .policy-head { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 12px; align-items: start; }
 .policy-label { font-weight: 600; }
 .policy-form { margin: 12px 0 0 192px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: grid; gap: 10px; max-width: 640px; }
-.policy-form input[type="text"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
+.policy-form input[type="text"], .policy-form input[type="email"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
 .policy-form .num-input { width: 110px; }
 .policy-form textarea { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); width: 100%; box-sizing: border-box; resize: vertical; }
 .entries { margin: 0; padding-left: 18px; columns: 2; column-gap: 24px; }
@@ -276,3 +276,18 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .policy-value { grid-column: 1 / -1; grid-row: 2; }
   .policy-form { margin-left: 0; }
 }
+
+/* Settings → Update: the changelog, from Markdown (as text). */
+.release { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.release:first-of-type { border-top: 0; margin-top: 0; }
+.release h3 { margin: 0 0 6px; font-size: 15px; }
+.md p { margin: 6px 0; }
+.md ul { margin: 4px 0; padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--surface-2); padding: 0 4px; border-radius: 4px; overflow-wrap: anywhere; }
+.md pre { background: var(--surface-2); padding: 8px 10px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; }
+.md-table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+details.changelog { margin-top: 14px; }
+details.changelog > summary { cursor: pointer; font-weight: 600; }
+.policy-form.update-form { margin-left: 0; max-width: 720px; }

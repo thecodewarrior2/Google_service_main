@@ -38,6 +38,14 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   worker routes. The dashboard's "Update group membership now" doesn't call the worker either: it asks
   Cloud Scheduler to run the daily `spruce-renew-watches` job at once (`src/scheduler.js`), which calls
   the worker as every day.
+- **Updates from the dashboard, without giving it the right to deploy.** Settings → Update only records
+  the request (a version and its exact commit) and runs the `spruce-update` job, whose build install.sh
+  fixed. The build runs as `spruce-updater`, takes its steps from `google_service_main`, and checks
+  everything again before building: a recent request, a commit on the release repository's main branch
+  with that version, newer than what runs, and no higher `installLevel` than the one installed. So a
+  dashboard admin, or someone who took over a dashboard session, can at most install an approved
+  version that is newer, never their own code. A version that changes the installation (roles, jobs,
+  settings) still needs `install.sh`, run by someone who can change the project.
 - **The extension's own code.** `vendor/spruce/` is copied unchanged and run in a separate JavaScript
   context with a small stand-in for the browser, as the extension's own unit tests run it. Both judge
   an email the same way. A fix in the extension reaches the service with `tools/sync-engine.js`.

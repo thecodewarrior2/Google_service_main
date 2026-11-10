@@ -89,6 +89,9 @@ The project uses three service accounts:
 instead of the project's default build account, whose roles differ between projects. It never touches
 mail. (`gcloud run deploy --source`, below, uses the default build account.)
 
+It also adds a fifth, `spruce-updater`, for the dashboard's Settings → Update (see "Updating from the
+dashboard" below). It never touches mail either.
+
 ```bash
 gcloud iam service-accounts create spruce-run --display-name="SPRUCE Mail Protection (Cloud Run)"
 ```
@@ -241,6 +244,40 @@ gcloud scheduler jobs run spruce-renew-watches --location=REGION
 (Projects created before April 2021: the Pub/Sub service agent also needs **Service Account Token
 Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 
+## Updating from the dashboard (Settings → Update)
+
+`deploy/install.sh` sets this up; doing it by hand is possible but not needed. The pieces:
+
+- **The dashboard** reads the newest commit on `google_service_main`'s main branch from GitHub,
+  anonymously (`RELEASES_REPO`), with that commit's `package.json`, `CHANGELOG.md` and
+  `vendor/spruce/VENDOR.json`. When an admin clicks **Update to …** (with I agree, the project ID and
+  their own email address), it writes `state/updateRequest` (the version, the exact commit, who, when)
+  and runs the `spruce-update` job (`UPDATE_JOB`). It needs no new role: `spruce-run` already has
+  **Cloud Scheduler Job Runner** for "Update group membership now". It can't change the job.
+- **The `spruce-update` job** (Cloud Scheduler, HTTP) calls the Cloud Build API with a fixed build,
+  signed as `spruce-updater`. Its schedule is once a year (it then does nothing): it is there to be run.
+- **The build** runs as `spruce-updater` and logs to Cloud Logging (tag `spruce-update`). Its steps
+  download `google_service_main` and run `deploy/cloud-update.sh` from it:
+  1. **check:** there is a request from the last 30 minutes, for a version newer than the worker's
+     `spruce-version` label; the commit is 40 hex characters;
+  2. **pick:** the commit is on main (`git merge-base --is-ancestor`), its `package.json` has that
+     version, and its `installLevel` isn't higher than the worker's `spruce-install-level` label;
+  3. **image:** that commit's files built and pushed to Artifact Registry
+     (`mail-protection:VERSION-cCOMMIT`);
+  4. **deploy:** both services deployed with that image only (their settings, service account and
+     environment as they are), labelled, all traffic to it;
+  5. **finish:** `state/update` set to done or failed, the request deleted, and a line in Activity
+     (failures are alerts).
+- **`spruce-updater`'s roles:** Cloud Build Editor, Logs Writer and Cloud Datastore User on the project;
+  Service Account User on itself and on `spruce-run` (Cloud Run needs it to deploy a service that runs
+  as `spruce-run`); Artifact Registry Writer on the `spruce` repository; Cloud Run Developer on the two
+  services. It can't change permissions, jobs, Pub/Sub or the delegation, which is why a version that
+  needs those has a higher `installLevel` and is installed from Cloud Shell.
+
+`installLevel` (in `package.json`) goes up with every version whose `install.sh` sets up something new
+(a role, a job, a setting the services need). install.sh labels both services with the level it set up;
+the dashboard offers only versions at that level or lower.
+
 ## 7. Pilot, measure, then enforce
 
 1. **Monitor mode, at least 2–3 weeks.** Watch the dashboard's *Would be moved* list and *Model
@@ -287,6 +324,8 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `PUSH_AUDIENCE`, `PUSH_SERVICE_ACCOUNT` | none | the OIDC tokens the worker accepts (Pub/Sub and Scheduler) |
 | `IAP_AUDIENCE` | none | the dashboard's Identity-Aware Proxy audience |
 | `RENEW_JOB` (dashboard) | none | the job "Update group membership now" runs: `projects/PROJECT/locations/REGION/jobs/spruce-renew-watches`. Without it the button isn't shown |
+| `UPDATE_JOB` (dashboard) | none | the job Settings → Update runs: `projects/PROJECT/locations/REGION/jobs/spruce-update`. Without it the page says to run `deploy/update.sh` once |
+| `RELEASES_REPO` (dashboard) | `thecodewarrior2/Google_service_main` | where Settings → Update reads the approved versions and their changelog (GitHub, anonymously). install.sh takes it from `SPRUCE_RELEASES` |
 | `ADMIN_EMAILS`, `ADMIN_GROUP` | none | who may use the dashboard: addresses, and/or the members of a group (needs `DIRECTORY_ADMIN` on the dashboard too); at least one |
 | `AI_MOVE_THRESHOLD` | `0.9` | AI score that moves (outside senders); from `AI_SUSPICIOUS_THRESHOLD` to `1` |
 | `AI_SUSPICIOUS_THRESHOLD` | `0.65` | AI score from which an email not moved is recorded as suspicious (for review); from `0.5` to `AI_MOVE_THRESHOLD` |

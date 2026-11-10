@@ -763,6 +763,114 @@
             preview);
     }
 
+    // --- Settings → Update: the approved versions (google_service_main), their changes, and the button ----
+    // The button needs the agreement, the project ID and the admin's own email address; it asks the
+    // spruce-update job to rebuild and redeploy both services (src/update.js, deploy/cloud-update.sh).
+    async function updatePage() {
+        const d = await api('/api/update');
+        const n = d.newest;
+        const out = [h('h1', { text: 'Update' }), h('p', { class: 'sub', text: 'The approved versions, from google_service_main, and what changed in them. A version that changes only the service is installed from here; one that changes the installation itself (permissions, jobs, settings) from Cloud Shell, with bash deploy/update.sh.' })];
+        out.push(h('section', { class: 'card' }, h('dl', { class: 'kv' },
+            kvRow('Installed', d.installed.version),
+            kvRow('Newest approved', n ? `${n.version}${n.model ? ` (AI model phish-tiny ${n.model})` : ''}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
+            kvRow('From', n ? n.repo : '–'))));
+        const st = d.status;
+        if (st && st.phase) {
+            const at = st.at ? when(st.at) : '';
+            const box = { requested: ['warning', '⏳', `An update to ${st.version} was asked for by ${st.by}, ${at}.`, 'Cloud Build starts within a minute; building and deploying takes about 10 minutes. This page shows the new version when it is done (reload it if it doesn\'t).'],
+                building: ['warning', '⏳', `Updating to ${st.version} (asked for by ${st.by}, ${at}).`, 'Building and deploying takes about 10 minutes. Mail keeps being checked meanwhile.'],
+                done: ['good', '✅', `Updated from ${st.from} to ${st.version}, ${at} (asked for by ${st.by}).`, ''],
+                failed: ['critical', '⛔', `The update to ${st.version} failed, ${at}.`, `${st.message || ''}. Cloud Build's history (tag spruce-update) has the log.`],
+                stalled: ['critical', '⛔', `The update to ${st.version} asked for ${at} didn't finish.`, 'Cloud Build\'s history (tag spruce-update) says why. Nothing changed unless a deploy stopped half-way (then bash deploy/rollback.sh goes back).'] }[
+                ['requested', 'building'].includes(st.phase) && !d.running ? 'stalled' : st.phase];
+            if (box) out.push(h('div', { class: `alert ${box[0]}`, role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: box[1] }),
+                h('div', { class: 'grow' }, h('b', { text: box[2] }), box[3] ? ` ${box[3]}` : '')));
+        }
+        if (d.canUpdate) out.push(updateForm(d));
+        else if (d.why) out.push(h('div', { class: `alert ${n && !d.newer.length ? 'good' : 'warning'}` }, h('div', { text: d.why })));
+        const entry = (c) => h('article', { class: 'release' }, h('h3', { text: `${c.version}: ${c.title}` }), markdown(c.body));
+        out.push(h('section', { class: 'card spaced' }, h('h2', { text: d.newer.length ? `What's new since ${d.installed.version}` : 'What\'s new' }),
+            d.newer.length ? d.newer.map(entry) : h('div', { class: 'empty', text: n ? 'Nothing newer than the version installed.' : 'The approved versions couldn\'t be read.' }),
+            d.changelog.length ? h('details', { class: 'changelog' }, h('summary', { text: `The whole changelog (the last ${d.changelog.length} versions)` }), d.changelog.map(entry)) : null));
+        return out;
+    }
+    function updateForm(d) {
+        const to = d.newest.version;
+        const agree = h('input', { type: 'checkbox' });
+        const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        const email = h('input', { type: 'email', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'you@your-domain', 'aria-label': 'Your email address' });
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const go = h('button', { class: 'btn primary', type: 'button' }, `Update to ${to}`);
+        const ready = () => { go.disabled = !(agree.checked && project.value.trim() && email.value.trim()); };
+        for (const el of [agree, project, email]) { el.addEventListener('input', ready); el.addEventListener('change', ready); }
+        ready();
+        pageBusy = () => agree.checked || !!project.value || !!email.value;
+        go.addEventListener('click', async () => {
+            err.textContent = ''; go.disabled = true; acting++;
+            try {
+                const o = await api('/api/update', { method: 'POST', body: { agree: agree.checked, projectId: project.value, email: email.value, version: to } });
+                toast(o.started && o.started.demo ? 'Demo mode: nothing was updated.' : `Update to ${to} started: about 10 minutes.`);
+                pageBusy = () => false; render();
+            } catch (e) { err.textContent = e.message; ready(); }
+            finally { acting--; }
+        });
+        return h('section', { class: 'card spaced' }, h('h2', { text: `Update to ${to}` }),
+            h('div', { class: 'policy-form update-form' },
+                h('label', { class: 'choice' }, agree, h('span', { text: `I agree: both services are rebuilt from ${to} and redeployed, with their settings as they are. Mail keeps being checked meanwhile (about 10 minutes). In Cloud Shell, bash deploy/rollback.sh goes back to the version before.` })),
+                h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),
+                h('label', { class: 'project' }, h('span', { text: 'Your email address (the one you are signed in with), to confirm' }), email),
+                d.demo ? h('div', { class: 'small muted', text: 'Demo mode: the project ID is demo-project, and you are signed in as demo-admin@example.org.' }) : null,
+                h('div', { class: 'actions' }, go), err));
+    }
+    // A changelog entry's Markdown, as page elements (text only, never HTML): paragraphs, lists (nested by
+    // indentation), tables, code blocks, **bold** and `code`.
+    function inlineMd(text) {
+        const out = [], re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+        let last = 0, m;
+        while ((m = re.exec(text))) {
+            if (m.index > last) out.push(text.slice(last, m.index));
+            out.push(m[0].startsWith('**') ? h('b', { text: m[0].slice(2, -2) }) : h('code', { text: m[0].slice(1, -1) }));
+            last = re.lastIndex;
+        }
+        if (last < text.length) out.push(text.slice(last));
+        return out;
+    }
+    function markdown(text) {
+        const root = h('div', { class: 'md' }), lines = String(text || '').split('\n');
+        let stack = [], para = null, i = 0;
+        const lastLi = () => (stack.length ? stack[stack.length - 1].last : null);
+        while (i < lines.length) {
+            const line = lines[i], indent = /^ */.exec(line)[0].length;
+            if (!line.trim()) { para = null; i++; continue; }
+            if (/^\s*```/.test(line)) {
+                const code = []; i++;
+                while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+                i++; ((indent && lastLi()) || root).append(h('pre', { text: code.join('\n') })); para = null; continue;
+            }
+            if (/^\s*\|/.test(line)) {
+                const rows = [];
+                while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
+                const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+                const body = rows.filter(r => !/^\s*\|[\s:|-]+\|\s*$/.test(r)).map(cells);
+                const t = h('table', { class: 'md-table' }, h('thead', {}, h('tr', {}, (body[0] || []).map(c => h('th', {}, inlineMd(c))))),
+                    h('tbody', {}, body.slice(1).map(r => h('tr', {}, r.map(c => h('td', {}, inlineMd(c)))))));
+                ((indent && lastLi()) || root).append(h('div', { class: 'table-wrap' }, t)); para = null; continue;
+            }
+            const li = /^( *)- (.*)$/.exec(line);
+            if (li) {
+                while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+                let top = stack[stack.length - 1];
+                if (!top || top.indent < indent) { const ul = h('ul'); ((top && top.last) || root).append(ul); top = { indent, ul, last: null }; stack.push(top); }
+                top.last = h('li', {}, inlineMd(li[2])); top.ul.append(top.last); para = null; i++; continue;
+            }
+            if (indent && lastLi()) { lastLi().append(' ', ...inlineMd(line.trim())); i++; continue; }
+            stack = [];
+            if (!para) { para = h('p'); root.append(para); para.append(...inlineMd(line.trim())); } else para.append(' ', ...inlineMd(line.trim()));
+            i++;
+        }
+        return root;
+    }
+
     // --- Settings: the policy, changed here with the project ID ---------------------------------------------
     // Mode, the AI move threshold, the brake and the time zone. Each Change opens a form under its row; it
     // needs the project ID, and switching to enforce mode the agreement too. Live updates wait while a form
@@ -954,14 +1062,14 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] },
-        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['about', 'About']] }
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {

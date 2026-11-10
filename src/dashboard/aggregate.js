@@ -192,7 +192,7 @@
     }
 
     // Recent activity, by kind: alerts, what admins did, errors, and the watching of mailboxes.
-    const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest', 'training', 'clear'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
+    const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest', 'training', 'clear', 'update'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
     return { DAY, dayOf, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity };

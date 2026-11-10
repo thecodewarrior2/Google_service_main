@@ -49,6 +49,8 @@ It also keeps, shared by every instance:
 - **registry dates of domains:** 30 days; an unknown one, a day.
 
 And:
+- **an update from the dashboard:** who asked for which version and when, and how it went
+  (`state/updateRequest`, deleted when the build ends; `state/update`, the latest one);
 - **sender history:** a hash of each sender address, to tell "first email from this sender";
 - **mailbox state:** each watched mailbox's sync position.
 
@@ -113,7 +115,15 @@ can be turned off):
 - Phishing Army: CC BY-NC 4.0 (non-commercial, as a district's own protection is).
 - Sefinek: MIT.
 
-The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM).
+**Settings → Update** reads the approved versions from GitHub (`api.github.com` and
+`raw.githubusercontent.com`, the public `google_service_main` repository): the newest commit on main, and
+that commit's `package.json`, `CHANGELOG.md` and `VENDOR.json`. Only the dashboard does, when the page is
+opened (kept 10 minutes). It is read anonymously: no token, a plain User-Agent
+(`spruce-mail-protection`), nothing about your installation, users or mail. An update's build downloads
+the same repository from Cloud Build.
+
+The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM,
+Cloud Scheduler, Cloud Build).
 
 ## What users notice
 

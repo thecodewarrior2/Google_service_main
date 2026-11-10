@@ -109,7 +109,7 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     CSV** gives the same list.
     - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once.
     - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
-      most, the sender check, and how strong the evidence was. Buttons: **Release to Inbox**, **Mark
+      most, the sender check, and how strong the evidence was. Buttons: **Move back to Inbox**, **Mark
       false alarm**, **Confirm phishing**.
     - Each email also shows its **Message-ID** and Gmail ID, each with a **Copy** button. The Message-ID
       is what Google Workspace's Email log search and the security investigation tool look an email
@@ -155,6 +155,20 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     waits, and the largest campaigns go into each dashboard admin's Inbox. **Preview** and **Send one
     now** are next to it.
   - **Retraining** (off by default): allows **Download for retraining** on Status → Model health.
+  - **Update:** the version installed, the newest approved one (from `google_service_main`), what's new
+    since yours (its changelog), and the whole changelog. **Update to …** works like
+    `bash deploy/update.sh`:
+    - it needs **I agree**, the Google Cloud project ID and the email address you are signed in with
+      (five wrong answers lock it for 10 minutes);
+    - both services are rebuilt from that version and redeployed with their settings as they are, by a
+      Cloud Build the dashboard can only start (it can't deploy anything itself). It takes about
+      10 minutes, and the page follows it: requested, building, done or failed;
+    - its start is noted in Activity and emailed as an alert; how it ended is in Activity (a failure as
+      an alert) and on the page.
+
+    A version that changes the installation itself (new permissions, jobs or settings) is installed
+    from Cloud Shell, `bash deploy/update.sh`: the page says so instead of offering the button. So is
+    the first version with this page (0.3.9), which sets it up.
   - **About:** the version, the AI model, what is kept, and the network checks.
 - **The browser tab's title** counts what needs you: the brake, paused campaigns, users who took flagged
   mail back.
@@ -217,7 +231,9 @@ The last command writes `build/mockup.html`, a single file to share the look and
 **To test in your own Workspace, limited to one security group:** `docs/INSTALL.md`. A script,
 `deploy/install.sh`, sets everything up from Cloud Shell, and the others look after it:
 - **`deploy/update.sh`** upgrades to the newest approved version (from `google_service_main`), with no
-  zip to upload. Each version brings its own AI model; the upgrade says when the model changes.
+  zip to upload. Each version brings its own AI model; the upgrade says when the model changes. Most
+  versions can also be installed from the dashboard (Settings → Update), which runs
+  `deploy/cloud-update.sh` in Cloud Build.
 - **`deploy/upgrade.sh`** installs a version you unzipped over the installed one.
 - **`deploy/rollback.sh`** goes back to the previous build.
 - **`deploy/stop.sh`** stops it.
@@ -248,7 +264,8 @@ training examples, and a better AI model.
 | `src/gmail/` | Keyless domain-wide delegation, Gmail and Directory API calls |
 | `src/store/` | Firestore (production) and memory (demo, tests) |
 | `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |
-| `src/scheduler.js` | Cloud Scheduler, for the dashboard's "Update group membership now" (runs the daily re-read job) |
+| `src/scheduler.js` | Cloud Scheduler, for the dashboard's "Update group membership now" (runs the daily re-read job) and Settings → Update (runs the spruce-update job) |
+| `src/releases.js`, `src/update.js` | Settings → Update: the newest approved version and its changelog (read from GitHub), and the request |
 | `src/training.js`, `src/names.js` | The retraining export: an email → a training example, with the people taken out |
 | `src/digest.js` | The weekly summary email (put in admins' Inboxes; never judged by the service) |
 | `src/cloudrun.js` | Cloud Run, read-only, for the Status page |
@@ -256,7 +273,7 @@ training examples, and a better AI model.
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
-| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `settings.example.env` |
+| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `cloud-update.sh` (Settings → Update's Cloud Build), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

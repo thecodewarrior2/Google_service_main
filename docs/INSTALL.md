@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.8.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.9.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.8.zip
+   unzip spruce-mail-protection-0.3.9.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.8
+   cd spruce-mail-protection-0.3.9
    ```
 
 4. Make your settings file:
@@ -230,6 +230,35 @@ bash deploy/update.sh
 It downloads the newest approved version from `google_service_main`, unpacks it next to your folder, and
 runs its `upgrade.sh` (below). That shows what changes, including the AI model's version, and asks first.
 The AI model (phish-tiny) comes with each version, so a new model arrives only with an approved version.
+
+**From the dashboard: Settings → Update.** It shows the newest approved version and its changelog,
+and **Update to …** installs it like `update.sh` does, without Cloud Shell:
+
+1. Read what's new since your version (the page lists it).
+2. Tick **I agree**, type the Google Cloud project ID and the email address you are signed in with.
+3. Click **Update to …**. Both services are rebuilt from that version and redeployed with their
+   settings as they are, in about 10 minutes. Mail keeps being checked meanwhile. The page shows
+   requested, building, then done or failed. Its start is emailed as an alert; Activity says how it
+   ended.
+
+- **Set it up once from Cloud Shell:** the first version with this page (0.3.9) is installed with
+  `bash deploy/update.sh` or `upgrade.sh`, which creates what it needs (below). Until then the page
+  says it isn't set up.
+- **Some versions need Cloud Shell anyway:** one that changes the installation itself (new
+  permissions, jobs or settings) has a higher `installLevel`. The page says so, and offers no button:
+  run `bash deploy/update.sh` instead.
+- **What it uses:** a Cloud Scheduler job, `spruce-update`, which starts a Cloud Build as the
+  `spruce-updater` service account. The dashboard can only record the request and run that job; it
+  can't build or deploy anything itself. The build checks the request again: asked for in the last
+  30 minutes, a commit on `google_service_main`'s main branch with that version, newer than the one
+  running, and not changing the installation. The job also runs by itself once a year, and then does
+  nothing.
+- **If it fails,** nothing changed, unless the deploy stopped half-way: then `bash deploy/rollback.sh`
+  goes back. The log is in Cloud Build's history (Console → Cloud Build → History, tag
+  `spruce-update`).
+- **Your settings.env isn't changed** by an update from the dashboard, since it lives in Cloud Shell.
+  The next `update.sh` or `upgrade.sh` from that folder still works: it starts from the folder you ran
+  it in and compares versions as usual.
 
 **From a zip:**
 

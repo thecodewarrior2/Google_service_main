@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.9: Updating from the dashboard (Settings → Update)
+
+- **Settings → Update**, its own page in the Settings menu:
+  - the version installed, the newest approved one (from `google_service_main`), and the AI model it
+    brings;
+  - **what's new since your version**, and the whole changelog, read from the release repository;
+  - **Update to …**, which works like `bash deploy/update.sh`. It needs **I agree**, the Google Cloud
+    project ID and the email address you are signed in with. Five wrong answers lock it (and policy
+    changes) for 10 minutes;
+  - how the update goes: requested, building, done or failed (with the reason), and who started it.
+- **The dashboard can't deploy anything itself.** It records the request (the version and its exact
+  commit) and runs the new `spruce-update` job. That job starts a Cloud Build, fixed by `install.sh`,
+  as the new `spruce-updater` service account. The build takes `deploy/cloud-update.sh` from
+  `google_service_main` and checks again before building:
+  - the request is from the last 30 minutes;
+  - the commit is on `google_service_main`'s main branch, and has that version;
+  - it is newer than the version running;
+  - its `installLevel` isn't higher than the one installed.
+
+  Then it builds that commit, deploys both services with it (their settings as they are), and notes in
+  Activity how it ended (a failure as an alert). It takes about 10 minutes; mail keeps being checked.
+- **`installLevel`** (new in `package.json`, now 1) goes up with each version that changes the
+  installation itself (roles, jobs, settings). Those versions aren't offered on the dashboard: the page
+  says to run `bash deploy/update.sh` in Cloud Shell. Both services are labelled with the level
+  installed (`spruce-install-level`).
+- **`install.sh`** sets it up: the `spruce-updater` account (Cloud Build Editor, Logs Writer, Cloud
+  Datastore User; Service Account User on itself and `spruce-run`; Artifact Registry Writer on the
+  `spruce` repository; Cloud Run Developer on the two services), the `spruce-update` job (it runs by
+  itself once a year, and then does nothing), and `UPDATE_JOB` and `RELEASES_REPO` on the dashboard.
+  **Install 0.3.9 from Cloud Shell** (`update.sh` or `upgrade.sh`); later versions can come from the
+  dashboard.
+- **Privacy:** the dashboard reads the release repository from GitHub anonymously (no token, nothing
+  about your installation), when the page is opened, kept 10 minutes.
+- **Fixed:** the README still named the Messages button "Release to Inbox".
+- **Tests:** 100 (from 93): reading the releases and the changelog; the button's checks and lock; the
+  reasons no button is offered; the demo routes; the job, build and roles install.sh sets up;
+  `cloud-update.sh` with a real git repository (nothing asked, the approved commit built and deployed,
+  a commit not on main, too old, not newer, a higher installLevel, a deploy that fails); and its state
+  and Activity line in the Firestore emulator.
+- **Docs:** `README.md`, `docs/INSTALL.md`, `docs/DEPLOY.md`, `docs/ARCHITECTURE.md`, `docs/PRIVACY.md`,
+  `CLAUDE.md` (raise `installLevel` when install.sh changes).
+
 ## 0.3.8: The AI suspicious line, a setting
 
 - **Settings → Policy → AI suspicious line** (`AI_SUSPICIOUS_THRESHOLD`, 65% by default): the AI score

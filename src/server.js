@@ -20,6 +20,8 @@ const VERSION = require('../package.json').version;
 const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
 const training = require('./training');
+const { createReleases, parseChangelog } = require('./releases');
+const { updateInfo, startUpdate } = require('./update');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
@@ -61,7 +63,18 @@ const unreviewed = (r) => (r.action === 'move' || r.action === 'would-move') && 
 // A user took back an email the checks flagged, and no admin has looked yet.
 const rescueToCheck = (r) => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai';
 
-function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
+// Demo mode reads no GitHub: a made-up newer version, then this version's own changelog.
+function demoReleases() {
+    const file = path.resolve(__dirname, '..', 'CHANGELOG.md');
+    const own = fs.existsSync(file) ? parseChangelog(fs.readFileSync(file, 'utf8')) : [];
+    const PKG = require('../package.json');
+    let model = null; try { model = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')).model; } catch (e) { /* none */ }
+    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: Number(PKG.installLevel) || 0, model,
+        changelog: [{ version: '9.9.9', title: 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
+}
+
+function createApp({ cfg, store, service, scheduler = null, cloudrun = null, releases = null }) {
+    releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
     // (records past RETENTION_DAYS are deleted daily: the copy forgets them too)
     const cache = new RecordCache(store, { keepDays: Math.min(92, cfg.retentionDays || 92) });
     let renewAskedAt = 0, renewStatus = null, renewStatusAt = 0;
@@ -143,7 +156,13 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
     const ACTIONS_GAP_MS = 5000;   // a campaign action at most every 5 s per campaign (no double clicks)
     const lastAction = new Map();
     let exporting = false;   // one retraining export at a time (it reads up to 100 emails from Gmail)
-    const wrongIds = new Map();   // admin → times a wrong project ID was typed (POST /api/policy)
+    // Wrong project IDs (and email addresses) typed per admin, on the policy and Update: five in 10 minutes lock both.
+    const wrongIds = new Map();
+    const wrong = {
+        locked: (who) => (wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS).length >= POLICY_TRIES,
+        add: (who) => wrongIds.set(who, [...(wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS), Date.now()]),
+        clear: (who) => wrongIds.delete(who)
+    };
     const once = (key) => { const t = lastAction.get(key) || 0; if (Date.now() - t < ACTIONS_GAP_MS) return false; lastAction.set(key, Date.now()); return true; };
 
     const api = {
@@ -275,18 +294,20 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             if (!POLICY_KEYS.includes(key)) return { error: 'Choose a setting to change.', status: 400 };
             const expected = expectedProject(cfg);
             if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
-            const tries = (wrongIds.get(admin.email) || []).filter(t => Date.now() - t < POLICY_LOCK_MS);
-            if (tries.length >= POLICY_TRIES) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
+            if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
             if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) {
-                wrongIds.set(admin.email, [...tries, Date.now()]);
+                wrong.add(admin.email);
                 return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 };
             }
-            wrongIds.delete(admin.email);
+            wrong.clear(admin.email);
             if (key === 'mode' && body.value === 'enforce' && cfg.mode !== 'enforce' && body.agree !== true) return { error: 'Tick "I agree" to switch to enforce mode. Nothing was changed.', status: 400 };
             try { return { changed: await service.setPolicy(key, body.value, admin.email), policy: service.policyInfo() }; }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw e; }
         },
         // The retraining export: allowed or not (off by default), and the download (docs/RETRAINING.md).
+        // Settings → Update: the approved versions (google_service_main) and their changes; the button.
+        'GET /api/update': async () => updateInfo({ cfg, store, releases }),
+        'POST /api/update': async (q, body, admin) => startUpdate({ cfg, store, releases, scheduler, service, admin, body, expectedProject, wrong }),
         'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
         'POST /api/training-export': async (q, body, admin) => {
             if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings → Retraining.', status: 403 };
@@ -412,7 +433,7 @@ async function main() {
     spruce.load();
     const service = new Service({ cfg, store, gmail, intel });
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
-    const scheduler = !cfg.demo && cfg.role !== 'worker' && cfg.renewJob ? require('./scheduler').createScheduler() : null;
+    const scheduler = !cfg.demo && cfg.role !== 'worker' && (cfg.renewJob || cfg.updateJob) ? require('./scheduler').createScheduler() : null;
     // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
     const cloudrun = cfg.demo ? { service: async () => ({ iap: false, image: `demo:${VERSION}-demo`, url: '' }), invokers: async () => ['serviceAccount:spruce-invoker@demo.iam.gserviceaccount.com'] }
         : cfg.role !== 'worker' ? require('./cloudrun').createCloudRun() : null;

@@ -14,6 +14,7 @@ const path = require('path');
 const { loadConfig } = require('../src/config');
 const { buildDemo } = require('../src/demo/seed');
 const spruce = require('../src/engine/spruce');
+const { parseChangelog } = require('../src/releases');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -29,6 +30,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         records: await store.listRecords({ sinceMs: 0, limit: 100000 }),
         stats: await store.getStats('2000-01-01', '2999-12-31'),
         events: await store.listEvents(0),
+        changelog: parseChangelog(read('CHANGELOG.md')).slice(0, 20),
         settings: { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                     orgDomains: ['maple-schools.example'], pilotOu: '/Staff', pilotUsers: 0, allowDomains: [], allowAddresses: 0, retentionDays: cfg.retentionDays,
                     storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true,
@@ -99,6 +101,15 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         if (body.key === 'brakePerHour') D.settings.brakeLimit = body.value || 100;
         return Object.assign(base, { changed: { key: body.key, value: body.value, before } });
       }
+      case '/api/update':
+        if (body && body.agree !== undefined) {
+          if (body.agree !== true) throw new Error('Tick "I agree" to update. Nothing was changed.');
+          if (String(body.projectId || '').trim() !== 'demo-project') throw new Error("That isn't the Google Cloud project ID of this service. Nothing was changed.");
+          if (String(body.email || '').trim().toLowerCase() !== ADMIN) throw new Error("That isn't the email address you are signed in with. Nothing was changed.");
+          return Object.assign(base, { started: { from: D.settings.version, to: '9.9.9', demo: true } });
+        }
+        return Object.assign(base, { installed: { version: D.settings.version, installLevel: 1 }, newest: { version: '9.9.9', commit: '0'.repeat(40), date: new Date().toISOString(), model: D.settings.model.version, installLevel: 1, repo: 'mockup (GitHub not read)' },
+          newer: [{ version: '9.9.9', title: 'A made-up newer version (mockup)', body: '- The mockup reads no GitHub: this entry is made up, so you can try the page.' }], changelog: D.changelog, canUpdate: true, why: null, status: null, running: false, setUp: true });
       case '/api/training-export/allow': D.settings.trainingExport = { enabled: body.enabled === true, updatedBy: ADMIN, updatedAt: Date.now() }; return Object.assign(base, { enabled: body.enabled === true });
       case '/api/bulk': return Object.assign(base, { done: (body.keys || []).length, skipped: 0, failed: 0 });
       case '/api/campaign/confirm': return Object.assign(base, { moved: { moved: 0, gone: 0, failed: 0, left: 0 }, found: null });

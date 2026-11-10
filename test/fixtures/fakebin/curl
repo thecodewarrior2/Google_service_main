@@ -35,6 +35,11 @@ case "$method $url" in
       *) vj="{\"stringValue\":\"$v\"}"; ej="{\"stringValue\":\"$e\"}" ;;
     esac
     echo "{\"fields\":{\"value\":{\"mapValue\":{\"fields\":{\"value\":$vj,\"env\":$ej,\"by\":{\"stringValue\":\"it.head@district-test.example\"},\"at\":{\"integerValue\":\"1794300000000\"}}}}}}" ;;
+  "GET "*/state/updateRequest)   # FAKE_REQUEST: the document's JSON (deploy/cloud-update.sh check)
+    [ -n "${FAKE_REQUEST:-}" ] || { echo '{"error":{"code":404,"status":"NOT_FOUND"}}'; exit 22; }
+    printf '%s' "$FAKE_REQUEST" ;;
+  "PATCH "*/state/update) n="$(ls "$FAKE_DIR" | grep -c '^update-state-' || true)"; printf '%s' "$body" > "$FAKE_DIR/update-state-$n.json"; echo '{}' ;;
+  "DELETE "*/state/updateRequest) echo '{}' ;;
   "POST "*:runQuery)
     rows='{"document":{"fields":{"heldAt":{"integerValue":"5"},"decision":{"stringValue":"confirmed"}}}}'
     for i in $(seq 1 "${FAKE_HELD:-0}"); do rows="$rows,{\"document\":{\"fields\":{\"heldAt\":{\"integerValue\":\"$i\"}}}}"; done

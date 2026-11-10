@@ -100,7 +100,11 @@ function loadConfig(env = process.env) {
         adminGroups: list(env.ADMIN_GROUP),
         // The Cloud Scheduler job the dashboard's "Update group membership now" runs
         // (projects/PROJECT/locations/REGION/jobs/spruce-renew-watches; deploy/install.sh sets it).
-        renewJob: env.RENEW_JOB || ''
+        renewJob: env.RENEW_JOB || '',
+        // The job Settings → Update runs (projects/PROJECT/locations/REGION/jobs/spruce-update; install.sh
+        // makes it), and where the approved versions are (src/releases.js).
+        updateJob: env.UPDATE_JOB || '',
+        releasesRepo: env.RELEASES_REPO || 'thecodewarrior2/Google_service_main'
     });
 }
 

@@ -212,3 +212,30 @@ test('deploy/dashboard-policy.sh against Firestore: reads the changes as the ser
         assert.match(e.text, /kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(95%\)/);
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('deploy/cloud-update.sh against Firestore: reads the dashboard\'s request, and its "building", "done" and Activity line read back as the dashboard reads them', { skip: skip || (require('child_process').spawnSync('bash', ['-c', 'true']).status !== 0 && 'no bash') }, async () => {
+    const os = require('os'), path = require('path'), fs = require('fs'), { spawnSync } = require('child_process');
+    const s = getStore();
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-cu-'));
+    const bin = path.join(home, 'bin'), ws = path.join(home, 'ws');
+    fs.mkdirSync(bin); fs.mkdirSync(path.join(ws, 'release', 'deploy'), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, '..', 'deploy', 'cloud-update.sh'), path.join(ws, 'release', 'deploy', 'cloud-update.sh'));
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'fakebin', 'gcloud'), path.join(bin, 'gcloud')); fs.chmodSync(path.join(bin, 'gcloud'), 0o755);
+    const run = (p) => spawnSync('bash', [path.join(ws, 'release', 'deploy', 'cloud-update.sh'), p], { encoding: 'utf8',
+        env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, FAKE_LOG: path.join(home, 'log'), FAKE_DIR: home, FAKE_TOKEN: 'owner', FAKE_RUNNING: '0-3-8',
+            SPRUCE_WORKSPACE: ws, SPRUCE_FIRESTORE_URL: `http://${HOST}/v1`, PROJECT, REGION: 'us-east1', BUILD: 'b-42' }) });
+    try {
+        await s.setState('updateRequest', { version: '9.9.9', commit: 'b'.repeat(40), by: 'it.head@maple-schools.example', at: Date.now() });
+        let r = run('check');
+        assert.equal(r.status, 0, r.stdout + r.stderr);
+        const st = await s.getState('update');
+        assert.deepEqual([st.phase, st.version, st.from, st.by, st.build, typeof st.at], ['building', '9.9.9', '0.3.8', 'it.head@maple-schools.example', 'b-42', 'number']);
+        fs.writeFileSync(path.join(ws, 'deployed'), '');   // (as if pick, image and deploy had worked)
+        r = run('finish');
+        assert.equal(r.status, 0, r.stdout + r.stderr);
+        assert.equal((await s.getState('update')).phase, 'done');
+        assert.equal(await s.getState('updateRequest'), null, 'the request is removed');
+        const e = (await s.listEvents(Date.now() - 60000)).find(x => x.kind === 'update');
+        assert.ok(e && e.alert === false && /^The update from 0\.3\.8 to 9\.9\.9 finished/.test(e.text), JSON.stringify(e));
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

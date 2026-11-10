@@ -50,6 +50,10 @@ SA_RUN="spruce-run@$PROJECT.iam.gserviceaccount.com"
 SA_DELEGATE="spruce-delegate@$PROJECT.iam.gserviceaccount.com"
 SA_INVOKER="spruce-invoker@$PROJECT.iam.gserviceaccount.com"
 SA_BUILD="spruce-build@$PROJECT.iam.gserviceaccount.com"
+SA_UPDATER="spruce-updater@$PROJECT.iam.gserviceaccount.com"
+# Where the approved versions are: Settings → Update reads them, and its job installs from there.
+RELEASES="${SPRUCE_RELEASES:-https://github.com/thecodewarrior2/Google_service_main.git}"
+INSTALL_LEVEL="$(sed -n 's/^ *"installLevel": *\([0-9]*\).*/\1/p' package.json | head -1)"; INSTALL_LEVEL="${INSTALL_LEVEL:-0}"
 TOPIC=gmail-spruce
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -105,6 +109,7 @@ mk_sa spruce-run "SPRUCE Mail Protection (Cloud Run)"
 mk_sa spruce-delegate "SPRUCE Mail Protection (Gmail delegation)"
 mk_sa spruce-invoker "SPRUCE Mail Protection (Pub/Sub and Scheduler)"
 mk_sa spruce-build "SPRUCE Mail Protection (Cloud Build)"
+mk_sa spruce-updater "SPRUCE Mail Protection (updates from the dashboard)"
 retry gcloud iam service-accounts add-iam-policy-binding "$SA_DELEGATE" --member="serviceAccount:$SA_RUN" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/datastore.user --condition=None --quiet >/dev/null
 # Pub/Sub signs its push requests as spruce-invoker (needed explicitly in older projects).
@@ -117,6 +122,17 @@ retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount
 # What Cloud Build runs as when it builds the image (step 6), instead of a default account whose roles
 # differ from project to project.
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_BUILD" --role=roles/cloudbuild.builds.builder --condition=None --quiet >/dev/null
+# Settings → Update: the spruce-update job starts a Cloud Build as spruce-updater (deploy/cloud-update.sh).
+# It may start builds that run as itself, log them, read and write the update's state in Firestore,
+# store images (step 6) and deploy new builds of the two services, running as spruce-run (step 8). It
+# can't change permissions, jobs or anything else. The dashboard itself only runs the job.
+retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_UPDATER" --role=roles/cloudbuild.builds.editor --condition=None --quiet >/dev/null
+retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_UPDATER" --role=roles/logging.logWriter --condition=None --quiet >/dev/null
+retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_UPDATER" --role=roles/datastore.user --condition=None --quiet >/dev/null
+retry gcloud iam service-accounts add-iam-policy-binding "$SA_UPDATER" --member="serviceAccount:$SA_UPDATER" --role=roles/iam.serviceAccountUser --quiet >/dev/null
+retry gcloud iam service-accounts add-iam-policy-binding "$SA_RUN" --member="serviceAccount:$SA_UPDATER" --role=roles/iam.serviceAccountUser --quiet >/dev/null
+# (Cloud Scheduler signs the job's call to Cloud Build as spruce-updater: needed explicitly in older projects.)
+retry gcloud iam service-accounts add-iam-policy-binding "$SA_UPDATER" --member="serviceAccount:service-$NUMBER@gcp-sa-cloudscheduler.iam.gserviceaccount.com" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
 CLIENT_ID="$(gcloud iam service-accounts describe "$SA_DELEGATE" --format='value(oauth2ClientId)')"
 
 step "4/9 Domain-wide delegation (Admin console; you do this part)"
@@ -139,6 +155,8 @@ gcloud pubsub topics add-iam-policy-binding "$TOPIC" --member=serviceAccount:gma
 step "6/9 Build the image"
 gcloud artifacts repositories describe spruce --location="$REGION" >/dev/null 2>&1 \
     || gcloud artifacts repositories create spruce --repository-format=docker --location="$REGION" --description="S.P.R.U.C.E+ Mail Protection" --quiet
+# (Settings → Update stores its builds here too, as spruce-updater.)
+retry gcloud artifacts repositories add-iam-policy-binding spruce --location="$REGION" --member="serviceAccount:$SA_UPDATER" --role=roles/artifactregistry.writer --quiet >/dev/null
 # Keep only the newest builds, so stored images stay within the free 0.5 GB (Google applies it about daily).
 printf '%s\n' '[' \
   "  { \"name\": \"keep-newest\", \"action\": { \"type\": \"Keep\" }, \"mostRecentVersions\": { \"packageNamePrefixes\": [\"mail-protection\"], \"keepCount\": $KEEP_BUILDS } }," \
@@ -188,7 +206,7 @@ IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
     TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
-LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-')"
+LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 
 step "7/9 Worker (reads the pilot mailboxes; only Pub/Sub and Scheduler may call it)"
 # Never behind Identity-Aware Proxy: Pub/Sub and Cloud Scheduler can't sign in through it, so every
@@ -212,10 +230,15 @@ gcloud run services add-iam-policy-binding spruce-worker --region="$REGION" --me
 
 step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAILS only)"
 AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
-    RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO")"
+    RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO" \
+    UPDATE_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-update" RELEASES_REPO "$(printf '%s' "$RELEASES" | sed -n 's|^https://github.com/\([^/]*/[^/]*\)$|\1|p' | sed 's/\.git$//')")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
     --memory=512Mi --max-instances=3 --env-vars-file="$AF" --update-labels="$LABELS" --quiet
 gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
+# Settings → Update deploys new builds of both services (deploy/cloud-update.sh), as spruce-updater.
+for s in spruce-worker spruce-admin; do
+    retry gcloud run services add-iam-policy-binding "$s" --region="$REGION" --member="serviceAccount:$SA_UPDATER" --role=roles/run.developer --quiet >/dev/null
+done
 ADMIN_URL="$(gcloud run services describe spruce-admin --region="$REGION" --format='value(status.url)')"
 iap_setup() {
     gcloud beta run services update spruce-admin --region="$REGION" --iap --quiet >/dev/null || return 1
@@ -266,6 +289,31 @@ job spruce-renew-watches "17 3 * * *" /tasks/renew-watches
 job spruce-purge "41 4 * * *" /tasks/purge
 # Hourly: the health check (alerts when Gmail has gone quiet), and the phishing lists once a day.
 job spruce-sync-feeds "23 * * * *" /tasks/sync-feeds --attempt-deadline=300s
+# Settings → Update runs this job; it starts a Cloud Build as spruce-updater with these steps, fixed
+# here: download google_service_main, then deploy/cloud-update.sh from it. It also runs by itself once a
+# year, and then does nothing unless an admin asked for an update in the last 30 minutes.
+cat > "$TMP/update-build.json" <<EOF
+{
+  "serviceAccount": "projects/$PROJECT/serviceAccounts/$SA_UPDATER",
+  "options": { "logging": "CLOUD_LOGGING_ONLY" },
+  "timeout": "2700s",
+  "tags": ["spruce-update"],
+  "steps": [
+    { "id": "download", "name": "gcr.io/cloud-builders/git", "args": ["clone", "-q", "$RELEASES", "/workspace/release"] },
+    { "id": "check", "name": "gcr.io/cloud-builders/gcloud", "entrypoint": "bash", "args": ["/workspace/release/deploy/cloud-update.sh", "check"], "env": ["PROJECT=$PROJECT", "REGION=$REGION", "BUILD=\$BUILD_ID"] },
+    { "id": "pick", "name": "gcr.io/cloud-builders/git", "entrypoint": "bash", "args": ["/workspace/release/deploy/cloud-update.sh", "pick"], "env": ["PROJECT=$PROJECT", "REGION=$REGION"] },
+    { "id": "image", "name": "gcr.io/cloud-builders/docker", "entrypoint": "bash", "args": ["/workspace/release/deploy/cloud-update.sh", "image"], "env": ["PROJECT=$PROJECT", "REGION=$REGION"] },
+    { "id": "deploy", "name": "gcr.io/cloud-builders/gcloud", "entrypoint": "bash", "args": ["/workspace/release/deploy/cloud-update.sh", "deploy"], "env": ["PROJECT=$PROJECT", "REGION=$REGION"] },
+    { "id": "finish", "name": "gcr.io/cloud-builders/gcloud", "entrypoint": "bash", "args": ["/workspace/release/deploy/cloud-update.sh", "finish"], "env": ["PROJECT=$PROJECT", "REGION=$REGION", "BUILD=\$BUILD_ID"] }
+  ]
+}
+EOF
+gcloud scheduler jobs delete spruce-update --location="$REGION" --quiet >/dev/null 2>&1 || true
+gcloud scheduler jobs create http spruce-update --location="$REGION" --schedule="7 5 1 1 *" --time-zone="$TZ_NAME" \
+    --uri="https://cloudbuild.googleapis.com/v1/projects/$PROJECT/locations/$REGION/builds" --http-method=POST \
+    --headers=Content-Type=application/json --message-body-from-file="$TMP/update-build.json" \
+    --oauth-service-account-email="$SA_UPDATER" --oauth-token-scope=https://www.googleapis.com/auth/cloud-platform --quiet >/dev/null
+echo "  spruce-update (when an admin presses Update in the dashboard's Settings → Update)"
 
 # Alerts by email (Cloud Monitoring), from log lines: what the service reports (the brake, a held
 # campaign, Gmail gone quiet, a user taking flagged mail into the Inbox) and any failed scheduled job.
