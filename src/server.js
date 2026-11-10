@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { loadConfig, configProblems } = require('./config');
 const { createStore } = require('./store');
-const { Service } = require('./pipeline');
+const { Service, POLICY_KEYS } = require('./pipeline');
 const { verifyPush, verifyTask, verifyAdmin, adminGroupCheck } = require('./auth/verify');
 const { RecordCache } = require('./dashboard/cache');
 const VERSION = require('../package.json').version;
@@ -49,6 +49,12 @@ const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, se
 const RENEW_GAP_MS = 60 * 1000, RENEW_STATUS_MS = 15 * 1000;
 // "Check an email": the largest email accepted (as pasted or uploaded).
 const CHECK_MAX_BYTES = 10 * 1024 * 1024;
+// Changing the policy on the dashboard needs the Google Cloud project ID (in demo mode: this one), and a
+// few wrong ones in a row lock it for a while.
+const DEMO_PROJECT = 'demo-project';
+const POLICY_TRIES = 5, POLICY_LOCK_MS = 10 * 60 * 1000;
+// The project ID a policy change must be confirmed with ('' when the dashboard doesn't know it).
+const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
 
 // Recorded emails nobody has reviewed yet (the review queue): moved or "would move", not by an admin.
 const unreviewed = (r) => (r.action === 'move' || r.action === 'would-move') && r.trigger !== 'admin' && !r.markedBy;
@@ -137,6 +143,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
     const ACTIONS_GAP_MS = 5000;   // a campaign action at most every 5 s per campaign (no double clicks)
     const lastAction = new Map();
     let exporting = false;   // one retraining export at a time (it reads up to 100 emails from Gmail)
+    const wrongIds = new Map();   // admin → times a wrong project ID was typed (POST /api/policy)
     const once = (key) => { const t = lastAction.get(key) || 0; if (Date.now() - t < ACTIONS_GAP_MS) return false; lastAction.set(key, Date.now()); return true; };
 
     const api = {
@@ -165,6 +172,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
             const digest = Object.assign({ enabled: false }, await store.getState('digest'));
             const trainingExport = Object.assign({ enabled: false }, await store.getState('trainingExport'));
+            const policy = service.policyInfo ? service.policyInfo() : null;
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
@@ -176,6 +184,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
                      mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
                          .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                      renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION,
+                     policy, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
@@ -258,6 +267,24 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             if (cfg.demo) return { sent: 0, to: [], failed: [], demo: true };
             try { return await service.sendDigest({ by: admin.email }); } catch (e) { return { error: `Couldn't send it: ${String(e.message).slice(0, 200)}`, status: 502 }; }
         },
+        // A policy setting changed on the dashboard: mode, aiThreshold, brakePerHour or timeZone. Needs the
+        // project ID typed in; switching to enforce mode also needs the agreement ticked.
+        'POST /api/policy': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!POLICY_KEYS.includes(key)) return { error: 'Choose a setting to change.', status: 400 };
+            const expected = expectedProject(cfg);
+            if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
+            const tries = (wrongIds.get(admin.email) || []).filter(t => Date.now() - t < POLICY_LOCK_MS);
+            if (tries.length >= POLICY_TRIES) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
+            if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) {
+                wrongIds.set(admin.email, [...tries, Date.now()]);
+                return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 };
+            }
+            wrongIds.delete(admin.email);
+            if (key === 'mode' && body.value === 'enforce' && cfg.mode !== 'enforce' && body.agree !== true) return { error: 'Tick "I agree" to switch to enforce mode. Nothing was changed.', status: 400 };
+            try { return { changed: await service.setPolicy(key, body.value, admin.email), policy: service.policyInfo() }; }
+            catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw e; }
+        },
         // The retraining export: allowed or not (off by default), and the download (docs/RETRAINING.md).
         'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
         'POST /api/training-export': async (q, body, admin) => {
@@ -336,6 +363,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             if (!admin.ok) return send(res, admin.status || 403, { error: admin.why });
             if (api[route]) {
                 if (req.method === 'POST' && req.headers['x-requested-with'] !== 'spruce-dashboard') return send(res, 403, { error: 'missing request header' });
+                // The policy settings changed on the dashboard (at most every 30 s), before anything reads them.
+                if (service.refreshPolicy) await service.refreshPolicy();
                 // (a pasted email for "Check an email" can be large: its attachments come with it)
                 const body = req.method === 'POST' ? await readBody(req, route === 'POST /api/check' ? CHECK_MAX_BYTES * 2 : 64 * 1024) : {};
                 const out = await api[route](url.searchParams, body, admin);
@@ -390,4 +419,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
-module.exports = { createApp };
+module.exports = { createApp, expectedProject };

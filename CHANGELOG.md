@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.6: The policy, changed on the dashboard
+
+- **Settings → Policy:** a **Change** button for each of:
+  - **the mode** (monitor or enforce);
+  - **the AI move threshold** (51–100%);
+  - **the brake** (automatic, or a fixed number of moves an hour, 10–100,000);
+  - **the time zone** (a list of time zone names).
+
+  Each row says where its value comes from: settings.env, or changed here, by whom and when.
+- **The project ID is required for every change.** The dashboard checks it against
+  `GOOGLE_CLOUD_PROJECT` (install.sh sets it), case and spaces aside. Five wrong ones lock changes for
+  10 minutes.
+- **Enforce mode also needs "I agree".** The form warns what enforce mode does and shows how many
+  Readiness checks pass. Back to monitor needs only the project ID.
+- **A change applies everywhere within 30 seconds.** It is kept in Firestore (`state/policy-<key>`), and
+  both services read it on each notification, each job and each dashboard request.
+- **Every change is noted in Activity and emailed as an alert**, except the time zone, which is only
+  noted.
+- **The header's mode badge** follows a switch made by any admin.
+- **install.sh, upgrade.sh and update.sh** compare the dashboard with settings.env
+  (`deploy/dashboard-policy.sh`, new):
+  - settings.env doesn't set a setting the dashboard changed: the dashboard's is used;
+  - settings.env sets it and the dashboard didn't change it: settings.env's is used;
+  - the two differ: you're asked which to keep. The default is the dashboard's, since it is in force.
+    Without a terminal to ask in, the dashboard's is kept; `SPRUCE_SETTINGS=file` uses settings.env's.
+  - The choice is written into settings.env. Once the new build is deployed, the dashboard's copy is
+    removed (until then it stays in force), and Activity notes what was chosen.
+  - `upgrade.sh` says beforehand what will be taken or asked about, and `Mode now: …` when the
+    dashboard switched it.
+  - The nightly jobs follow the time zone chosen.
+- **The services agree with settings.env changed later:** when settings.env has another value than the
+  one a dashboard change replaced, settings.env's is newer and applies.
+- **Tests:** 90 (from 85).
+  - `test/policy.test.js` (new): values checked; a change at once here and after the refresh
+    elsewhere; enforce really moves; alerts and notes; settings.env changed later wins; the project
+    ID, the lock and the agreement through the dashboard's route.
+  - `test/install.test.js`: the reconciliation (taken, kept, settings.env's chosen, a removal refused,
+    the same on both sides), the env each service is deployed with, the jobs' time zone, the order (the
+    removal after both deploys).
+  - `test/firestore.test.js`: the helper against the Firestore emulator, reading what the service
+    stores, removing it and noting it.
+- **Docs:** `README.md`, `docs/INSTALL.md` (changing a setting, moving mail for real), `docs/DEPLOY.md`,
+  `docs/ARCHITECTURE.md`.
+
 ## 0.3.5: The dashboard in four tabs
 
 - **Four tabs instead of ten:** **Overview**, **Email**, **Status**, **Settings**.

@@ -26,7 +26,8 @@ function workspace(name = 'spruce-mail-protection-0.3.0', settings = SETTINGS) {
     fs.mkdirSync(path.join(dir, 'vendor', 'spruce'), { recursive: true });
     fs.copyFileSync(path.join(ROOT, 'vendor', 'spruce', 'VENDOR.json'), path.join(dir, 'vendor', 'spruce', 'VENDOR.json'));
     if (settings !== null) fs.writeFileSync(path.join(dir, 'deploy', 'settings.env'), settings);
-    for (const f of ['gcloud', 'docker']) { fs.copyFileSync(path.join(FAKEBIN, f), path.join(bin, f)); fs.chmodSync(path.join(bin, f), 0o755); }
+    // (curl too: the scripts read Firestore's REST API, which the stand-in answers; nothing reaches Google)
+    for (const f of ['gcloud', 'docker', 'curl']) { fs.copyFileSync(path.join(FAKEBIN, f), path.join(bin, f)); fs.chmodSync(path.join(bin, f), 0o755); }
     const run = (script, env = {}, args = []) => {
         const log = path.join(fake, 'calls.log');
         fs.writeFileSync(log, '');
@@ -246,5 +247,55 @@ test('clear-data.sh: deletes only what the dashboard shows, says who did it in A
         for (const f of fs.readdirSync(path.join(ROOT, 'deploy')).filter(x => x.endsWith('.sh'))) {
             for (const line of fs.readFileSync(path.join(ROOT, 'deploy', f), 'utf8').split('\n').filter(l => /^\s*gcloud firestore bulk-delete/.test(l))) assert.match(line, /--collection-ids=/, `${f}: ${line}`);
         }
+    } finally { w.cleanup(); }
+});
+
+test('the dashboard\'s policy changes when installing: taken where settings.env is silent, asked about where they differ, written into settings.env, then removed', { skip: !hasBash }, () => {
+    const w = workspace('spruce-mail-protection-0.3.6');
+    const settings = () => fs.readFileSync(path.join(w.dir, 'deploy', 'settings.env'), 'utf8');
+    const envOf = (svc) => fs.readFileSync(path.join(w.fake, `env-${svc}.yaml`), 'utf8');
+    const event = () => JSON.parse(fs.readFileSync(path.join(w.fake, 'event.json'), 'utf8')).fields.text.stringValue;
+    // The dashboard switched to enforce (settings.env says monitor), and set a threshold and a time zone
+    // settings.env doesn't set.
+    const dash = { FAKE_POLICY_mode: 'enforce|monitor', FAKE_POLICY_aiThreshold: '0.9|0.85', FAKE_POLICY_timeZone: 'America/Chicago|UTC' };
+    try {
+        // Nothing changed on the dashboard: nothing asked, removed or noted.
+        let r = w.run('install.sh');
+        assert.equal(r.code, 0, r.out);
+        assert.doesNotMatch(r.out, /dashboard and/); assert.ok(!has(r.calls, /curl .*-X (DELETE|POST)/));
+        // upgrade.sh says what the installer will take and ask; without a terminal the dashboard's are kept.
+        r = w.run('upgrade.sh', dash);
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Mode now: enforce \(set on the dashboard; settings\.env says monitor\)/);
+        assert.match(r.out, /The dashboard and settings\.env differ on the mode: enforce on the dashboard \(by it\.head@district-test\.example, \d{4}-\d\d-\d\d\), monitor in settings\.env\. The installer asks which to keep\./);
+        assert.match(r.out, /The AI move threshold comes from the dashboard \(90%, changed by it\.head@district-test\.example, \d{4}-\d\d-\d\d\): settings\.env doesn't set it\./);
+        assert.match(r.out, /The dashboard and deploy\/settings\.env say different things:\n {4}mode {15}on the dashboard: enforce \(changed by it\.head@district-test\.example, [\d-]+\); in settings\.env: monitor/);
+        assert.match(r.out, /No terminal to ask in: keeping the dashboard's/);
+        assert.match(r.out, /Keeping the dashboard's mode: enforce \(now in deploy\/settings\.env too\)/);
+        assert.match(r.out, /The time zone comes from the dashboard: America\/Chicago/);
+        assert.match(settings(), /^MODE=enforce$/m); assert.match(settings(), /^AI_MOVE_THRESHOLD=0\.9$/m); assert.match(settings(), /^TIME_ZONE=America\/Chicago$/m);
+        for (const svc of ['spruce-worker', 'spruce-admin']) { assert.match(envOf(svc), /^MODE: "enforce"$/m); assert.match(envOf(svc), /^AI_MOVE_THRESHOLD: "0\.9"$/m); assert.match(envOf(svc), /^TIME_ZONE: "America\/Chicago"$/m); }
+        assert.ok(has(r.calls, /scheduler jobs create http spruce-renew-watches .*--time-zone=America\/Chicago/), 'the jobs in the dashboard\'s time zone');
+        assert.match(r.out, /Mode: {7}enforce\n/);
+        // The dashboard's copies go only after both services are deployed (until then they are in force).
+        const at = (re) => r.calls.findIndex(c => re.test(c));
+        for (const k of ['mode', 'aiThreshold', 'timeZone']) assert.ok(at(new RegExp(`curl .*-X DELETE .*/state/policy-${k}$`)) > at(/run deploy spruce-admin/), k);
+        assert.match(event(), /^it\.admin@district-test\.example installed \d+\.\d+\.\d+ with deploy\/install\.sh; settings\.env now holds the policy: kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(90%\), which settings\.env didn't set; took the dashboard's time zone \(America\/Chicago\), which settings\.env didn't set\.$/);
+
+        // The same differences again, choosing settings.env's (SPRUCE_SETTINGS=file).
+        fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), SETTINGS);
+        r = w.run('install.sh', Object.assign({ SPRUCE_SETTINGS: 'file' }, dash));
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Using settings\.env's mode: monitor \(the dashboard's enforce is removed once this version is deployed\)/);
+        assert.match(settings(), /^MODE=monitor$/m); assert.match(envOf('spruce-worker'), /^MODE: "monitor"$/m);
+        assert.ok(has(r.calls, /curl .*-X DELETE .*\/state\/policy-mode$/));
+        assert.match(event(), /used settings\.env's mode \(monitor\) over the dashboard's \(enforce\)/);
+        // When the dashboard's copy can't be removed, it says what stays in force.
+        r = w.run('install.sh', Object.assign({ SPRUCE_SETTINGS: 'file', FAKE_DELETE: 'refused' }, dash));
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Couldn't remove the dashboard's copy of: MODE AI_MOVE_THRESHOLD TIME_ZONE\. Where you chose settings\.env's, the dashboard's stays in force/);
+        // The same value on both sides: nothing to ask.
+        r = w.run('install.sh', { FAKE_POLICY_mode: 'monitor|enforce' });
+        assert.equal(r.code, 0, r.out); assert.doesNotMatch(r.out, /say different things/);
     } finally { w.cleanup(); }
 });

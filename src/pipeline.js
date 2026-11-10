@@ -76,10 +76,95 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains }) {
     return parts.join(' ');
 }
 
+// --- The policy settings an admin can change on the dashboard (Settings, with the project ID) ----------
+// mode, aiThreshold, brakePerHour (0: automatic) and timeZone come from deploy/settings.env (the services'
+// environment). A change on the dashboard is kept in Firestore (state/policy-<key>: { value, env, before,
+// by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
+// replaced (env): when settings.env later has another value for the same setting (changed, then
+// install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
+const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone'];
+const POLICY_REFRESH_MS = 30 * 1000;
+const OWN_ENV = Symbol('envPolicy of this configuration');
+const sameSetting = (a, b) => (typeof a === 'number' || typeof b === 'number' ? Number(a) === Number(b) : String(a) === String(b));
+function validTimeZone(z) { try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return true; } catch (e) { return false; } }
+// The value as stored, or an error (status 400) saying what is allowed.
+function policyValue(key, v) {
+    const bad = (msg) => { throw Object.assign(new Error(msg), { status: 400 }); };
+    if (key === 'mode') return v === 'monitor' || v === 'enforce' ? v : bad('The mode is monitor or enforce.');
+    if (key === 'aiThreshold') { const n = Number(v); return Number.isFinite(n) && n > 0.5 && n <= 1 ? Math.round(n * 1000) / 1000 : bad('The AI move threshold is more than 50% and at most 100%.'); }
+    if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
+    if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
+    return bad('That setting can\'t be changed on the dashboard.');
+}
+function policyWords(key, v) {
+    if (key === 'mode') return v === 'enforce' ? 'enforce' : 'monitor';
+    if (key === 'aiThreshold') return `${Math.round(Number(v) * 1000) / 10}%`;
+    if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
+    return String(v);
+}
+
 class Service {
     constructor({ cfg, store, gmail, intel = null, now = () => Date.now(), log = console, waitForOthersMs = WAIT_FOR_OTHERS_MS }) {
         this.cfg = cfg; this.store = store; this.gmail = gmail; this.intel = intel; this.now = now; this.log = log;
         this.waitForOthersMs = waitForOthersMs;
+        // What deploy/settings.env says (the environment), before any change made on the dashboard
+        // (loadConfig keeps it; a configuration made by hand, as in the tests, gets it here).
+        // A plain copy (Object.assign({}, cfg, { mode })) takes its own values, not the original's.
+        if (!Object.isFrozen(cfg) && !cfg[OWN_ENV]) {
+            cfg.envPolicy = Object.fromEntries(POLICY_KEYS.map(k => [k, cfg[k]]));
+            Object.defineProperty(cfg, OWN_ENV, { value: true });
+        }
+        this.policyState = {}; this.policyReadAt = 0;
+    }
+
+    // Reads the dashboard's changes (at most every POLICY_REFRESH_MS, or now with force) and applies the
+    // ones still in force to this.cfg, which every check reads when it runs.
+    async refreshPolicy({ force = false } = {}) {
+        if (!force && Date.now() - this.policyReadAt < POLICY_REFRESH_MS) return this.policyState;
+        this.policyReadAt = Date.now();
+        let rows;
+        try { rows = await Promise.all(POLICY_KEYS.map(k => this.store.getState(`policy-${k}`))); }
+        catch (e) { this.log.error('reading the policy changed on the dashboard:', e); return this.policyState; }
+        this.policyState = Object.fromEntries(POLICY_KEYS.map((k, i) => [k, rows[i] || null]));
+        this.applyPolicy();
+        return this.policyState;
+    }
+    // The values in force: the dashboard's where still in force, settings.env's otherwise.
+    applyPolicy() {
+        const env = this.cfg.envPolicy;
+        const values = Object.fromEntries(POLICY_KEYS.map(k => { const o = this.policyState[k]; return [k, o && sameSetting(o.env, env[k]) ? o.value : env[k]]; }));
+        if (typeof this.cfg.setPolicyValues === 'function') this.cfg.setPolicyValues(values);   // (loadConfig's)
+        else Object.assign(this.cfg, values);
+    }
+    // For Settings: each setting's value in force, and where it comes from.
+    policyInfo() {
+        return Object.fromEntries(POLICY_KEYS.map(k => {
+            const o = this.policyState[k], kept = !!(o && sameSetting(o.env, this.cfg.envPolicy[k]));
+            return [k, { value: this.cfg[k], env: this.cfg.envPolicy[k], changed: kept ? { by: o.by, at: o.at, before: o.before } : null,
+                replaced: o && !kept ? { by: o.by, at: o.at, value: o.value } : null }];
+        }));
+    }
+    // A change made on the dashboard (the server checks the project ID, and the agreement for enforce mode).
+    // In force at once here, everywhere within POLICY_REFRESH_MS; noted in Activity, and emailed as an alert
+    // (the time zone: noted only).
+    async setPolicy(key, raw, by) {
+        if (!POLICY_KEYS.includes(key)) throw Object.assign(new Error('That setting can\'t be changed on the dashboard.'), { status: 400 });
+        const value = policyValue(key, raw);
+        await this.refreshPolicy({ force: true });
+        const before = this.cfg[key];
+        if (sameSetting(before, value)) return { key, value, unchanged: true };
+        const rec = { value, env: this.cfg.envPolicy[key], before, by, at: this.now() };
+        await this.store.setState(`policy-${key}`, rec);
+        this.policyState[key] = rec; this.applyPolicy();
+        const how = key === 'mode' && value === 'enforce' ? 'confirmed with the project ID, and agreed' : 'confirmed with the project ID';
+        const text = key === 'mode'
+            ? (value === 'enforce' ? `${by} switched to enforce mode on the dashboard (${how}): from now on, emails the policy flags are moved to Spam.`
+                : `${by} switched to monitor mode on the dashboard (${how}): nothing is moved from now on, and emails already moved stay in Spam.`)
+            : `${by} changed ${({ aiThreshold: 'the AI move threshold', brakePerHour: 'the brake', timeZone: 'the time zone' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
+              + (key === 'timeZone' ? ' The weekly summary uses it now; the nightly jobs move to it the next time deploy/install.sh runs.' : '');
+        if (key === 'timeZone') await this.store.addEvent({ kind: 'settings', text });
+        else await this.alert('settings', text, { policy: key });
+        return { key, value, before };
     }
 
     async inScope(user) {
@@ -90,6 +175,7 @@ class Service {
 
     // A Pub/Sub notification. Returns a summary (for logs and tests).
     async handleNotification({ emailAddress, historyId }) {
+        await this.refreshPolicy();
         const user = String(emailAddress || '').toLowerCase();
         if (!user || !historyId) return { ignored: 'malformed' };
         if (!(await this.inScope(user))) return { ignored: 'not watched' };
@@ -551,6 +637,7 @@ class Service {
     // Cloud Scheduler, daily: watch every pilot mailbox again (a watch lasts 7 days) and forget
     // mailboxes that left the pilot.
     async renewWatches() {
+        await this.refreshPolicy();
         const users = new Set(this.cfg.pilotUsers);
         const groups = [];
         // A failed directory read stops here, before any watch is stopped by mistake, and says so.
@@ -616,6 +703,7 @@ class Service {
     // downloaded once a day for everyone (src/intel/feeds.js; a failed download is tried again the next
     // day, not every hour).
     async syncFeeds() {
+        await this.refreshPolicy();
         let health, digest = null;
         try { health = await this.health(); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
         try { digest = await this.maybeDigest(); } catch (e) { digest = { error: String(e.message || e).slice(0, 200) }; this.log.error('weekly summary:', e); }
@@ -773,4 +861,4 @@ class Service {
     }
 }
 
-module.exports = { Service, campaignOf, senderHash, recordKey, dayOf };
+module.exports = { Service, campaignOf, senderHash, recordKey, dayOf, POLICY_KEYS, policyValue };

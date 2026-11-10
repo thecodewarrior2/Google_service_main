@@ -245,11 +245,13 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 
 1. **Monitor mode, at least 2–3 weeks.** Watch the dashboard's *Would be moved* list and *Model
    health*. Open the emails; mark false alarms and confirm phishing.
-2. **Tune.** If AI-only moves get many false alarms, raise `AI_MOVE_THRESHOLD`, for example to `0.95`.
+2. **Tune.** If AI-only moves get many false alarms, raise `AI_MOVE_THRESHOLD`, for example to `0.95`
+   (or on the dashboard: Settings → Policy).
    Add allowlist entries (`ALLOW_DOMAINS`, `ALLOW_ADDRESSES`) for senders you trust. They apply only to
    mail whose DMARC check passed: a sender without DMARC can't be allowlisted.
-3. **Enforce.** Deploy both services with `MODE=enforce`. Keep `BRAKE_PER_HOUR` at a value just above
-   your largest normal campaign.
+3. **Enforce.** Deploy both services with `MODE=enforce`, or switch on the dashboard (Settings → Policy,
+   with the project ID and **I agree**). Keep `BRAKE_PER_HOUR` at a value just above your largest
+   normal campaign.
 4. **Widen.** Add people to the pilot group, or grow `PILOT_OU` one unit at a time.
 
 ## Switching it off
@@ -264,6 +266,12 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 - **Records** are in Firestore. Delete the collections, or the project.
 
 ## Settings (environment variables)
+
+`MODE`, `AI_MOVE_THRESHOLD`, `BRAKE_PER_HOUR` and `TIME_ZONE` can also be changed on the dashboard
+(Settings → Policy, with the project ID, which the dashboard checks against `GOOGLE_CLOUD_PROJECT`).
+Those changes are kept in Firestore (`state/policy-<key>`) and read by both services at least every
+30 seconds. A change stays in force until settings.env has another value for the same setting:
+`deploy/install.sh` asks which to keep, then writes it into settings.env (docs/INSTALL.md).
 
 | Variable | Default | What |
 |---|---|---|

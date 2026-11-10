@@ -36,6 +36,7 @@ case "$a" in
   "pubsub subscriptions describe"*) exit 1 ;;
   "beta monitoring channels create"*) echo projects/test-proj/notificationChannels/42 ;;
   "monitoring policies create"*) f="${a##*--policy-from-file=}"; f="${f%% *}"; cp "$f" "$FAKE_DIR/policy-$(ls "$FAKE_DIR" | wc -l).json" ;;
+  "run deploy "*) n="${a#run deploy }"; n="${n%% *}"; f="${a##*--env-vars-file=}"; f="${f%% *}"; [ ! -f "$f" ] || cp "$f" "$FAKE_DIR/env-$n.yaml" ;;
   "builds submit"*) [ "${FAKE_BUILD:-ok}" = ok ] || { echo "ERROR: build failed" >&2; exit 1; } ;;
 esac
 exit 0

@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.5.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.6.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.5.zip
+   unzip spruce-mail-protection-0.3.6.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.5
+   cd spruce-mail-protection-0.3.6
    ```
 
 4. Make your settings file:
@@ -164,6 +164,25 @@ When it finishes, it prints the **dashboard address**.
 - **Changing a setting:** edit `deploy/settings.env` and run `bash deploy/install.sh`. It doesn't rebuild
   when the files are the same as last time (about a minute). `FORCE_BUILD=1 bash deploy/install.sh`
   rebuilds anyway.
+- **Mode, AI move threshold, brake and time zone** can also be changed on the dashboard: **Settings →
+  Policy → Change**.
+  - Each change needs the Google Cloud project ID, and switching to enforce mode also needs **I agree**.
+  - A change applies everywhere within 30 seconds, is noted in Status → Activity, and is emailed as an
+    alert (a time zone change is only noted).
+  - The next `install.sh` (or `upgrade.sh`, `update.sh`) compares the dashboard with
+    `deploy/settings.env`:
+
+    | settings.env | The dashboard | The installer |
+    |---|---|---|
+    | doesn't set it (empty or missing) | changed it | uses the dashboard's |
+    | sets it | didn't change it | uses settings.env's |
+    | the same value | the same value | nothing to choose |
+    | one value | another | asks which to keep (the dashboard's by default, since it is in force) |
+
+  - Without a terminal to ask in, the installer keeps the dashboard's; `SPRUCE_SETTINGS=file bash
+    deploy/install.sh` uses settings.env's instead.
+  - The choice is written into `deploy/settings.env`. Once the new build is deployed, the dashboard's
+    copy is removed and Activity notes what was chosen, so the two say the same thing again.
 - **Add or remove people** in the security group. It applies daily, or at once with **Settings →
   Update group membership now** in the dashboard, or with:
 
@@ -177,9 +196,10 @@ When it finishes, it prints the **dashboard address**.
   - Use **Mark false alarm** or **Confirm phishing**.
   - Watch **Status → Model health**.
   - **Status → Readiness** turns these into checks; switch when they are all green.
-- **To move mail for real:**
-  1. Set `MODE=enforce` in `deploy/settings.env`.
-  2. Run `bash deploy/install.sh` again.
+- **To move mail for real**, either:
+  - on the dashboard: **Settings → Policy → Mode → Change**, choose **Enforce**, tick **I agree**, type
+    the project ID and **Save** (within 30 seconds, everywhere); or
+  - set `MODE=enforce` in `deploy/settings.env`, and run `bash deploy/install.sh` again.
 
   Moved mail goes to Spam with the label `SPRUCE/Moved`. A user can always move it back, and the
   dashboard records that.

@@ -174,3 +174,41 @@ test('deploy/clear-data.sh against Firestore: sees the brake and held campaigns,
         assert.match(fs.readFileSync(log, 'utf8'), /firestore bulk-delete --database=\(default\) --collection-ids=records,stats,campaigns,moveCounts,events --quiet/);
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('deploy/dashboard-policy.sh against Firestore: reads the changes as the service stores them, then removes them and notes it', { skip: skip || (require('child_process').spawnSync('bash', ['-c', 'true']).status !== 0 && 'no bash') }, async () => {
+    const os = require('os'), path = require('path'), fs = require('fs'), { spawnSync } = require('child_process');
+    const { Service } = require('../src/pipeline');
+    const { loadConfig } = require('../src/config');
+    const s = getStore();
+    // Changes made on the dashboard, by the service itself.
+    const svc = new Service({ cfg: loadConfig({ STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', PILOT_USERS: U, MODE: 'monitor' }), store: s, gmail: {}, log: { error() {}, warn() {} } });
+    await svc.setPolicy('mode', 'enforce', 'it.head@maple-schools.example');
+    await svc.setPolicy('aiThreshold', 0.9, 'it.head@maple-schools.example');
+    await svc.setPolicy('brakePerHour', 250, 'it.head@maple-schools.example');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-policy-'));
+    const bin = path.join(home, 'bin'); fs.mkdirSync(bin);
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'fakebin', 'gcloud'), path.join(bin, 'gcloud')); fs.chmodSync(path.join(bin, 'gcloud'), 0o755);
+    const file = path.join(home, 'settings.env');
+    fs.writeFileSync(file, 'MODE=monitor\nBRAKE_PER_HOUR=250\n');
+    const run = (script) => spawnSync('bash', ['-c', `set -euo pipefail; . deploy/dashboard-policy.sh; ${script}`], { cwd: path.join(__dirname, '..'), encoding: 'utf8', input: '',
+        env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, FAKE_LOG: path.join(home, 'log'), FAKE_DIR: home, FAKE_TOKEN: 'owner', SPRUCE_FIRESTORE_URL: `http://${HOST}/v1` }) });
+    try {
+        let r = run(`dashboard_policy_read ${PROJECT} monitor '' 250 ''; printf '%s' "$DASHBOARD_POLICY"`);
+        assert.equal(r.status, 0, r.stderr);
+        const rows = r.stdout.trim().split('\n').map(l => l.split('\t'));
+        assert.deepEqual(rows.map(x => [x[0], x[1], x[2], x[3], x[5], x[6]]), [
+            ['mode', 'enforce', 'enforce', 'it.head@maple-schools.example', 'differs', 'monitor'],
+            ['aiThreshold', '0.9', '90%', 'it.head@maple-schools.example', 'unset', 'not set'],
+            ['brakePerHour', '250', '250 moves an hour', 'it.head@maple-schools.example', 'same', '250 moves an hour']]);
+        assert.match(rows[0][4], /^\d{4}-\d\d-\d\d$/);
+        // Reconciled (no terminal: the dashboard's kept), written into the file, then removed and noted.
+        r = run(`dashboard_policy_read ${PROJECT} monitor '' 250 ''; dashboard_policy_reconcile ${file}; echo "MODE=$MODE AI=$AI_MOVE_THRESHOLD"; dashboard_policy_finish ${PROJECT} 9.9.9`);
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /MODE=enforce AI=0\.9/);
+        assert.match(fs.readFileSync(file, 'utf8'), /^MODE=enforce\nBRAKE_PER_HOUR=250\nAI_MOVE_THRESHOLD=0\.9\n$/);
+        for (const k of ['mode', 'aiThreshold', 'brakePerHour']) assert.equal(await s.getState(`policy-${k}`), null, `policy-${k} removed`);
+        const e = (await s.listEvents(Date.now() - 60000)).find(x => /installed 9\.9\.9 with deploy\/install\.sh/.test(x.text || ''));
+        assert.ok(e, 'noted in Activity'); assert.equal(e.kind, 'settings');
+        assert.match(e.text, /kept the dashboard's mode \(enforce\) over settings\.env's \(monitor\); took the dashboard's AI move threshold \(90%\)/);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});

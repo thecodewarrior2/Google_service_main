@@ -244,3 +244,31 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 .spaced { margin-top: 14px; }
+
+/* Settings → Policy: each setting, its source, and the form to change it (with the project ID). */
+.policy-row { border-top: 1px solid var(--border); padding: 12px 0; }
+.policy-row:first-of-type { border-top: 0; }
+.policy-head { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.policy-label { font-weight: 600; }
+.policy-form { margin: 12px 0 0 192px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: grid; gap: 10px; max-width: 640px; }
+.policy-form input[type="text"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
+.policy-form .num-input { width: 110px; }
+.policy-form .alert { margin-bottom: 0; }
+.policy-form .actions { margin-top: 0; }
+.choices { display: grid; gap: 6px; }
+.choice { display: flex; gap: 8px; align-items: flex-start; }
+.choice > span { flex: 1 1 auto; min-width: 0; }
+.choice.inline-choice { align-items: center; flex-wrap: wrap; }
+.choice.inline-choice > span { flex: 0 0 auto; }
+.choice input[type="radio"], .choice input[type="checkbox"] { width: 18px; height: 18px; margin: 1px 0 0; flex: 0 0 auto; }
+.agree { display: grid; gap: 8px; }
+.agree[hidden], .policy-form [hidden] { display: none; }
+.project { display: grid; gap: 4px; max-width: 320px; font-weight: 600; }
+.inline { display: inline-flex; gap: 6px; align-items: center; }
+.policy-error { color: var(--critical-text); font-weight: 600; }
+.policy-error:empty { display: none; }
+@media (max-width: 700px) {
+  .policy-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .policy-value { grid-column: 1 / -1; grid-row: 2; }
+  .policy-form { margin-left: 0; }
+}

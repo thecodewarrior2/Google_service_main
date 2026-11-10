@@ -60,7 +60,14 @@ OLDMODEL="$(gcloud run services describe spruce-worker --region="$REGION" --form
 echo
 echo "Upgrade S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION): $FROM -> $VERSION"
 echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')"
-echo "Mode stays: $(get MODE)"
+# The mode, and what the installer will take from the dashboard or ask about (deploy/dashboard-policy.sh).
+. deploy/dashboard-policy.sh
+dashboard_policy_read "$PROJECT" "$(get MODE)" "$(get AI_MOVE_THRESHOLD)" "$(get BRAKE_PER_HOUR)" "$(get TIME_ZONE)"
+ENVMODE="$(get MODE)"; [ "$ENVMODE" = enforce ] || ENVMODE=monitor
+DASHMODE="$(printf '%s' "$DASHBOARD_POLICY" | awk -F '\t' '$1 == "mode" { print $2 }')"
+if [ -n "$DASHMODE" ] && [ "$DASHMODE" != "$ENVMODE" ]; then echo "Mode now: $DASHMODE (set on the dashboard; settings.env says $ENVMODE)"
+else echo "Mode stays: $ENVMODE"; fi
+dashboard_policy_summary
 if [ "$FROM" = "$VERSION" ]; then echo "(Same version: this redeploys it.)"
 elif [ "$(printf '%s\n%s\n' "$FROM" "$VERSION" | sort -V | tail -1)" = "$FROM" ]; then echo "Note: $VERSION is OLDER than what is installed. To go back to the previous build, deploy/rollback.sh is quicker."; fi
 if [ -f CHANGELOG.md ]; then

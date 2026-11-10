@@ -62,6 +62,16 @@
     const stateOf = (m) => (m.state === 'released' && m.releasedByUser ? ['Moved back by user', 'released'] : STATE[m.state] || [m.state, '']);
     const pill = ([label, cls]) => h('span', { class: `pill ${cls}`, text: label });
 
+    // The mode, in the header: set when the page loads, and again whenever Overview or Settings is read
+    // (the mode can be switched on the dashboard, by this admin or another).
+    function showMode(mode) {
+        const badge = $('#modeBadge');
+        if (!badge || !mode) return;
+        badge.hidden = false;
+        badge.className = `mode ${mode}`;
+        badge.textContent = mode === 'enforce' ? 'Enforce mode' : 'Monitor mode';
+    }
+
     function toast(msg) {
         const t = h('div', { class: 'toast', role: 'status', text: msg });
         document.body.append(t);
@@ -213,6 +223,7 @@
 
     async function overview() {
         const d = await api(`/api/overview?days=${days}`);
+        showMode(d.mode);
         const sm = d.summary;
         const out = [];
         if (d.brake) {
@@ -541,17 +552,17 @@
 
     async function settings() {
         const d = await api('/api/settings');
+        showMode(d.mode);
         const yes = (b) => (b ? 'Yes' : 'No');
         const row = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
-        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Read-only here, apart from the weekly summary email and the retraining export: the rest are set when the service is deployed (deploy/settings.env, docs/DEPLOY.md), so every change is reviewed.' }),
+        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'The policy below can be changed here, each change confirmed with the Google Cloud project ID; so can the weekly summary email and the retraining export. The rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
+            policyCard(d),
             digestCard(d),
             trainingSettingCard(d),
             h('div', { class: 'grid two' },
                 h('section', { class: 'card' }, h('h2', { text: 'Policy' }), h('dl', { class: 'kv' },
-                    row('Mode', d.mode === 'enforce' ? 'Enforce: moves to Spam' : 'Monitor: records only'),
                     row('Move when', `${d.moveOnRules ? 'the rules flag it (score 5+), or ' : ''}the AI scores ${pct(d.aiThreshold)} or more`),
                     row('AI alone, inside mail', d.aiMovesInside ? 'Moves it' : 'Never moves it (rules still can)'),
-                    row('Brake (whole domain)', `Stops moving everywhere after ${num(d.brakeLimit)} moves in an hour (${d.brakePerHour ? 'BRAKE_PER_HOUR' : 'half the watched mailboxes, at least 100'}). A last resort against a misfire`),
                     row('Campaign hold', `Holds the copies of one campaign after ${num(d.campaignHoldAfter)} moved on weaker evidence, until you confirm or release it. Strong evidence is never held`),
                     row('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Recent activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
                     row('Never moved', [...d.allowDomains, d.allowAddresses ? `${d.allowAddresses} addresses` : ''].filter(Boolean).join(', ') || 'none set'),
@@ -560,7 +571,6 @@
                     row('Organization', d.orgDomains.join(', ') || '–'),
                     row('Mailboxes watched', `${num(d.watched)}${[...(d.pilotGroups || []).map(g => `group ${g}`), d.pilotOu ? `unit ${d.pilotOu}` : ''].filter(Boolean).map(s => ` (${s})`).join('')}`),
                     row('Records kept', `${d.retentionDays} days`),
-                    row('Time zone', `${d.timeZone || 'UTC'} (the scheduled jobs and the weekly summary)`),
                     row('Version', d.version || ''),
                     row('Subjects stored', yes(d.storeSubjects)),
                     row('AI quotes stored', yes(d.storeAiQuotes)),
@@ -724,6 +734,114 @@
             preview);
     }
 
+    // --- Settings: the policy, changed here with the project ID ---------------------------------------------
+    // Mode, the AI move threshold, the brake and the time zone. Each Change opens a form under its row; it
+    // needs the project ID, and switching to enforce mode the agreement too. Live updates wait while a form
+    // is open. deploy/install.sh asks which to keep when settings.env says otherwise (deploy/dashboard-policy.sh).
+    const POLICY_ROWS = [
+        { key: 'mode', label: 'Mode', show: (v) => (v === 'enforce' ? 'Enforce: emails the policy flags are moved to Spam' : 'Monitor: emails are checked and recorded, nothing is moved') },
+        { key: 'aiThreshold', label: 'AI move threshold', show: (v) => `${pct(v)}: an email the AI scores this high or higher is moved (rules aside)` },
+        { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
+        { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` }
+    ];
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE' };
+    function policyCard(d) {
+        const P = d.policy || {};
+        let openKey = null;
+        pageBusy = () => !!openKey;
+        const short = (key, v) => (key === 'mode' ? v : key === 'aiThreshold' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
+        const source = (key) => {
+            const p = P[key] || {};
+            if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
+            if (p.replaced) return `From settings.env (${ENV_NAME[key]}). It replaced ${short(key, p.replaced.value)}, set here by ${p.replaced.by}.`;
+            return `From settings.env (${ENV_NAME[key]}).`;
+        };
+        const rows = POLICY_ROWS.map(r => {
+            const value = (P[r.key] || {}).value !== undefined ? P[r.key].value : d[r.key];
+            const slot = h('div', { class: 'policy-form-slot' });
+            const button = h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false' }, 'Change');
+            button.addEventListener('click', () => {
+                for (const el of box.querySelectorAll('.policy-form-slot')) el.textContent = '';
+                for (const b of box.querySelectorAll('button[aria-expanded]')) b.setAttribute('aria-expanded', 'false');
+                if (openKey === r.key) { openKey = null; return; }
+                openKey = r.key; button.setAttribute('aria-expanded', 'true');
+                slot.append(policyForm(r.key, value, d, () => { openKey = null; slot.textContent = ''; button.setAttribute('aria-expanded', 'false'); }));
+                const first = slot.querySelector('input, select'); if (first) first.focus();
+            });
+            return h('div', { class: 'policy-row' },
+                h('div', { class: 'policy-head' }, h('div', { class: 'policy-label', text: r.label }),
+                    h('div', { class: 'policy-value' }, h('div', { text: r.show(value, d) }), h('div', { class: 'small muted', text: source(r.key) })),
+                    d.projectKnown ? button : null),
+                slot);
+        });
+        const box = h('section', { class: 'card spaced' }, h('h2', { text: 'Policy' }),
+            h('div', { class: 'sub', text: 'Each change needs the Google Cloud project ID, applies within 30 seconds, is noted in Status → Activity, and is emailed as an alert (the time zone is only noted). When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.' }),
+            d.projectKnown ? null : h('div', { class: 'alert warning' }, h('div', { text: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT), so these can\'t be changed here yet. Run bash deploy/install.sh once.' })),
+            rows);
+        return box;
+    }
+    function policyForm(key, value, d, close) {
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        const save = h('button', { class: 'btn primary', type: 'button' }, 'Save');
+        const cancel = h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel');
+        let read = () => value, extra = [], agreeBox = null;
+        const update = () => { save.disabled = !project.value.trim() || (agreeBox && !agreeBox.hidden && !agreeBox.querySelector('input').checked); };
+        if (key === 'mode') {
+            const radio = (v, label) => h('label', { class: 'choice' }, h('input', { type: 'radio', name: 'policy-mode', value: v, checked: v === value }), h('span', { text: label }));
+            const choices = h('div', { class: 'choices' }, radio('monitor', 'Monitor: record only, move nothing'), radio('enforce', 'Enforce: move what the policy flags to Spam'));
+            const ready = h('div', { class: 'small muted' });
+            agreeBox = h('div', { class: 'agree', hidden: true },
+                h('div', { class: 'alert warning' }, h('div', {}, h('b', { text: 'Enforce mode moves mail. ' }), 'From the moment you save, emails the rules flag, or the AI scores at the threshold or higher, are moved to Spam in every watched mailbox (the brakes still apply; emails already recorded as "would move" stay where they are).', ready)),
+                h('label', { class: 'choice' }, h('input', { type: 'checkbox', onchange: update }), h('span', { text: 'I agree: I have looked at Status → Readiness, and I want emails moved to Spam from now on.' })));
+            const sync = async () => {
+                const v = choices.querySelector('input:checked').value;
+                agreeBox.hidden = !(v === 'enforce' && value !== 'enforce'); update();
+                if (!agreeBox.hidden && !ready.textContent) {
+                    try { const { readiness: r } = await api(`/api/readiness?days=${days}`); const ok = r.checks.filter(c => c.ok).length; ready.textContent = ` Readiness: ${ok} of ${r.checks.length} checks pass.`; }
+                    catch (e) { ready.textContent = ' (Couldn\'t read Readiness.)'; }
+                }
+            };
+            choices.addEventListener('change', sync);
+            read = () => choices.querySelector('input:checked').value;
+            extra = [choices, agreeBox, value === 'enforce' ? h('div', { class: 'small muted', text: 'Monitor mode: nothing is moved from then on; emails already moved stay in Spam.' }) : null];
+        } else if (key === 'aiThreshold') {
+            const input = h('input', { type: 'number', min: 51, max: 100, step: 1, value: String(Math.round(value * 100)), 'aria-label': 'AI move threshold in percent', class: 'num-input' });
+            read = () => Number(input.value) / 100;
+            extra = [h('label', { class: 'inline' }, input, h('span', { text: '%' })), h('div', { class: 'small muted', text: 'Higher moves fewer emails on the AI score alone. Status → Model health shows how often moves on the AI score were undone.' })];
+        } else if (key === 'brakePerHour') {
+            const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
+            const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });
+            const n = h('input', { type: 'number', min: 10, max: 100000, step: 1, value: String(value || d.brakeLimit || 100), 'aria-label': 'Moves an hour', class: 'num-input' });
+            n.addEventListener('focus', () => { fixed.checked = true; });
+            read = () => (auto.checked ? 0 : Number(n.value));
+            extra = [h('div', { class: 'choices' }, h('label', { class: 'choice' }, auto, h('span', { text: 'Automatic: half the watched mailboxes, at least 100' })),
+                h('label', { class: 'choice inline-choice' }, fixed, h('span', { text: 'A fixed limit:' }), n, h('span', { text: 'moves an hour' }))),
+                h('div', { class: 'small muted', text: 'After this many moves in one hour, moving stops everywhere until an admin resumes (Overview). Strong evidence still counts toward it.' })];
+        } else if (key === 'timeZone') {
+            let zones = [];
+            try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* an older browser: typed in */ }
+            const input = zones.length ? h('select', { 'aria-label': 'Time zone' }, (zones.includes(value) ? zones : [value, ...zones]).map(z => h('option', { value: z, selected: z === value, text: z })))
+                : h('input', { type: 'text', value, 'aria-label': 'Time zone', placeholder: 'America/New_York' });
+            read = () => input.value;
+            extra = [input, h('div', { class: 'small muted', text: 'The weekly summary uses it at once. The nightly jobs move to it the next time deploy/install.sh runs.' })];
+        }
+        project.addEventListener('input', update); update();
+        save.addEventListener('click', async () => {
+            err.textContent = ''; save.disabled = true; acting++;
+            try {
+                const out = await api('/api/policy', { method: 'POST', body: { key, value: read(), projectId: project.value, agree: !!(agreeBox && agreeBox.querySelector('input').checked) } });
+                toast(out.changed && out.changed.unchanged ? 'That is already the setting: nothing changed.' : 'Changed. It applies everywhere within 30 seconds.');
+                close(); render();
+            } catch (e) { err.textContent = e.message; update(); }
+            finally { acting--; }
+        });
+        return h('div', { class: 'policy-form' }, extra,
+            h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),
+            d.demoProjectId ? h('div', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}.` }) : null,
+            h('div', { class: 'actions' }, save, cancel), err);
+    }
+
     // --- Settings: the retraining export (off by default) -----------------------------------------------
     function trainingSettingCard(d) {
         const g = d.trainingExport || { enabled: false };
@@ -865,10 +983,7 @@
             const st = await api('/api/settings');
             $('#who').textContent = st.admin || '';
             $('#orgLine').textContent = `Google Workspace · ${st.orgDomains.join(', ') || 'your organization'}`;
-            const badge = $('#modeBadge');
-            badge.hidden = false;
-            badge.className = `mode ${st.mode}`;
-            badge.textContent = st.mode === 'enforce' ? 'Enforce mode' : 'Monitor mode';
+            showMode(st.mode);
             if (st.demo) $('.top-right').prepend(h('span', { class: 'demo-flag', text: 'DEMO · made-up data' }));
             $('#foot').textContent = `Checks and AI model from S.P.R.U.C.E+ (${st.model.name} ${st.model.version}). Records hold sender, subject and the checks' findings, never email bodies, and are deleted after ${st.retentionDays} days.`;
         } catch (e) { /* the view shows the error */ }

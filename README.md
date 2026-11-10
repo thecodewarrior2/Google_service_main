@@ -132,8 +132,15 @@ each have a menu on the left (a row of buttons above the page on a phone).
     - staff mail failing DMARC, and the busiest hour against the brake;
     - notifications arriving, and the group re-read reaching the service.
   - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
-- **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
-  notified the service about it.
+- **Settings:** the policy in force, and each watched mailbox with the last time Gmail notified the
+  service about it.
+  - **Policy:** **Change** the mode, the AI move threshold, the brake (automatic, or a fixed number of
+    moves an hour) or the time zone.
+    - Each change needs the Google Cloud project ID; five wrong ones lock it for 10 minutes.
+    - Switching to enforce mode also needs **I agree**, next to how many Readiness checks pass.
+    - A change applies everywhere within 30 seconds, is noted in Activity, and is emailed as an alert
+      (a time zone change is only noted).
+    - Each setting says where its value comes from: settings.env, or changed here, by whom and when.
   - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
     run. It also says when the group was last read and whether that reached the service.
   - **Weekly summary email** (off by default; changed here, like the retraining export): every Monday
@@ -206,11 +213,15 @@ The last command writes `build/mockup.html`, a single file to share the look and
 - **`deploy/rollback.sh`** goes back to the previous build.
 - **`deploy/stop.sh`** stops it.
 - **`deploy/doctor.sh`** checks the installation end to end and says what to run for each problem.
+- **`deploy/dashboard-policy.sh`** (used by `install.sh` and `upgrade.sh`) compares the policy
+  changed on the dashboard with settings.env.
 - **`deploy/clear-data.sh`** clears what the dashboard shows (emails recorded, counts, campaign
   decisions, Activity) and keeps the watched mailboxes and settings, after you type the project ID.
 
 Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` again. It reuses the image
-built from the same files, so it only redeploys, in about a minute.
+built from the same files, so it only redeploys, in about a minute. The mode, the AI move threshold, the
+brake and the time zone can also be changed on the dashboard (Settings → Policy). When the two differ,
+`install.sh` asks which to keep, and writes the answer into settings.env.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
 `docs/ARCHITECTURE.md` explains the pieces. `docs/RETRAINING.md` turns the emails admins marked into
@@ -235,7 +246,7 @@ training examples, and a better AI model.
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
-| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `settings.example.env` |
+| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

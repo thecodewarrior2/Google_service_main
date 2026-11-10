@@ -35,7 +35,10 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     mailboxes: (await store.listUsers()).sort((a, b) => a.email.localeCompare(b.email)).map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                     renew: { available: true, last: { at: now - 15 * 60 * 60 * 1000, code: 0 } },
                     brakePerHour: 0, brakeLimit: 100, campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: 'spruce-admins@maple-schools.example',
-                    digest: { enabled: false }, trainingExport: { enabled: false }, timeZone: 'America/New_York', version: require('../package.json').version,
+                    digest: { enabled: false }, trainingExport: { enabled: false }, timeZone: 'America/New_York',
+                    projectKnown: true, demoProjectId: 'demo-project',
+                    policy: { mode: { value: cfg.mode, env: cfg.mode, changed: null, replaced: null }, aiThreshold: { value: cfg.aiThreshold, env: cfg.aiThreshold, changed: null, replaced: null },
+                              brakePerHour: { value: 0, env: 0, changed: null, replaced: null }, timeZone: { value: 'America/New_York', env: 'America/New_York', changed: null, replaced: null } }, version: require('../package.json').version,
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
@@ -82,6 +85,17 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
       case '/api/status': return Object.assign(base, { checks: [{ id: 'mockup', ok: null, text: 'The clickable mockup has no service to check: the real dashboard checks it here.', fix: null }] });
       case '/api/digest/preview': return Object.assign(base, { preview: { subject: 'S.P.R.U.C.E+ weekly summary (mockup)', text: 'The real dashboard shows the summary of the last 7 days here.' } });
       case '/api/digest': return Object.assign(base, { enabled: body.enabled === true });
+      case '/api/policy': {
+        if (String(body.projectId || '').trim() !== 'demo-project') throw new Error("That isn't the Google Cloud project ID of this service. Nothing was changed.");
+        const p = D.settings.policy[body.key];
+        if (!p) throw new Error('Choose a setting to change.');
+        if (body.key === 'mode' && body.value === 'enforce' && p.value !== 'enforce' && body.agree !== true) throw new Error('Tick "I agree" to switch to enforce mode. Nothing was changed.');
+        const before = p.value;
+        Object.assign(p, { value: body.value, changed: { by: ADMIN, at: Date.now(), before } });
+        D.settings[body.key] = body.value;
+        if (body.key === 'brakePerHour') D.settings.brakeLimit = body.value || 100;
+        return Object.assign(base, { changed: { key: body.key, value: body.value, before } });
+      }
       case '/api/training-export/allow': D.settings.trainingExport = { enabled: body.enabled === true, updatedBy: ADMIN, updatedAt: Date.now() }; return Object.assign(base, { enabled: body.enabled === true });
       case '/api/bulk': return Object.assign(base, { done: (body.keys || []).length, skipped: 0, failed: 0 });
       case '/api/campaign/confirm': return Object.assign(base, { moved: { moved: 0, gone: 0, failed: 0, left: 0 }, found: null });

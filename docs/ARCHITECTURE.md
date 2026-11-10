@@ -93,6 +93,21 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   vocabulary doesn't have, when they start a sentence; most capitalized words in the middle of one.
   Nothing is stored or counted. `tools/check-training-file.js` refuses a file with leftovers, and
   `docs/RETRAINING.md` covers the rest.
+- **The policy, changed on the dashboard** (Settings → Policy).
+  - **Which settings:** `MODE`, `AI_MOVE_THRESHOLD`, `BRAKE_PER_HOUR` and `TIME_ZONE`, kept in Firestore
+    as `state/policy-<key>`.
+  - **How they apply:** in `loadConfig` these four are live values; everything else is frozen.
+    `Service.refreshPolicy` reads them at least every 30 s (on each notification, each job, each
+    dashboard request). Every check reads them when it runs, so a change applies everywhere within
+    30 s.
+  - **Settings.env:** a change records the settings.env value it replaced. If settings.env later has
+    another value, that one is newer and applies.
+  - **The installer:** `deploy/dashboard-policy.sh` (used by `install.sh`) takes the dashboard's value
+    where settings.env is silent and asks which to keep where they differ. It writes the answer into
+    settings.env, removes the dashboard's copy once the new build is deployed, and notes it in
+    Activity.
+  - **The server** checks the project ID against `GOOGLE_CLOUD_PROJECT`, and the agreement for enforce
+    mode.
 - **The dashboard reads little.** It keeps a copy of the records (`src/dashboard/cache.js`). After one full
   read, it asks only for records changed since (each record has `updatedAt`), at most every 15 s, however
   many dashboards are open.

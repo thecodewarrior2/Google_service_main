@@ -7,9 +7,22 @@ const list = (v) => String(v || '').split(/[,;]/).map(s => s.trim().toLowerCase(
 const num = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
 const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(String(v)));
 
+// The four settings an admin can also change on the dashboard (Settings → Policy). They read from a live
+// copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
+// the environment (deploy/settings.env) says. The rest of the configuration is frozen.
+const POLICY_KEYS = ['mode', 'aiThreshold', 'brakePerHour', 'timeZone'];
+function withLivePolicy(c) {
+    const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
+    const live = Object.assign({}, envPolicy);
+    for (const k of POLICY_KEYS) Object.defineProperty(c, k, { get: () => live[k], enumerable: true });
+    c.envPolicy = envPolicy;
+    Object.defineProperty(c, 'setPolicyValues', { value: (values) => { for (const k of POLICY_KEYS) live[k] = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : envPolicy[k]; } });
+    return Object.freeze(c);
+}
+
 function loadConfig(env = process.env) {
     const demo = bool(env.DEMO, false);
-    return Object.freeze({
+    return withLivePolicy({
         demo,
         onCloudRun: !!env.K_SERVICE,                   // Cloud Run sets K_SERVICE
         // Two Cloud Run services from one image (docs/DEPLOY.md): 'worker' answers only Pub/Sub and

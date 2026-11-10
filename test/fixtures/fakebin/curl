@@ -23,11 +23,19 @@ case "$method $url" in
       *) printf '%s' '{"error":{"code":404,"status":"NOT_FOUND"}}' > "$out"; code=404 ;;
     esac
     [ -z "$fmt" ] || printf '%s' "$code" ;;
+  "GET "*/state/policy-*)   # FAKE_POLICY_<key>="value|env" (deploy/dashboard-policy.sh), else not found
+    key="${url##*/policy-}"; spec="$(eval "printf '%s' \"\${FAKE_POLICY_$key:-}\"")"
+    [ -n "$spec" ] || { echo '{"error":{"code":404,"status":"NOT_FOUND"}}'; exit 22; }
+    v="${spec%%|*}" e="${spec#*|}"
+    case "$key" in aiThreshold) t=doubleValue; q='' ;; brakePerHour) t=integerValue; q='"' ;; *) t=stringValue; q='"' ;; esac
+    [ "$key" != aiThreshold ] || { vv="$v"; ee="$e"; } ; [ "$key" = aiThreshold ] || { vv="$q$v$q"; ee="$q$e$q"; }
+    echo "{\"fields\":{\"value\":{\"mapValue\":{\"fields\":{\"value\":{\"$t\":$vv},\"env\":{\"$t\":$ee},\"by\":{\"stringValue\":\"it.head@district-test.example\"},\"at\":{\"integerValue\":\"1794300000000\"}}}}}}" ;;
   "POST "*:runQuery)
     rows='{"document":{"fields":{"heldAt":{"integerValue":"5"},"decision":{"stringValue":"confirmed"}}}}'
     for i in $(seq 1 "${FAKE_HELD:-0}"); do rows="$rows,{\"document\":{\"fields\":{\"heldAt\":{\"integerValue\":\"$i\"}}}}"; done
     echo "[$rows]" ;;
   "POST "*/documents/events) printf '%s' "$body" > "$FAKE_DIR/event.json"; echo '{"name":"projects/test-proj/databases/(default)/documents/events/x1"}' ;;
   "DELETE "*/state/installedAt) echo '{}' ;;
+  "DELETE "*/state/policy-*) [ "${FAKE_DELETE:-ok}" = ok ] || { echo '{"error":{"code":403}}'; exit 22; }; echo '{}' ;;
   *) echo "unexpected: curl $method $url" >&2; exit 2 ;;
 esac

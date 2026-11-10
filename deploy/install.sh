@@ -55,6 +55,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 step "Project $PROJECT ($REGION), S.P.R.U.C.E+ Mail Protection $VERSION, mode $MODE"
 gcloud config set project "$PROJECT" --quiet >/dev/null
+# The policy settings changed on the dashboard (Settings → Policy): taken where settings.env doesn't set
+# them, asked about where the two differ, and written into settings.env (deploy/dashboard-policy.sh).
+. deploy/dashboard-policy.sh
+dashboard_policy_read "$PROJECT" "$MODE" "$AI_MOVE_THRESHOLD" "$BRAKE_PER_HOUR" "$TIME_ZONE"
+dashboard_policy_reconcile "$SETTINGS"
+case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
+TZ_NAME="${TIME_ZONE:-UTC}"
 NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')" || fail "can't read project $PROJECT (does it exist, and are you an owner?)."
 # Google requires a billing account on the project for Cloud Run, Scheduler, Build and Artifact
 # Registry, even when the use stays within the free tier (docs/INSTALL.md, "Costs").
@@ -305,6 +312,9 @@ else
     gcloud scheduler jobs run spruce-renew-watches --location="$REGION" --quiet
     job_reached_worker spruce-renew-watches "$STARTED"
 fi
+
+# Deployed with the policy now in settings.env: the dashboard's copies go, and Activity notes it.
+dashboard_policy_finish "$PROJECT" "$VERSION"
 
 step "Done"
 cat <<EOF
