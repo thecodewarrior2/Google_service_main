@@ -113,6 +113,43 @@ test('records, events and the shared phishing lists round-trip; purge deletes wh
     assert.equal(await s.getRecord(`${U}|r0`), null);
     assert.ok(await s.getRecord(`${U}|r1`));
     assert.deepEqual((await s.listEvents(old - 1)).map(e => e.text), ['new']);
+    // 0.4.0: what expires carries expireAt (a Timestamp, RETENTION_DAYS on), for Firestore's TTL policies;
+    // reads leave it out.
+    const raw = (await s.db.collection('records').doc(`${U}|r1`).get()).data();
+    assert.ok(raw.expireAt && typeof raw.expireAt.toMillis === 'function');
+    assert.ok(Math.abs(raw.expireAt.toMillis() - (raw.processedAt + 60 * 24 * 3600 * 1000)) < 1000, 'processedAt + 60 days');
+    assert.equal('expireAt' in (await s.getRecord(`${U}|r1`)), false);
+    assert.equal((await s.listRecords({ sinceMs: Date.now() - 3600 * 1000 })).some(r => 'expireAt' in r), false);
+    assert.equal((await s.listEvents(old - 1)).some(e => 'expireAt' in e), false);
+    const ev = (await s.db.collection('events').where('text', '==', 'new').get()).docs[0].data();
+    assert.ok(ev.expireAt.toMillis() > Date.now() + 59 * 24 * 3600 * 1000);
+    // Several counters in one write.
+    await s.incStats('2026-11-11', { scanned: 40, moved: 2 });
+    const st = (await s.getStats('2026-11-11', '2026-11-11'))[0];
+    assert.deepEqual([st.scanned, st.moved], [40, 2]);
+    // The cleanup stops at its time limit (the rest at the next run).
+    for (let i = 0; i < 5; i++) await s.db.collection('events').add({ at: old, kind: 'error', text: 'old' });
+    assert.equal(await s.purge(Date.now() - 365 * 24 * 3600 * 1000, { budgetMs: -1 }), 0);
+    assert.equal(await s.purge(Date.now() - 365 * 24 * 3600 * 1000), 5);
+});
+
+test('0.4.0: a claim and a new sender are created without a transaction; races still have one winner', { skip }, async () => {
+    const s = getStore();
+    const now = Date.now(), lease = 300000;
+    const claims = await Promise.all(Array.from({ length: 12 }, () => s.claim(U, 'race1', now, lease)));
+    assert.equal(claims.filter(c => c.tries === 1).length, 1, 'one instance has it');
+    assert.equal(claims.filter(c => c.busy).length, 11, 'the others see it busy');
+    const seen = (await s.db.collection('seen').doc(`${U}|race1`).get()).data();
+    assert.equal(seen.state, 'working'); assert.ok(seen.expireAt);
+    await s.markSeen(U, 'race1');
+    assert.deepEqual(await s.claim(U, 'race1', now, lease), { done: true });
+    const firsts = await Promise.all(Array.from({ length: 12 }, (_, i) => s.senderFirstSeen('race-sender', now + i)));
+    assert.equal(new Set(firsts).size, 1, 'every caller gets the same first-seen time');
+    assert.equal(await s.senderFirstSeen('race-sender', now + 999), firsts[0]);
+    // The campaign counter tells its caller once the alert is sent.
+    let told = 0;
+    for (let i = 0; i < 3; i++) await s.campaignMoved('c-told', 2, Date.now(), () => told++);
+    assert.ok(told >= 1);
 });
 
 test('the dashboard\'s cache reads: records carry updatedAt, changed ones are listed in order; only held campaigns are listed', { skip }, async () => {

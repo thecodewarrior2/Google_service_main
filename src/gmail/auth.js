@@ -18,11 +18,18 @@ class DelegatedAuth {
         this.fetch = opts.fetch || fetch;
         this.google = opts.googleAuth || new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
         this.cache = new Map();          // `${scope}|${user}` → { token, exp }
+        this.asking = new Map();         // the same key → the request under way (in memory only, never stored)
     }
+    // One request at a time per mailbox: calls that need the same new token at once share it (a campaign
+    // reaches a mailbox with several notifications), instead of each asking IAM and Google.
     async tokenFor(user, scope = SCOPES.gmail) {
         const key = `${scope}|${user}`;
         const hit = this.cache.get(key);
         if (hit && hit.exp - Date.now() > 5 * 60 * 1000) return hit.token;
+        if (!this.asking.has(key)) this.asking.set(key, this.newToken(user, scope, key).finally(() => this.asking.delete(key)));
+        return this.asking.get(key);
+    }
+    async newToken(user, scope, key) {
         const now = Math.floor(Date.now() / 1000);
         const payload = JSON.stringify({ iss: this.sa, sub: user, scope, aud: TOKEN_URL, iat: now, exp: now + 3600 });
         const own = await (await this.google.getClient()).getAccessToken();

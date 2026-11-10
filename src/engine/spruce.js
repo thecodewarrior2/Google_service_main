@@ -1,15 +1,16 @@
 'use strict';
-// The S.P.R.U.C.E+ extension's own checks and AI model, run on the server.
+// The checks and the AI model, run on the server.
 //
-// vendor/spruce/ holds copies of the extension's shared.js, decoders.js, ai.js and its model
-// (models/phish-tiny), taken from the extension repository by tools/sync-engine.js (the commit is in
-// vendor/spruce/VENDOR.json). They are plain JavaScript written for the browser; they run here in a
-// separate context with the few browser things they use (URL, TextDecoder, a stand-in "chrome"), exactly
-// as the extension's own unit tests run them in Node. Nothing in them is changed, so a fix in the
-// extension reaches the service by syncing, and both judge an email the same way.
+// vendor/spruce/ holds shared.js, decoders.js, ai.js and the model (models/phish-tiny). They began as the
+// S.P.R.U.C.E+ browser extension's files (VENDOR.json says from which commit); since 0.4.0 they are this
+// project's own code, changed here. They are plain JavaScript written for the browser; they run here in a
+// separate context with the few browser things they use (URL, TextDecoder, a stand-in "chrome"), as the
+// extension's unit tests ran them in Node.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
+const MARGINS_KEPT = 50000;
 
 const VENDOR = path.resolve(__dirname, '..', '..', 'vendor', 'spruce');
 
@@ -34,6 +35,19 @@ function load() {
     const vocab = fs.readFileSync(path.join(VENDOR, 'models', 'phish-tiny', 'vocab.txt'), 'utf8');
     const PhishModel = get('PhishModel');
     const model = new PhishModel(manifest, bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.length), vocab);
+    // Each pass's answer, remembered per instance by a hash of its input: the copies of a campaign, and the
+    // sentences many emails share (greetings, footers), cost one pass. Only the hash and the number are
+    // kept, in memory (the most recent MARGINS_KEPT).
+    const margins = new Map(), pass = model.margin.bind(model);
+    model.margin = (text) => {
+        const k = crypto.createHash('sha256').update(String(text)).digest('base64');
+        const hit = margins.get(k);
+        if (hit !== undefined) { margins.delete(k); margins.set(k, hit); return hit; }
+        const m = pass(text);
+        if (margins.size >= MARGINS_KEPT) margins.delete(margins.keys().next().value);
+        margins.set(k, m);
+        return m;
+    };
     let vendorInfo = {};
     try { vendorInfo = JSON.parse(fs.readFileSync(path.join(VENDOR, 'VENDOR.json'), 'utf8')); } catch (e) { /* not synced by the tool */ }
     const fn = (n) => { const f = get(n); if (typeof f !== 'function') throw new Error(`vendor/spruce has no ${n}()`); return f; };

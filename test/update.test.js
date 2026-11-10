@@ -198,7 +198,7 @@ test('install.sh makes the spruce-update job: a Cloud Build as spruce-updater wi
         assert.ok(build.steps[1].env.includes('BUILD=$BUILD_ID'), 'Cloud Build fills in its own id');
         assert.match(fs.readFileSync(path.join(sb.fake, 'env-spruce-admin.yaml'), 'utf8'), /^UPDATE_JOB: "projects\/test-proj\/locations\/us-east1\/jobs\/spruce-update"$/m);
         assert.match(fs.readFileSync(path.join(sb.fake, 'env-spruce-admin.yaml'), 'utf8'), /^RELEASES_REPO: "thecodewarrior2\/Google_service_main"$/m);
-        assert.match(calls, /run deploy spruce-worker .*--update-labels=spruce-version=[\d-]+,spruce-model=[\d-]+,spruce-install-level=1/);
+        assert.match(calls, new RegExp(`run deploy spruce-worker .*--update-labels=spruce-version=[\\d-]+,spruce-model=[\\d-]+,spruce-install-level=${PKG.installLevel}`));
     } finally { sb.cleanup(); }
 });
 

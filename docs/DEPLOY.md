@@ -171,7 +171,7 @@ The push subscription is created after the worker exists (step 6).
 `spruce-invoker` may call it.
 
 ```bash
-gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
+gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --max-instances=30 --execution-environment=gen2 --cpu-boost --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
 ```
 
 The first deploy prints `WORKER_URL`. Deploy again with `PUSH_AUDIENCE` set to it, then allow the
@@ -194,7 +194,7 @@ gcloud run services add-iam-policy-binding spruce-worker --region=REGION --membe
   the form `/projects/PROJECT_NUMBER/locations/REGION/services/spruce-admin`.
 
 ```bash
-gcloud run deploy spruce-admin --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --set-env-vars=ROLE=admin,MODE=monitor,ORG_DOMAINS=ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,IAP_AUDIENCE=AUDIENCE,ADMIN_EMAILS=it.director@ORG;it.helpdesk@ORG
+gcloud run deploy spruce-admin --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --memory=1Gi --cpu-boost --set-env-vars=ROLE=admin,MODE=monitor,ORG_DOMAINS=ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,IAP_AUDIENCE=AUDIENCE,ADMIN_EMAILS=it.director@ORG;it.helpdesk@ORG
 ```
 
 `ADMIN_EMAILS` (like every list setting) takes commas or semicolons. Use semicolons in
@@ -213,10 +213,24 @@ Even someone IAP lets through is refused unless their address is in `ADMIN_EMAIL
 
 Keep `MODE` the same on both services. The admin service shows the mode; the worker acts on it.
 
+### Old documents (Firestore TTL)
+
+The service writes `expireAt` (a Timestamp) on what expires: records and checked-message markers after
+`RETENTION_DAYS`, Activity entries after the same, the brake's counters after 2 days, campaign states
+after `RETENTION_DAYS` of quiet, remembered registry dates when they run out. Firestore deletes them by
+itself, typically within a day (billed as deletes). `deploy/install.sh` sets the policies; by hand:
+
+```bash
+for g in seen records events moveCounts campaigns cache; do gcloud firestore fields ttls update expireAt --collection-group=$g --enable-ttl --async; gcloud firestore indexes fields update expireAt --collection-group=$g --disable-indexes --async; done
+```
+
+The daily `spruce-purge` job still deletes what has no `expireAt` (written before 0.4.0), within 90
+seconds a run.
+
 ## 6. Notifications and daily jobs
 
 ```bash
-gcloud pubsub subscriptions create gmail-spruce-push --topic=gmail-spruce --push-endpoint=WORKER_URL/pubsub/push --push-auth-service-account=spruce-invoker@PROJECT.iam.gserviceaccount.com --push-auth-token-audience=WORKER_URL --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s
+gcloud pubsub subscriptions create gmail-spruce-push --topic=gmail-spruce --push-endpoint=WORKER_URL/pubsub/push --push-auth-service-account=spruce-invoker@PROJECT.iam.gserviceaccount.com --push-auth-token-audience=WORKER_URL --ack-deadline=120 --min-retry-delay=10s --max-retry-delay=600s
 ```
 
 ```bash
@@ -347,7 +361,8 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off for now; `true` needs the key (Secret Manager) |
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
-| `RETENTION_DAYS` | `60` | records are deleted after this |
+| `RETENTION_DAYS` | `60` | records (and the checked-message markers) are deleted after this: by Firestore's TTL policies, from the `expireAt` each document gets when written (so a new value applies to documents written from then on), and by the daily cleanup job for older ones |
+| `WORKER_MAX_INSTANCES` (installer) | `30` | the most worker instances at once (1 to 100); they cost only while they work |
 | `BUDGET_ALERT` (installer only) | `1` | budget alert amount for the project, in the billing account's currency; `off` for none |
 | `STORE_SUBJECTS`, `STORE_AI_QUOTES` | `true` | keep subjects and the model's short quotes in records |
 | `FIRST_SEEN_LEARNING_DAYS` | `14` | "first email from this sender" only counts after this |

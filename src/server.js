@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { loadConfig, configProblems } = require('./config');
 const { createStore } = require('./store');
-const { Service, POLICY_KEYS } = require('./pipeline');
+const { Service, POLICY_KEYS, STAT_FLUSH_MS } = require('./pipeline');
 const { verifyPush, verifyTask, verifyAdmin, adminGroupCheck } = require('./auth/verify');
 const { RecordCache } = require('./dashboard/cache');
 const VERSION = require('../package.json').version;
@@ -43,6 +43,8 @@ async function readBody(req, max = 1024 * 1024) {
 
 // The dashboard's view of a record: what an admin needs, nothing of the email's text beyond the
 // subject and the checks' own short quotes (both can be turned off: STORE_SUBJECTS, STORE_AI_QUOTES).
+// How long the dashboard keeps today's counters before reading them again (pages refresh every 30 s).
+const STATS_TODAY_MS = 15 * 1000;
 const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign,
     status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
 
@@ -79,6 +81,27 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
     // (records past RETENTION_DAYS are deleted daily: the copy forgets them too)
     const cache = new RecordCache(store, { keepDays: Math.min(92, cfg.retentionDays || 92) });
+    // The daily counters (stats/{day}~{shard}): a past day no longer changes, so each instance reads it
+    // once; today is read again after STATS_TODAY_MS. (Ten minutes after midnight yesterday still counts as
+    // today: instances write what they added up every few seconds. clear-data.sh restarts the dashboard.)
+    const pastStats = new Map(); let todayStats = null;
+    const statsFor = async (fromDay, toDay) => {
+        const now = Date.now(), today = A.dayOf(now), settled = A.dayOf(now - 10 * 60 * 1000) < today ? A.dayOf(now - A.DAY) : today;
+        const days = [];
+        for (let t = Date.parse(`${fromDay}T12:00:00Z`); A.dayOf(t) <= toDay; t += A.DAY) days.push(A.dayOf(t));
+        const missing = days.filter(d => d < settled && !pastStats.has(d));
+        if (missing.length) {
+            const rows = await store.getStats(missing[0], missing[missing.length - 1]);
+            const got = new Map(rows.map(r => [r.day, r]));
+            for (const d of missing) pastStats.set(d, got.get(d) || null);
+        }
+        const recent = days.filter(d => d >= settled);
+        if (recent.length && (!todayStats || todayStats.from !== recent[0] || now - todayStats.at > STATS_TODAY_MS)) {
+            todayStats = { from: recent[0], at: now, rows: await store.getStats(recent[0], recent[recent.length - 1] > today ? recent[recent.length - 1] : today) };
+        }
+        const live = new Map(((todayStats && todayStats.rows) || []).map(r => [r.day, r]));
+        return days.map(d => (d >= settled ? live.get(d) : pastStats.get(d))).filter(Boolean);
+    };
     let renewAskedAt = 0, renewStatus = null, renewStatusAt = 0;
     const canRenew = () => !!(scheduler && cfg.renewJob);
     async function lastRenew() {
@@ -93,7 +116,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     const groupCheck = cfg.adminGroups.length && service.gmail && service.gmail.hasMember ? adminGroupCheck(cfg, service.gmail) : null;
     const since = (q) => Date.now() - Math.min(90, Math.max(1, Number(q.get('days')) || 30)) * A.DAY;
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
-    const load = async (q) => ({ records: await cache.list(since(q) - A.DAY, 20000), stats: await store.getStats(A.dayOf(since(q)), A.dayOf(Date.now())) });
+    // A page's records (all of its period: the cache holds slim copies of every one) and daily counters.
+    const load = async (q) => ({ records: await cache.list(since(q) - A.DAY), stats: await statsFor(A.dayOf(since(q)), A.dayOf(Date.now())) });
 
     // The brake, and how many emails it holds (still in the Inbox, recorded since it came on).
     async function brakeInfo(records) {
@@ -444,13 +468,19 @@ async function main() {
         intel = require('./intel').createIntel({ cfg, store, engine: spruce.load(), version: require('../package.json').version });
     }
     spruce.load();
-    const service = new Service({ cfg, store, gmail, intel });
+    // (the day's counters added up and written every few seconds; written when the instance stops, below)
+    const service = new Service({ cfg, store, gmail, intel, statFlushMs: cfg.demo ? 0 : STAT_FLUSH_MS });
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
     const scheduler = !cfg.demo && cfg.role !== 'worker' && (cfg.renewJob || cfg.updateJob) ? require('./scheduler').createScheduler() : null;
     // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
     const cloudrun = cfg.demo ? { service: async () => ({ iap: false, image: `demo:${VERSION}-demo`, url: '' }), invokers: async () => ['serviceAccount:spruce-invoker@demo.iam.gserviceaccount.com'] }
         : cfg.role !== 'worker' ? require('./cloudrun').createCloudRun() : null;
     http.createServer(createApp({ cfg, store, service, scheduler, cloudrun })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
+    // Cloud Run stops an instance with SIGTERM and 10 seconds' grace: the counters it added up are written.
+    process.on('SIGTERM', () => {
+        setTimeout(() => process.exit(0), 8000).unref();
+        service.flushStats().catch(() => {}).finally(() => process.exit(0));
+    });
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

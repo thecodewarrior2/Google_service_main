@@ -51,7 +51,16 @@ test('install.sh: the whole install in order, and what each step sets up', { ski
         assert.ok(has(r.calls, /add-iam-policy-binding test-proj --member=serviceAccount:spruce-run@test-proj\.iam\.gserviceaccount\.com --role=roles\/cloudscheduler\.jobRunner/));
         assert.ok(has(r.calls, /--role=roles\/cloudbuild\.builds\.builder/), 'spruce-build gets its role');
         assert.ok(has(r.calls, /jobs create http spruce-sync-feeds .*--schedule=23 \* \* \* \*/), 'the health check runs hourly');
-        assert.ok(has(r.calls, /pubsub subscriptions create gmail-spruce-push .*--min-retry-delay=30s --max-retry-delay=600s/));
+        assert.ok(has(r.calls, /pubsub subscriptions create gmail-spruce-push .*--min-retry-delay=10s --max-retry-delay=600s/));
+        // 0.4.0: old documents expire by themselves (TTL on expireAt, which is not indexed); the worker scales
+        // to WORKER_MAX_INSTANCES (30 by default), gen2 with startup CPU boost; the dashboard has 1 GiB.
+        for (const g of ['seen', 'records', 'events', 'moveCounts', 'campaigns', 'cache']) {
+            assert.ok(has(r.calls, new RegExp(`firestore fields ttls update expireAt --collection-group=${g} --enable-ttl`)), g);
+            assert.ok(has(r.calls, new RegExp(`firestore indexes fields update expireAt --collection-group=${g} --disable-indexes`)), g);
+        }
+        assert.match(r.out, /Old documents expire by themselves \(Firestore TTL policies\)/);
+        assert.ok(has(r.calls, /run deploy spruce-worker .*--max-instances=30 --execution-environment=gen2 --cpu-boost/));
+        assert.ok(has(r.calls, /run deploy spruce-admin .*--memory=1Gi .*--cpu-boost/));
         assert.ok(!has(r.calls, /--no-iap/), 'IAP was off on the worker: nothing to turn off');
         assert.match(r.out, /spruce-renew-watches reached the service/);
         // Alerts: an email channel and two log-based policies, as valid JSON.
@@ -61,6 +70,20 @@ test('install.sh: the whole install in order, and what each step sets up', { ski
             ['resource.type="cloud_run_revision" AND jsonPayload.spruceAlert:*', 'resource.type="cloud_scheduler_job" AND severity>=ERROR AND resource.labels.job_id:"spruce-"']);
         assert.ok(policies.every(p => p.notificationChannels[0] === 'projects/test-proj/notificationChannels/42' && p.alertStrategy.notificationRateLimit.period === '300s'));
         assert.match(r.out, /Alerts: emailed to admins@district-test\.example/);
+    } finally { w.cleanup(); }
+});
+
+test('install.sh: WORKER_MAX_INSTANCES sets the worker\'s limit, and must be 1 to 100', { skip: !hasBash }, () => {
+    const w = workspace();
+    try {
+        const env = path.join(w.dir, 'deploy', 'settings.env');
+        fs.appendFileSync(env, 'WORKER_MAX_INSTANCES=60\n');
+        let r = w.run('install.sh');
+        assert.equal(r.code, 0, r.out);
+        assert.ok(has(r.calls, /run deploy spruce-worker .*--max-instances=60 /));
+        fs.appendFileSync(env, 'WORKER_MAX_INSTANCES=500\n');
+        r = w.run('install.sh');
+        assert.notEqual(r.code, 0); assert.match(r.out, /WORKER_MAX_INSTANCES must be a number from 1 to 100/);
     } finally { w.cleanup(); }
 });
 

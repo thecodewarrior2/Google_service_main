@@ -16,7 +16,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
-AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE=
+AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE= WORKER_MAX_INSTANCES=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +24,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -41,6 +41,8 @@ case "$ALERT_TO" in '' | *@*.*) ;; *) fail "ALERT_EMAIL must be an email address
 TZ_NAME="${TIME_ZONE:-UTC}"
 [[ "$TZ_NAME" =~ ^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+)+)$ ]] || fail "TIME_ZONE must be a time zone name, like America/New_York (or empty for UTC)."
 [[ "$BUDGET_ALERT" =~ ^(off|[0-9]+(\.[0-9]{1,2})?)$ ]] || fail "BUDGET_ALERT must be an amount (like 1 or 5) or off."
+WORKER_MAX="${WORKER_MAX_INSTANCES:-30}"
+[[ "$WORKER_MAX" =~ ^[0-9]+$ ]] && [ "$WORKER_MAX" -ge 1 ] && [ "$WORKER_MAX" -le 100 ] || fail "WORKER_MAX_INSTANCES must be a number from 1 to 100 (or empty for 30)."
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
 command -v gcloud >/dev/null || fail "gcloud is not installed (use Cloud Shell)."
@@ -102,6 +104,16 @@ fi
 step "2/9 Firestore (records, counters, state)"
 if gcloud firestore databases describe --database='(default)' >/dev/null 2>&1; then echo "  exists"
 else gcloud firestore databases create --location="$REGION" --quiet; fi
+# Old documents are deleted by Firestore itself (TTL policies on expireAt, which the service writes on what
+# expires: records and checked messages after RETENTION_DAYS, the brake's counters after 2 days…), typically
+# within a day; the daily cleanup job only takes what has no expireAt. expireAt is never queried: not indexed.
+TTL_FAILED=
+for g in seen records events moveCounts campaigns cache; do
+    gcloud firestore fields ttls update expireAt --collection-group="$g" --enable-ttl --async --quiet >/dev/null 2>&1 || TTL_FAILED=1
+    gcloud firestore indexes fields update expireAt --collection-group="$g" --disable-indexes --async --quiet >/dev/null 2>&1 || true
+done
+if [ -n "$TTL_FAILED" ]; then echo "  (Old documents couldn't be set to expire by themselves; the daily cleanup job still deletes them.)"
+else echo "  Old documents expire by themselves (Firestore TTL policies)."; fi
 
 step "3/9 Service accounts (no keys)"
 mk_sa() { gcloud iam service-accounts describe "$1@$PROJECT.iam.gserviceaccount.com" >/dev/null 2>&1 || gcloud iam service-accounts create "$1" --display-name="$2" --quiet; }
@@ -222,7 +234,8 @@ gcloud run services remove-iam-policy-binding spruce-worker --region="$REGION" -
 WF="$(env_file worker ROLE worker "${COMMON[@]}" PILOT_GROUP "$PILOT_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
     PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP")"
 gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --concurrency=8 --timeout=120 --memory=1Gi --max-instances=10 --env-vars-file="$WF" --update-labels="$LABELS" --quiet
+    --concurrency=8 --timeout=120 --memory=1Gi --max-instances="$WORKER_MAX" --execution-environment=gen2 --cpu-boost \
+    --env-vars-file="$WF" --update-labels="$LABELS" --quiet
 # All traffic to this build, even after deploy/rollback.sh pinned an older one.
 gcloud run services update-traffic spruce-worker --region="$REGION" --to-latest --quiet >/dev/null
 WORKER_URL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(status.url)')"
@@ -233,7 +246,7 @@ AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMA
     RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO" \
     UPDATE_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-update" RELEASES_REPO "$(printf '%s' "$RELEASES" | sed -n 's|^https://github.com/\([^/]*/[^/]*\)$|\1|p' | sed 's/\.git$//')")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --memory=512Mi --max-instances=3 --env-vars-file="$AF" --update-labels="$LABELS" --quiet
+    --memory=1Gi --max-instances=3 --cpu-boost --env-vars-file="$AF" --update-labels="$LABELS" --quiet
 gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
 # Settings → Update deploys new builds of both services (deploy/cloud-update.sh), as spruce-updater.
 for s in spruce-worker spruce-admin; do
@@ -258,9 +271,9 @@ fi
 
 step "9/9 Notifications and daily jobs"
 if gcloud pubsub subscriptions describe gmail-spruce-push >/dev/null 2>&1; then
-    gcloud pubsub subscriptions update gmail-spruce-push --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s --quiet >/dev/null
+    gcloud pubsub subscriptions update gmail-spruce-push --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=10s --max-retry-delay=600s --quiet >/dev/null
 else
-    gcloud pubsub subscriptions create gmail-spruce-push --topic="$TOPIC" --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=30s --max-retry-delay=600s --quiet >/dev/null
+    gcloud pubsub subscriptions create gmail-spruce-push --topic="$TOPIC" --push-endpoint="$WORKER_URL/pubsub/push" --push-auth-service-account="$SA_INVOKER" --push-auth-token-audience="$WORKER_AUD" --ack-deadline=120 --min-retry-delay=10s --max-retry-delay=600s --quiet >/dev/null
 fi
 # An upgrade keeps a stopped service stopped (deploy/stop.sh paused the renewal); a plain install starts it.
 STOPPED=

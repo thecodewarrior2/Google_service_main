@@ -14,9 +14,10 @@ mode).
 
 - **Runs in your own Google Cloud project** (Cloud Run, Pub/Sub, Firestore). Email is read through the
   Gmail API with domain-wide delegation and is not sent to any other service.
-- **Same verdicts as the extension.** `vendor/spruce/` holds the extension's own checks (`shared.js`,
-  `decoders.js`) and its phish-tiny model (`ai.js`, `models/`), copied unchanged by
-  `tools/sync-engine.js`.
+- **Its own checks and AI model.** `vendor/spruce/` holds the checks (`shared.js`, `decoders.js`) and the
+  phish-tiny model (`ai.js`, `models/`). They began as the S.P.R.U.C.E+ browser extension's; since 0.4.0
+  they are this project's own code, changed here (the model runs about twice as fast, with the same
+  answers).
 - **Careful by default:**
   - **Monitor mode** (records, moves nothing) until you switch to enforce mode.
   - **The AI score alone never moves mail from inside the organization.** The rules still can, for
@@ -54,7 +55,7 @@ For each new Inbox message:
    - the links, unwrapped offline;
    - the text a person sees, plus how the email hides text: filler after a large blank gap, or a body
      that is only pictures.
-2. The extension's checks add up their signs:
+2. The checks add up their signs:
    - forged or spam headers;
    - a brand-name or look-alike sender, or one named after the recipient;
    - dangerous links;
@@ -260,6 +261,8 @@ AI suspicious line, the brake, the time zone and the allowlist can also be chang
 `install.sh` asks which to keep, and writes the answer into settings.env.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
+`docs/SCALING.md` is what a district of 10,000 mailboxes and 100,000 emails a day asks of it, measured,
+and the plan beyond.
 `docs/ARCHITECTURE.md` explains the pieces. `docs/RETRAINING.md` turns the emails admins marked into
 training examples, and a better AI model.
 
@@ -285,5 +288,5 @@ training examples, and a better AI model.
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `cloud-update.sh` (Settings → Update's Cloud Build), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
-| `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
-| `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |
+| `tools/` | `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
+| `vendor/spruce/` | The checks and the AI model (this project's own code since 0.4.0; they began as the extension's, `VENDOR.json` says from which commit) |

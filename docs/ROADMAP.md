@@ -16,8 +16,9 @@ What the service doesn't do yet, roughly in the order it would help.
 4. **Notifications.** Email alerts to IT are in (0.3.0: brakes, paused campaigns, large campaigns, Gmail
    gone quiet, failed jobs). Still out: chat alerts, and an optional daily digest to users of what was
    moved for them.
-5. **Composite Firestore indexes**, for districts big enough that the dashboard's bounded reads (the
-   latest 20,000 records in the period) aren't enough.
+5. **Beyond 10,000 mailboxes:** the model run natively, dashboard rollups instead of every record in
+   memory, the watch renewal spread over the day, a load test on a spare project. The plan, measured and
+   with sources: `docs/SCALING.md`.
 6. **Real admin quarantine** (Design B): an inbound gateway that adds a verdict header and a Gmail
    content-compliance rule that sends matching mail to an admin quarantine. Only if moving after
    delivery proves not to be enough.

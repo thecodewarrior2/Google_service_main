@@ -27,8 +27,10 @@ in `Google_service_main`). Then follow its section below.
   and Scheduler calls only with verified OIDC tokens, no service-account key files.
 - Never put real people, addresses, email content or district data in the repository: tests and demo data
   are made up (the `maple-schools.example` district). Reported emails are paraphrased with made-up names.
-- The engine in `vendor/spruce/` is a copy of the S.P.R.U.C.E+ extension's files. Don't edit it here:
-  change the extension, then `node tools/sync-engine.js <extension folder>` and run the tests.
+- The engine in `vendor/spruce/` (the checks and the AI model) began as a copy of the S.P.R.U.C.E+
+  browser extension's files. Since 0.4.0 it is this project's own code: change it here, with tests. A
+  change to the model's arithmetic must keep its answers (compare them on many made-up emails before and
+  after), unless it is a new model, which gets a new version in `models/phish-tiny/model.json`.
 - Every behavior change gets a version bump in `package.json` and an entry in `CHANGELOG.md`, and
   matching updates to `README.md` and `docs/`.
 - When `deploy/install.sh` sets up something new or different (a role, a service account, a job, an

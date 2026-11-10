@@ -303,11 +303,14 @@ only from `AI_MOVE_THRESHOLD` (0.9 by default). That's why step 7 scores at the 
 
 ## 7. Is the new model better?
 
-In this repository (`google_service_testing`), with the extension checked out at the new commit:
+In this repository (`google_service_testing`), copy the new model's files in (the model is this
+project's own since 0.4.0; only its files come from the training):
 
 ```bash
-node tools/sync-engine.js ../spruce-browser-extension
+cp ../spruce-browser-extension/models/phish-tiny/{model.json,model.bin,vocab.txt,MODEL_CARD.md} vendor/spruce/models/phish-tiny/
 ```
+
+Then set its version in `vendor/spruce/VENDOR.json` (`model`), as in `model.json`.
 
 ```bash
 npm test

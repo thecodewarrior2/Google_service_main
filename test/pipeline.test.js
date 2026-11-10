@@ -396,7 +396,7 @@ test('first email from an address counts only after the learning period, across 
 test('watches: pilot unit users are watched, those who leave are stopped; old records are deleted', async () => {
     const { store, gmail, svc } = await setup({ MODE: 'enforce', PILOT_USERS: '', PILOT_OU: '/Staff/Pilot', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
     gmail.ouUsers = ['a@maple-schools.example', 'b@maple-schools.example'];
-    assert.deepEqual(await svc.renewWatches(), { watched: 2, failed: 0 });
+    assert.deepEqual(await svc.renewWatches(), { watched: 2, renewed: 2, left: 0, failed: 0 });
     assert.equal((await store.getUser('a@maple-schools.example')).watched, true);
     gmail.ouUsers = ['a@maple-schools.example'];
     await svc.renewWatches();
@@ -408,10 +408,38 @@ test('watches: pilot unit users are watched, those who leave are stopped; old re
     assert.deepEqual((await store.listRecords({})).map(r => r.key), ['new']);
 });
 
+test('watches at scale: 10 at a time within the time limit, the oldest first, the rest at the next run; one renewed recently waits', async () => {
+    const { store, gmail, svc } = await setup({ PILOT_USERS: '', PILOT_GROUP: 'spruce-pilot@maple-schools.example', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
+    const staff = Array.from({ length: 60 }, (_, i) => `staff${String(i).padStart(2, '0')}@maple-schools.example`);
+    gmail.groups['spruce-pilot@maple-schools.example'] = staff;
+    // Every mailbox watched before: renewed 1 to 6 days ago, staff59 an hour ago.
+    for (const [i, u] of staff.entries()) await store.putUser(u, { watched: true, historyId: '7', watchExpiration: Date.now() + (i % 6 + 1) * DAY });
+    await store.putUser('staff59@maple-schools.example', { watchExpiration: Date.now() + 7 * DAY - 3600e3 });
+    const watch = gmail.watch;
+    let running = 0, most = 0;
+    gmail.watch = async (u) => { running++; most = Math.max(most, running); await new Promise(r => setTimeout(r, 25)); running--; return watch(u); };
+    const r = await svc.renewWatches({ budgetMs: 60 });
+    assert.equal(most, 10, '10 at a time');
+    assert.ok(r.renewed >= 10 && r.renewed < 59, JSON.stringify(r));
+    assert.equal(r.left, 59 - r.renewed); assert.equal(r.watched, 60, 'the others are still watched (their watches last 7 days)');
+    const first = gmail.watched.slice();
+    // The oldest first: those renewed 6 days ago (expiring in a day), then 5 days ago…
+    const daysLeft = (u) => staff.indexOf(u) % 6 + 1;
+    assert.ok(first.every(u => daysLeft(u) <= daysLeft(first[first.length - 1])), first.join());
+    assert.ok(first.every(u => daysLeft(u) === 1 || first.length > 10), 'the ones expiring in a day came first');
+    assert.match(store.events.filter(e => e.kind === 'watch').pop().text, new RegExp(`^Watching 60 mailboxes\\. Renewed now: ${r.renewed}; ${r.left} more at the next run \\(a watch lasts 7 days; the oldest are renewed first\\)\\.`));
+    assert.equal(await store.getState('watchedCount'), 60, 'the automatic brake counts every watched mailbox');
+    // The next run: the rest, not the ones just renewed, and not staff59 (renewed an hour ago).
+    gmail.watched.length = 0;
+    const r2 = await svc.renewWatches();
+    assert.equal(r2.renewed, r.left); assert.equal(r2.left, 0);
+    assert.ok(!gmail.watched.some(u => first.includes(u)) && !gmail.watched.includes('staff59@maple-schools.example'));
+});
+
 test('a security group as the pilot: its members are watched, those removed are stopped; a failed read stops nothing', async () => {
     const { store, gmail, svc } = await setup({ PILOT_USERS: '', PILOT_GROUP: 'spruce-pilot@maple-schools.example', DIRECTORY_ADMIN: 'admin@maple-schools.example' });
     gmail.groups['spruce-pilot@maple-schools.example'] = ['a@maple-schools.example', 'b@maple-schools.example'];
-    assert.deepEqual(await svc.renewWatches(), { watched: 2, failed: 0 });
+    assert.deepEqual(await svc.renewWatches(), { watched: 2, renewed: 2, left: 0, failed: 0 });
     assert.deepEqual(gmail.watched, ['a@maple-schools.example', 'b@maple-schools.example']);
     assert.equal(store.events.filter(e => e.kind === 'watch').pop().text, 'Watching 2 mailboxes. spruce-pilot@maple-schools.example: 2 entries, 2 people to watch.');
     assert.equal((await svc.handleNotification({ emailAddress: 'outsider@maple-schools.example', historyId: '5' })).ignored, 'not watched');
@@ -425,9 +453,11 @@ test('a security group as the pilot: its members are watched, those removed are 
     let fail = true;
     const watch = gmail.watch;
     gmail.watch = async (u) => { if (fail) { fail = false; throw new GoogleApiError(400, 'Mail service not enabled', 'watch'); } return watch(u); };
-    assert.deepEqual(await svc.renewWatches(), { watched: 0, failed: 1 });
+    // (renewed two days ago: due again; a failed renewal leaves the watch it has, 5 days more)
+    await store.putUser('a@maple-schools.example', { watchExpiration: Date.now() + 5 * DAY });
+    assert.deepEqual(await svc.renewWatches(), { watched: 1, renewed: 0, left: 0, failed: 1 });
     assert.equal(store.events.filter(e => e.kind === 'watch').pop().text,
-        'Watching 0 mailboxes. spruce-pilot@maple-schools.example: 6 entries (1 group inside it, whose members are listed too), 1 person to watch; left out: 1 not active (suspended or archived), '
+        'Watching 1 mailbox. spruce-pilot@maple-schools.example: 6 entries (1 group inside it, whose members are listed too), 1 person to watch; left out: 1 not active (suspended or archived), '
         + '2 outside your domains (elsewhere.example, students.maple-schools.example; ORG_DOMAINS is maple-schools.example), 1 "all users in the organization" entry, which isn\'t expanded: add people or groups instead. '
         + '1 mailbox couldn\'t be watched (see the errors).');
     gmail.groupMembers = members;
@@ -474,4 +504,51 @@ test('configuration: real use needs every safety setting; demo mode refuses Clou
     const c = loadConfig({});
     assert.equal(c.mode, 'monitor', 'monitor by default'); assert.equal(c.aiThreshold, 0.9); assert.equal(c.aiSuspicious, 0.65); assert.equal(c.aiMovesInside, false);
     assert.match(configProblems(loadConfig({ AI_MOVE_THRESHOLD: '0.3' })).join(' '), /AI_MOVE_THRESHOLD/);
+});
+
+test('the day\'s counters: added up per instance and written together every few seconds (none lost), or at once by default', async () => {
+    const { store, gmail } = await setup({ MODE: 'monitor' });
+    const { Service } = require('../src/pipeline');
+    const cfg = require('../src/config').loadConfig({ STORE: 'memory', ORG_DOMAINS: 'maple-schools.example', PILOT_USERS: 'reader@maple-schools.example', MODE: 'monitor' });
+    const writes = [];
+    const inc = store.incStats.bind(store);
+    store.incStats = async (day, counts) => { writes.push(counts); return inc(day, counts); };
+    const svc = new Service({ cfg, store, gmail, log: { error() {}, warn() {}, info() {} }, statFlushMs: 60000 });
+    const day = new Date().toISOString().slice(0, 10);
+    for (let i = 0; i < 25; i++) await svc.count(day, 'scanned');
+    await svc.count(day, 'moved');
+    assert.equal(writes.length, 0, 'nothing written within the minute');
+    await svc.flushStats();
+    assert.deepEqual(writes, [{ scanned: 25, moved: 1 }], 'one write for all of them');
+    const st = (await store.getStats(day, day))[0];
+    assert.deepEqual([st.scanned, st.moved], [25, 1]);
+    // A failed write keeps them for the next try.
+    store.incStats = async () => { throw new Error('unavailable'); };
+    await svc.count(day, 'scanned'); await svc.flushStats();
+    store.incStats = async (d, c) => { writes.push(c); return inc(d, c); };
+    await svc.flushStats();
+    assert.deepEqual(writes.at(-1), { scanned: 1 });
+    // statFlushMs 0 (the default): each at once.
+    const now = new Service({ cfg, store, gmail, log: { error() {} } });
+    await now.count(day, 'flagged');
+    assert.equal((await store.getStats(day, day))[0].flagged, 1);
+});
+
+test('delegation tokens (0.4.0): calls for one mailbox at the same moment share one request; a failure isn\'t kept', async () => {
+    const { DelegatedAuth } = require('../src/gmail/auth');
+    let signs = 0, tokens = 0, fail = false;
+    const fetch = async (url) => {
+        if (url.includes(':signJwt')) { signs++; await new Promise(r => setTimeout(r, 20)); return { ok: true, json: async () => ({ signedJwt: 'jwt' }) }; }
+        tokens++;
+        if (fail) return { ok: false, status: 400, text: async () => 'unauthorized_client' };
+        return { ok: true, json: async () => ({ access_token: `t${tokens}`, expires_in: 3600 }) };
+    };
+    const a = new DelegatedAuth({ delegatedServiceAccount: 'spruce-delegate@p.iam.gserviceaccount.com' }, { fetch, googleAuth: { getClient: async () => ({ getAccessToken: async () => ({ token: 'own' }) }) } });
+    const got = await Promise.all(Array.from({ length: 8 }, () => a.tokenFor('a.lee@maple-schools.example')));
+    assert.deepEqual([signs, tokens, new Set(got).size], [1, 1, 1], 'eight calls, one request');
+    assert.equal(await a.tokenFor('a.lee@maple-schools.example'), got[0], 'then kept for the hour');
+    fail = true;
+    await assert.rejects(Promise.all([a.tokenFor('b.ray@maple-schools.example'), a.tokenFor('b.ray@maple-schools.example')]), /token for b\.ray/);
+    fail = false;
+    assert.match(await a.tokenFor('b.ray@maple-schools.example'), /^t\d+$/, 'asked again after a failure');
 });

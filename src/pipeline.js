@@ -15,7 +15,7 @@ const { readMessage } = require('./engine/mime');
 const { analyze, senderVerified } = require('./engine/analyze');
 const { decide, isAllowed } = require('./policy');
 const { GoogleApiError } = require('./gmail/client');
-const { compareHistoryIds } = require('./store/history');
+const { compareHistoryIds, movesForward } = require('./store/history');
 const { buildDigest, mime, isSummary, localParts } = require('./digest');
 const A = require('./dashboard/aggregate');
 const training = require('./training');
@@ -28,6 +28,20 @@ const MAX_TRIES = 3;
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
 // How long a notification waits for messages another instance is judging before it keeps the place.
 const WAIT_FOR_OTHERS_MS = 5000;
+// The daily renewal of the watches (Gmail stops notifying for a mailbox whose watch isn't renewed for 7
+// days): 10 at a time (users.watch costs 100 quota units: about 400,000 a minute, a third of the
+// project's 1,200,000), within RENEW_BUDGET_MS so the run ends before the worker's 120-second timeout,
+// the mailboxes renewed longest ago first. Those left are the first of the next run: 10,000 mailboxes are
+// each renewed every two days or so, well within the 7 days. One renewed less than RENEW_FRESH_MS ago is
+// left for the next run.
+// How often a mailbox's "last notification" time is written when its history position doesn't move (it
+// is written with the position otherwise): the Status page and the quiet-mailbox alert (12 hours) need no more.
+const NOTED_EVERY_MS = 10 * 60 * 1000;
+// Senders remembered per instance (about 100 bytes each).
+const SENDERS_KEPT = 100000;
+// How often the worker writes the day's counters it added up (src/server.js; see Service.count).
+const STAT_FLUSH_MS = 5000;
+const RENEW_PARALLEL = 10, RENEW_BUDGET_MS = 95 * 1000, RENEW_FRESH_MS = 12 * 60 * 60 * 1000, WATCH_MS = 7 * 24 * 60 * 60 * 1000;
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const hourOf = (ms) => new Date(ms).toISOString().slice(0, 13);
 // The Message-ID header without its angle brackets: what Google Workspace's Email log search and the
@@ -59,9 +73,10 @@ function campaignOf(senderDomain, subject, user) {
 
 // "Watching 3 mailboxes. spruce-pilot@…: 5 entries, 3 people watched; left out: 1 not active, 1 outside
 // your domains (elsewhere.example). 1 couldn't be watched (see the error)."
-function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains }) {
+function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, renewed = null, left = 0 }) {
     const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
     const parts = [`Watching ${n(ok, 'mailbox', 'mailboxes')}.`];
+    if (renewed !== null && left) parts.push(`Renewed now: ${renewed}${left ? `; ${left} more at the next run (a watch lasts 7 days; the oldest are renewed first)` : ''}.`);
     for (const g of groups) {
         const out = [];
         if (g.inactive) out.push(`${g.inactive} not active (suspended or archived)`);
@@ -137,9 +152,12 @@ function policyWords(key, v) {
 }
 
 class Service {
-    constructor({ cfg, store, gmail, intel = null, now = () => Date.now(), log = console, waitForOthersMs = WAIT_FOR_OTHERS_MS }) {
+    // statFlushMs: the day's counters of checked emails are added up here and written at most this often
+    // (one write for all of them; 0, as in the tests: each at once). The worker uses STAT_FLUSH_MS.
+    constructor({ cfg, store, gmail, intel = null, now = () => Date.now(), log = console, waitForOthersMs = WAIT_FOR_OTHERS_MS, statFlushMs = 0 }) {
         this.cfg = cfg; this.store = store; this.gmail = gmail; this.intel = intel; this.now = now; this.log = log;
         this.waitForOthersMs = waitForOthersMs;
+        this.statFlushMs = statFlushMs; this.statBuf = new Map(); this.statFlushedAt = Date.now();
         // What deploy/settings.env says (the environment), before any change made on the dashboard
         // (loadConfig keeps it; a configuration made by hand, as in the tests, gets it here).
         // A plain copy (Object.assign({}, cfg, { mode })) takes its own values, not the original's.
@@ -148,6 +166,42 @@ class Service {
             Object.defineProperty(cfg, OWN_ENV, { value: true });
         }
         this.policyState = {}; this.policyReadAt = 0;
+        // Kept per instance, as they never change once known: when each sender was first seen (a hash, as
+        // in Firestore), and the campaigns whose alert has been sent.
+        this.installedAt = null; this.senderSeen = new Map(); this.alerted = new Set();
+    }
+    // A day's counter of checked emails (scanned, moved, …): written at once, or added up and written with
+    // the others every statFlushMs (a busy instance writes once every few seconds, not once per email, and
+    // a campaign makes no counter document hot). Counts are written on the next email after that, and when
+    // the instance stops (flushStats, from server.js).
+    async count(day, field) {
+        if (!this.statFlushMs) return this.store.incStat(day, field);
+        const k = `${day}|${field}`;
+        this.statBuf.set(k, (this.statBuf.get(k) || 0) + 1);
+        if (Date.now() - this.statFlushedAt >= this.statFlushMs) await this.flushStats();
+    }
+    async flushStats() {
+        if (!this.statBuf.size) return;
+        const buf = this.statBuf;
+        this.statBuf = new Map(); this.statFlushedAt = Date.now();
+        const byDay = new Map();
+        for (const [k, n] of buf) { const [day, field] = k.split('|'); byDay.set(day, Object.assign(byDay.get(day) || {}, { [field]: n })); }
+        for (const [day, counts] of byDay) {
+            try { await this.store.incStats(day, counts); }
+            catch (e) {   // kept for the next try
+                for (const [f, n] of Object.entries(counts)) this.statBuf.set(`${day}|${f}`, (this.statBuf.get(`${day}|${f}`) || 0) + n);
+                this.log.error('writing the day\'s counters:', e);
+            }
+        }
+    }
+    // When a sender was first seen: Firestore's answer (a transaction on senders/{hash}) the first time on
+    // this instance, then this instance's copy.
+    async firstSeen(hash, now) {
+        if (this.senderSeen.has(hash)) return this.senderSeen.get(hash);
+        const first = await this.store.senderFirstSeen(hash, now);
+        if (this.senderSeen.size >= SENDERS_KEPT) this.senderSeen.delete(this.senderSeen.keys().next().value);
+        this.senderSeen.set(hash, first);
+        return first;
     }
 
     // Reads the dashboard's changes (at most every POLICY_REFRESH_MS, or now with force) and applies the
@@ -206,21 +260,19 @@ class Service {
         return { key, value, before };
     }
 
-    async inScope(user) {
-        if (this.cfg.pilotUsers.includes(user)) return true;
-        const u = await this.store.getUser(user);
-        return !!(u && u.watched);
-    }
-
     // A Pub/Sub notification. Returns a summary (for logs and tests).
     async handleNotification({ emailAddress, historyId }) {
         await this.refreshPolicy();
         const user = String(emailAddress || '').toLowerCase();
         if (!user || !historyId) return { ignored: 'malformed' };
-        if (!(await this.inScope(user))) return { ignored: 'not watched' };
+        // The mailbox's state, read once (whether it is watched, and where its history was read up to).
         const u = (await this.store.getUser(user)) || {};
-        await this.store.putUser(user, { lastNotification: this.now() });
-        if (!u.historyId) { await this.store.raiseHistoryId(user, String(historyId)); return { started: true }; }
+        if (!this.cfg.pilotUsers.includes(user) && !u.watched) return { ignored: 'not watched' };
+        // When Gmail last notified: written with the sync position (one write, not two); when that doesn't
+        // move, at most every NOTED_EVERY_MS.
+        const noted = { lastNotification: this.now() };
+        const note = async () => { if (this.now() - (Number(u.lastNotification) || 0) >= NOTED_EVERY_MS) await this.store.putUser(user, noted); };
+        if (!u.historyId) { await this.store.raiseHistoryId(user, String(historyId), noted); return { started: true }; }
         let added;
         try { added = await this.gmail.addedSince(user, u.historyId); }
         catch (e) {
@@ -230,7 +282,7 @@ class Service {
                 // week) is caught up on, a little with each later notification (backfillStep).
                 const p = await this.gmail.profile(user);
                 const after = Math.max(Number(u.lastNotification) || 0, this.now() - 7 * DAY);
-                await this.store.putUser(user, { historyId: String(p.historyId), backfill: { after, pageToken: null, checked: 0 } });
+                await this.store.putUser(user, Object.assign({ historyId: String(p.historyId), backfill: { after, pageToken: null, checked: 0 } }, noted));
                 await this.store.addEvent({ kind: 'gap', user, text: `Changes to ${user}'s mailbox were missed (history too old). Checking resumed from now, and the Inbox mail since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too.` });
                 return { resynced: true };
             }
@@ -269,7 +321,8 @@ class Service {
             else if (r) results.push(r);
         }
         if (busy.length && !(await this.othersDone(user, busy))) hold = true;
-        if (!hold) await this.store.raiseHistoryId(user, String(added.historyId));
+        if (hold || !movesForward(String(added.historyId), u.historyId)) await note();
+        else await this.store.raiseHistoryId(user, String(added.historyId), noted);
         if (u.backfill) { try { await this.backfillStep(user, u.backfill); } catch (e) { this.log.error(`backfill ${user}:`, e); } }
         if (this.log.info) this.log.info(`notification: ${added.ids.length} new in the Inbox, ${results.length} checked${hold ? ', some left to try again' : ''}`);
         return Object.assign({ processed: results.length, results }, hold ? { held: true } : {}, added.more ? { more: true } : {});
@@ -396,9 +449,11 @@ class Service {
     async judge(user, msg, facts, { alreadyMoved = false, userPlaced = false } = {}) {
         const now = this.now();
         const day = dayOf(now);
-        if (!alreadyMoved) await this.store.incStat(day, 'scanned');
-        const installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now);
-        const first = facts.senderAddress ? await this.store.senderFirstSeen(senderHash(facts.senderAddress), now) : now;
+        if (!alreadyMoved) await this.count(day, 'scanned');
+        // Both never change once set, so each instance asks Firestore once: when the service was installed,
+        // and when each sender was first seen (a campaign's 10,000 copies cost one look, not 10,000).
+        const installedAt = this.installedAt || (this.installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now));
+        const first = facts.senderAddress ? await this.firstSeen(senderHash(facts.senderAddress), now) : now;
         const learning = now - installedAt < this.cfg.firstSeenLearningDays * DAY;
         // Allowlisted only with DMARC passing for the address (policy.js).
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
@@ -449,9 +504,10 @@ class Service {
             state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null
         };
         await this.store.saveRecord(rec);
-        await this.store.incStat(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
-        if (decision.action === 'move') {
-            if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now)) {
+        await this.count(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
+        if (decision.action === 'move' && !this.alerted.has(campaign.key)) {
+            // (counted until the campaign's alert is sent; after that this instance writes nothing more)
+            if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now, () => this.alerted.add(campaign.key))) {
                 await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Email → Campaigns page lists who received it.`, { campaign: campaign.key });
             }
         }
@@ -513,16 +569,17 @@ class Service {
         const brake = await this.store.getState('brake');
         await this.store.setState('brakeResumedAt', this.now());
         await this.store.setState('brake', null);
-        const out = moveHeld && brake ? await this.moveHeld(r => r.held === 'brake' && r.processedAt >= brake.at, by, 'resumed moving') : null;
+        const out = moveHeld && brake ? await this.moveHeld(r => r.held === 'brake' && r.processedAt >= brake.at, by, 'resumed moving', { sinceMs: brake.at }) : null;
         await this.store.addEvent({ kind: 'resume', text: `Moving resumed by ${by}${out ? (out.monitor ? '' : `; ${out.moved} emails left in the Inbox while the brake was on were moved to Spam${out.gone ? `, ${out.gone} no longer in the Inbox` : ''}`) : ''}.` });
         return { ok: true, held: out };
     }
 
     // Moves held or recorded copies now, those still in the Inbox (an admin's resume or confirmation;
     // not counted by the brake). Enforce mode only. { moved, gone, failed, left }.
-    async moveHeld(match, by, how, { budgetMs = 200000, max = 5000 } = {}) {
+    // records: the candidates when the caller has them (a campaign's), else the last 14 days' (or sinceMs on).
+    async moveHeld(match, by, how, { budgetMs = 200000, max = 5000, records = null, sinceMs = null } = {}) {
         if (this.cfg.mode !== 'enforce') return { moved: 0, gone: 0, failed: 0, left: 0, monitor: true };
-        const recs = (await this.store.listRecords({ sinceMs: this.now() - 14 * DAY, limit: 20000 }))
+        const recs = (records || await this.store.listRecords({ sinceMs: sinceMs !== null ? sinceMs : this.now() - 14 * DAY, limit: 100000 }))
             .filter(r => r.state === 'inbox' && r.action !== 'move' && match(r)).slice(0, max);
         const start = Date.now();
         const out = { moved: 0, gone: 0, failed: 0, left: 0 };
@@ -547,7 +604,8 @@ class Service {
     }
 
     // --- Campaigns: an admin's decision for every copy -----------------------------------------
-    async campaignRecords(key) { return (await this.store.listRecords({ sinceMs: this.now() - 90 * DAY, limit: 20000 })).filter(r => r.campaign === key); }
+    // A campaign's records (of the last 90 days): asked of the store by campaign, not found among the newest.
+    async campaignRecords(key) { return this.store.listCampaignRecords(key, this.now() - 90 * DAY); }
     // Confirmed as phishing: every recorded copy still in the Inbox is moved (enforce mode), every copy
     // is marked phishing, later copies are moved without being held, and with search the watched
     // mailboxes are searched for copies the service didn't record (findCopies).
@@ -557,7 +615,7 @@ class Service {
         // Within the dashboard's request time (5 minutes): moving first, then searching with what is left.
         const start = Date.now();
         await this.store.setCampaign(key, { decision: 'confirmed', decidedBy: by, decidedAt: this.now(), label: recs[0].campaignLabel });
-        const moved = await this.moveHeld(r => r.campaign === key, by, 'confirmed the campaign as phishing', { budgetMs: 150000 });
+        const moved = await this.moveHeld(r => r.campaign === key, by, 'confirmed the campaign as phishing', { budgetMs: 150000, records: recs });
         for (const r of recs) if (r.falseAlarm !== false) await this.store.updateRecord(r.key, { falseAlarm: false, markedBy: by });
         const found = search ? await this.findCopies(key, by, { budgetMs: Math.max(30000, 240000 - (Date.now() - start)) }) : null;
         await this.store.addEvent({ kind: 'campaign', campaign: key, text: `${by} confirmed "${recs[0].campaignLabel}" as phishing${moved.monitor ? ' (monitor mode: nothing moved)' : `: ${moved.moved} copies moved to Spam`}${found ? `; a search of ${found.searched} mailboxes found ${found.found} more${found.moved ? `, ${found.moved} moved` : ''}` : ''}.` });
@@ -692,7 +750,8 @@ class Service {
 
     // Cloud Scheduler, daily: watch every pilot mailbox again (a watch lasts 7 days) and forget
     // mailboxes that left the pilot.
-    async renewWatches() {
+    async renewWatches({ budgetMs = RENEW_BUDGET_MS, parallel = RENEW_PARALLEL } = {}) {
+        const started = Date.now();
         await this.refreshPolicy();
         const users = new Set(this.cfg.pilotUsers);
         const groups = [];
@@ -709,33 +768,45 @@ class Service {
             await this.alert('error', `Couldn't read who is in the pilot (${[...this.cfg.pilotGroups, this.cfg.pilotOu].filter(Boolean).join(', ')}) as ${this.cfg.directoryAdmin}: ${String(e.message).slice(0, 200)}. Check the admin's role and the domain-wide delegation scopes.`);
             throw e;
         }
-        let ok = 0, failed = 0;
-        for (const user of users) {
+        // Every mailbox's state in one read (not one read per mailbox).
+        const known = new Map((await this.store.listUsers()).map(u => [u.email, u]));
+        const now = this.now();
+        const expiry = (u) => { const k = known.get(u); return k && k.watched && Number(k.watchExpiration) || 0; };
+        // New members and the watches renewed longest ago first; one renewed in the last RENEW_FRESH_MS waits.
+        const todo = [...users].filter(u => expiry(u) < now + WATCH_MS - RENEW_FRESH_MS).sort((a, b) => expiry(a) - expiry(b));
+        const out = new Map();   // user → new expiration
+        let failed = 0;
+        const over = () => Date.now() - started > budgetMs;
+        await pool(todo, parallel, async (user) => {
             try {
                 const w = await this.gmail.watch(user, this.cfg.pubsubTopic);
-                const known = await this.store.getUser(user);
-                await this.store.putUser(user, Object.assign({ watched: true, watchExpiration: Number(w.expiration) || null }, known && known.historyId ? {} : { historyId: String(w.historyId) }));
-                ok++;
+                const k = known.get(user);
+                const exp = Number(w.expiration) || null;
+                await this.store.putUser(user, Object.assign({ watched: true, watchExpiration: exp }, k && k.historyId ? {} : { historyId: String(w.historyId) }));
+                out.set(user, exp || now + WATCH_MS);
             } catch (e) {
                 failed++;
                 await this.store.addEvent({ kind: 'error', user, text: `Couldn't watch ${user}'s mailbox: ${String(e.message).slice(0, 200)}` });
             }
-        }
+        }, over);
         let stopped = 0;
-        for (const u of await this.store.listUsers()) {
-            if (u.watched && !users.has(u.email)) {
-                try { await this.gmail.stop(u.email); } catch (e) { /* already stopped */ }
-                await this.store.putUser(u.email, { watched: false });
-                stopped++;
-            }
-        }
+        const gone = [...known.values()].filter(u => u.watched && !users.has(u.email));
+        await pool(gone, parallel, async (u) => {
+            try { await this.gmail.stop(u.email); } catch (e) { /* already stopped */ }
+            await this.store.putUser(u.email, { watched: false });
+            stopped++;
+        }, over);
+        // Watched now: every member whose watch (renewed now, or before) hasn't ended. The automatic brake
+        // is half of these.
+        const ok = [...users].filter(u => (out.get(u) || expiry(u)) > now).length;
+        const left = todo.length - out.size - failed;
         await this.store.setState('watchedCount', ok);
         // What was found, for Recent activity (and the log, without addresses): so a count that looks
         // wrong says why.
-        const text = watchSummary({ ok, failed, stopped, groups, extra: this.cfg.pilotUsers.length, ou: this.cfg.pilotOu, orgDomains: this.cfg.orgDomains });
+        const text = watchSummary({ ok, failed, stopped, groups, extra: this.cfg.pilotUsers.length, ou: this.cfg.pilotOu, orgDomains: this.cfg.orgDomains, renewed: out.size, left });
         await this.store.addEvent({ kind: 'watch', text });
         if (this.log.info) this.log.info(`renew-watches: ${text}`);
-        return { watched: ok, failed };
+        return { watched: ok, renewed: out.size, left, failed };
     }
 
     // Switching the service off: Gmail stops notifying for every watched mailbox. (Also remove the
@@ -779,7 +850,7 @@ class Service {
         return [...out].filter(a => this.cfg.orgDomains.includes(a.split('@')[1]));
     }
     async digestContent(now = this.now()) {
-        const records = await this.store.listRecords({ sinceMs: now - 8 * DAY, limit: 20000 });
+        const records = await this.store.listRecords({ sinceMs: now - 8 * DAY, limit: 100000 });
         const stats = await this.store.getStats(dayOf(now - 7 * DAY), dayOf(now));
         const events = await this.store.listEvents(now - 7 * DAY);
         const users = (await this.store.listUsers()).filter(u => u.watched);
@@ -835,7 +906,7 @@ class Service {
     async trainingExport({ days = 90, falseAlarms = false, by = '', max = 100, budgetMs = 150000 } = {}) {
         const st = (await this.store.getState('trainingExport')) || {};
         if (!st.enabled) return { error: 'off' };
-        const records = await this.store.listRecords({ sinceMs: this.now() - days * DAY, limit: 20000 });
+        const records = await this.store.listRecords({ sinceMs: this.now() - days * DAY, limit: 100000 });
         const { groups, conflicting } = training.pickRecords(records, { falseAlarms });
         const rows = [], counts = { phishing: 0, genuine: 0, gone: 0, failed: 0, notReached: 0, conflicting, candidates: groups.length };
         const started = Date.now();
@@ -921,4 +992,4 @@ class Service {
     }
 }
 
-module.exports = { Service, campaignOf, senderHash, recordKey, dayOf, POLICY_KEYS, policyValue };
+module.exports = { Service, campaignOf, senderHash, recordKey, dayOf, POLICY_KEYS, policyValue, STAT_FLUSH_MS };

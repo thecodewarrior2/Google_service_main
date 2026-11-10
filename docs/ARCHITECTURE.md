@@ -46,9 +46,10 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   dashboard admin, or someone who took over a dashboard session, can at most install an approved
   version that is newer, never their own code. A version that changes the installation (roles, jobs,
   settings) still needs `install.sh`, run by someone who can change the project.
-- **The extension's own code.** `vendor/spruce/` is copied unchanged and run in a separate JavaScript
-  context with a small stand-in for the browser, as the extension's own unit tests run it. Both judge
-  an email the same way. A fix in the extension reaches the service with `tools/sync-engine.js`.
+- **The checks and the model, run as written for the browser.** `vendor/spruce/` began as the
+  S.P.R.U.C.E+ extension's code; since 0.4.0 it is this project's own (changed here, with tests). It
+  runs in a separate JavaScript context with a small stand-in for the browser, as the extension's own
+  unit tests ran it.
 - **No key files.** `spruce-run` asks IAM to sign each delegation token for `spruce-delegate`
   (`iamcredentials.signJwt`). Tokens last an hour and are kept in memory.
 - **Safe to repeat.** Pub/Sub delivers at least once, and Gmail often sends several notifications for

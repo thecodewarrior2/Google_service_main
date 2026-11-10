@@ -187,9 +187,37 @@ function loadTensors(manifest, buffer) {
 }
 
 // y[T×out] = x[T×in] · Wᵀ + b, with W stored [out×in] as in PyTorch.
+// Two tokens × four outputs per sweep over k: each x[k] and W[o][k] is read once for eight products, and
+// the eight sums don't wait on each other (one sum alone waits on each addition). Each output is still
+// added up in the same order (bias, then k = 0, 1, …), in doubles, so the result is the same to the bit
+// as the plain loop's (0.4.0; about 3× faster).
 function linear(x, T, inDim, W, b, outDim) {
     const y = new Float32Array(T * outDim);
-    for (let t = 0; t < T; t++) {
+    let t = 0;
+    for (; t + 1 < T; t += 2) {
+        const xa = t * inDim, xb = xa + inDim, ya = t * outDim, yb = ya + outDim;
+        let o = 0;
+        for (; o + 3 < outDim; o += 4) {
+            const w0 = o * inDim, w1 = w0 + inDim, w2 = w1 + inDim, w3 = w2 + inDim;
+            let a0 = b[o], a1 = b[o + 1], a2 = b[o + 2], a3 = b[o + 3];
+            let c0 = a0, c1 = a1, c2 = a2, c3 = a3;
+            for (let k = 0; k < inDim; k++) {
+                const u = x[xa + k], v = x[xb + k];
+                const p0 = W[w0 + k], p1 = W[w1 + k], p2 = W[w2 + k], p3 = W[w3 + k];
+                a0 += u * p0; a1 += u * p1; a2 += u * p2; a3 += u * p3;
+                c0 += v * p0; c1 += v * p1; c2 += v * p2; c3 += v * p3;
+            }
+            y[ya + o] = a0; y[ya + o + 1] = a1; y[ya + o + 2] = a2; y[ya + o + 3] = a3;
+            y[yb + o] = c0; y[yb + o + 1] = c1; y[yb + o + 2] = c2; y[yb + o + 3] = c3;
+        }
+        for (; o < outDim; o++) {
+            const wo = o * inDim;
+            let a = b[o], c = a;
+            for (let k = 0; k < inDim; k++) { const w = W[wo + k]; a += x[xa + k] * w; c += x[xb + k] * w; }
+            y[ya + o] = a; y[yb + o] = c;
+        }
+    }
+    for (; t < T; t++) {
         const xo = t * inDim, yo = t * outDim;
         for (let o = 0; o < outDim; o++) {
             let s = b[o];
@@ -221,6 +249,21 @@ function erf(x) {
     return s * y;
 }
 const gelu = (x) => 0.5 * x * (1 + erf(x / Math.SQRT2));
+// gelu over a whole layer, with erf written out in the loop: the same operations in the same order as
+// gelu(x) above (the same result to the bit), without a function call per value, which V8 didn't make
+// cheap (it was 40% of a pass; 0.4.0).
+const fround = Math.fround;
+function geluInPlace(a) {
+    const r2 = Math.SQRT2;
+    for (let i = 0; i < a.length; i++) {
+        const x = a[i], z = x / r2, ax = z < 0 ? -z : z, sg = z < 0 ? -1 : 1;
+        const t = 1 / (1 + 0.5 * ax);
+        const y = 1 - t * Math.exp(-ax * ax - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 +
+            t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+        a[i] = 0.5 * x * (1 + sg * y);
+    }
+    return a;
+}
 
 class PhishModel {
     constructor(manifest, buffer, vocabText) {
@@ -247,16 +290,41 @@ class PhishModel {
                 const ho = h * dh;
                 for (let i = 0; i < T; i++) {
                     let max = -Infinity;
-                    for (let j = 0; j < T; j++) {
+                    const qi = i * H + ho;
+                    // Four scores at a time (each added up in the same order as one alone: the same result).
+                    let j = 0;
+                    for (; j + 3 < T; j += 4) {
+                        const k0 = j * H + ho, k1 = k0 + H, k2 = k1 + H, k3 = k2 + H;
+                        let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+                        for (let d = 0; d < dh; d++) { const u = q[qi + d]; s0 += u * k[k0 + d]; s1 += u * k[k1 + d]; s2 += u * k[k2 + d]; s3 += u * k[k3 + d]; }
+                        scores[j] = s0 * scale; scores[j + 1] = s1 * scale; scores[j + 2] = s2 * scale; scores[j + 3] = s3 * scale;
+                        if (scores[j] > max) max = scores[j];
+                        if (scores[j + 1] > max) max = scores[j + 1];
+                        if (scores[j + 2] > max) max = scores[j + 2];
+                        if (scores[j + 3] > max) max = scores[j + 3];
+                    }
+                    for (; j < T; j++) {
                         let s = 0;
-                        for (let d = 0; d < dh; d++) s += q[i * H + ho + d] * k[j * H + ho + d];
+                        for (let d = 0; d < dh; d++) s += q[qi + d] * k[j * H + ho + d];
                         scores[j] = s * scale; if (scores[j] > max) max = scores[j];
                     }
                     let sum = 0;
                     for (let j = 0; j < T; j++) { scores[j] = Math.exp(scores[j] - max); sum += scores[j]; }
-                    for (let j = 0; j < T; j++) {
-                        const p = scores[j] / sum;
-                        for (let d = 0; d < dh; d++) ctx[i * H + ho + d] += p * v[j * H + ho + d];
+                    // Four positions at a time, rounded to float32 after each addition as storing in ctx
+                    // does (the same result to the bit, with fewer loads and stores).
+                    let jj = 0;
+                    for (; jj + 3 < T; jj += 4) {
+                        const p0 = scores[jj] / sum, p1 = scores[jj + 1] / sum, p2 = scores[jj + 2] / sum, p3 = scores[jj + 3] / sum;
+                        const v0 = jj * H + ho, v1 = v0 + H, v2 = v1 + H, v3 = v2 + H;
+                        for (let d = 0; d < dh; d++) {
+                            let c = ctx[qi + d];
+                            c = fround(c + p0 * v[v0 + d]); c = fround(c + p1 * v[v1 + d]); c = fround(c + p2 * v[v2 + d]);
+                            ctx[qi + d] = c + p3 * v[v3 + d];
+                        }
+                    }
+                    for (let j = jj; j < T; j++) {
+                        const p = scores[j] / sum, vj = j * H + ho;
+                        for (let d = 0; d < dh; d++) ctx[qi + d] += p * v[vj + d];
                     }
                 }
             }
@@ -264,7 +332,7 @@ class PhishModel {
             for (let i = 0; i < att.length; i++) att[i] += x[i];
             layerNorm(att, T, H, W[L + 'attention.output.LayerNorm.weight'], W[L + 'attention.output.LayerNorm.bias'], eps);
             const mid = linear(att, T, H, W[L + 'intermediate.dense.weight'], W[L + 'intermediate.dense.bias'], I);
-            for (let i = 0; i < mid.length; i++) mid[i] = gelu(mid[i]);
+            geluInPlace(mid);
             const out = linear(mid, T, I, W[L + 'output.dense.weight'], W[L + 'output.dense.bias'], H);
             for (let i = 0; i < out.length; i++) out[i] += att[i];
             x = layerNorm(out, T, H, W[L + 'output.LayerNorm.weight'], W[L + 'output.LayerNorm.bias'], eps);

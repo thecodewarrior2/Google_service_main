@@ -4,14 +4,20 @@
 // month). Only the DOMAIN NAME is sent, to its own registry. Answers are kept in the shared store for
 // 30 days (an unknown one for a day), so each domain is asked about once a month for the whole district.
 // An answer slower than WAIT_MS is "unknown": a slow registry never holds an email up.
+const { TtlCache } = require('./http');
 const BOOTSTRAP_URL = 'https://data.iana.org/rdap/dns.json';
 const KEEP_MS = 30 * 24 * 60 * 60 * 1000, UNKNOWN_KEEP_MS = 24 * 60 * 60 * 1000;
 const WAIT_MS = 4000;
 const DAY = 24 * 60 * 60 * 1000;
 
+// Answers are also remembered by each instance for MEMO_MS, so a domain in many emails costs one
+// Firestore read per instance, not one per email.
+const MEMO_MS = 6 * 60 * 60 * 1000;
+
 function createRdap({ http, store, engine, now = () => Date.now() }) {
     let bootstrap = null, bootstrapAt = 0;
     const flights = new Map();
+    const memo = new TtlCache(20000);
 
     async function serverFor(tld) {
         if (!bootstrap || now() - bootstrapAt > KEEP_MS) {
@@ -47,7 +53,8 @@ function createRdap({ http, store, engine, now = () => Date.now() }) {
     async function ageDays(domain) {
         const reg = engine.registrableDomain(String(domain || '').toLowerCase());
         if (!reg || !engine.SENDER_DOMAIN_RE.test(reg)) return null;
-        const hit = await store.getCached('age', reg).catch(() => null);
+        const mem = memo.get(reg);
+        const hit = mem !== undefined ? mem : await store.getCached('age', reg).catch(() => null);
         let v = hit;
         if (!v) {
             if (!flights.has(reg)) {
@@ -62,6 +69,7 @@ function createRdap({ http, store, engine, now = () => Date.now() }) {
             }
             v = await flights.get(reg);
         }
+        if (v && mem === undefined) memo.set(reg, v, v.created ? MEMO_MS : Math.min(MEMO_MS, UNKNOWN_KEEP_MS));
         return v && v.created ? Math.max(0, Math.floor((now() - v.created) / DAY)) : null;
     }
     return { ageDays };

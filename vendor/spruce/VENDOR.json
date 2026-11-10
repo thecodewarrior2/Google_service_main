@@ -12,5 +12,6 @@
     "models/phish-tiny/vocab.txt",
     "models/phish-tiny/MODEL_CARD.md"
   ],
-  "synced": "2026-11-10"
+  "synced": "2026-11-10",
+  "note": "Since 0.4.0 this project's own code (changed here, with tests). The files began as the extension's at the commit above."
 }

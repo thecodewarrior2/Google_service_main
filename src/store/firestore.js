@@ -16,30 +16,45 @@
 //   events/{auto}           alerts and errors for the dashboard
 //   blobs/{name}, ~{i}      the phishing lists (gzip, in chunks), shared by every instance
 //   cache/{kind|key}        remembered answers shared by every instance (registry dates)
+// Documents that expire carry expireAt (a Timestamp): Firestore's TTL policies (deploy/install.sh) delete
+// them by themselves, typically within a day after it, at no request's cost. purge() removes what has no
+// expireAt (written before 0.4.0) and what a shorter RETENTION_DAYS has made old. Reads leave it out.
 // Queries use only single-field indexes (processedAt), which Firestore creates by itself; filtering
 // by user, action or campaign is done on the (bounded) result. That is enough for a pilot and a
 // mid-sized district; a large one would add composite indexes (docs/ROADMAP.md).
-const { Firestore, FieldValue } = require('@google-cloud/firestore');
+const { Firestore, FieldValue, Timestamp } = require('@google-cloud/firestore');
 const { movesForward } = require('./history');
 
 const safeId = (s) => String(s).replace(/[/\s]/g, '_').slice(0, 1400);
-const STAT_SHARDS = 10;
+// Shards of each day's counters (each email adds to one at random): a campaign to every mailbox writes
+// about 2 a second to each, not 7. getStats reads them all, and the dashboard keeps past days.
+const STAT_SHARDS = 30;
+const DAY = 24 * 60 * 60 * 1000;
+const ALREADY_EXISTS = 6;   // (gRPC status: create() on a document that exists)
+// A document's fields without expireAt (only Firestore's TTL policies use it).
+const clean = (v) => { if (!v || !('expireAt' in v)) return v; const { expireAt, ...rest } = v; return rest; };
 const shuffled = (n) => { const a = [...Array(n).keys()]; for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 class FirestoreStore {
-    constructor(cfg) { this.db = new Firestore({ databaseId: cfg.firestoreDatabase, ignoreUndefinedProperties: true }); }
+    constructor(cfg) {
+        this.db = new Firestore({ databaseId: cfg.firestoreDatabase, ignoreUndefinedProperties: true });
+        this.keepMs = (Number(cfg.retentionDays) || 60) * DAY;
+    }
+    // When a document written at ms expires (TTL), after keepMs (RETENTION_DAYS) by default.
+    expiry(ms, keepMs = this.keepMs) { return Timestamp.fromMillis(ms + keepMs); }
     col(n) { return this.db.collection(n); }
     async getUser(email) { const d = await this.col('users').doc(safeId(email)).get(); return d.exists ? d.data() : null; }
     async putUser(email, patch) { await this.col('users').doc(safeId(email)).set(Object.assign({ email }, patch), { merge: true }); }
     async listUsers() { return (await this.col('users').get()).docs.map(d => d.data()); }
     // The mailbox's sync position, only ever moved forward (two notifications can finish in any order).
-    async raiseHistoryId(email, historyId) {
+    // extra: fields written with it (the time of the notification), so a notification costs one write.
+    async raiseHistoryId(email, historyId, extra = {}) {
         const ref = this.col('users').doc(safeId(email));
         return this.db.runTransaction(async (t) => {
             const d = await t.get(ref);
             const cur = d.exists ? d.data().historyId : null;
             if (!movesForward(historyId, cur)) return cur;
-            t.set(ref, { email, historyId: String(historyId) }, { merge: true });
+            t.set(ref, Object.assign({}, extra, { email, historyId: String(historyId) }), { merge: true });
             return String(historyId);
         });
     }
@@ -50,25 +65,33 @@ class FirestoreStore {
     // left by an instance that stopped, and is taken over).
     async claim(user, id, now, leaseMs) {
         const ref = this.seenRef(user, id);
+        // The usual case, a message no instance has had: created, with no read and no lock.
+        try { await ref.create({ at: now, state: 'working', tries: 1, expireAt: this.expiry(now) }); return { tries: 1 }; }
+        catch (e) { if (e.code !== ALREADY_EXISTS) throw e; }
         return this.db.runTransaction(async (t) => {
             const d = await t.get(ref);
             const v = d.exists ? d.data() : null;
             if (v && (v.state || 'done') === 'done') return { done: true };
             if (v && v.state === 'working' && now - v.at < leaseMs) return { busy: true };
             const tries = ((v && v.tries) || 0) + 1;
-            t.set(ref, { at: now, state: 'working', tries });
+            t.set(ref, { at: now, state: 'working', tries, expireAt: this.expiry(now) });
             return { tries };
         });
     }
     async unclaim(user, id) { await this.seenRef(user, id).set({ state: 'retry' }, { merge: true }); }
-    async markSeen(user, id, extra = {}) { await this.seenRef(user, id).set(Object.assign({ at: Date.now(), state: 'done' }, extra), { merge: true }); }
-    async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(Object.assign({}, rec, { updatedAt: Date.now() })); }
+    async markSeen(user, id, extra = {}) { const at = Date.now(); await this.seenRef(user, id).set(Object.assign({ at, state: 'done', expireAt: this.expiry(at) }, extra), { merge: true }); }
+    async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(Object.assign({}, rec, { updatedAt: Date.now(), expireAt: this.expiry(Number(rec.processedAt) || Date.now()) })); }
     // Records saved or changed after a time, oldest change first (the dashboard's cache).
     async listRecordsChangedSince(ms, limit = 5000) {
         const q = await this.col('records').where('updatedAt', '>', ms).orderBy('updatedAt').limit(limit).get();
-        return q.docs.map(d => d.data());
+        return q.docs.map(d => clean(d.data()));
     }
-    async getRecord(key) { const d = await this.col('records').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
+    // A campaign's records since sinceMs (Firestore's own single-field index on campaign).
+    async listCampaignRecords(key, sinceMs = 0, limit = 50000) {
+        const q = await this.col('records').where('campaign', '==', key).limit(limit).get();
+        return q.docs.map(d => clean(d.data())).filter(r => r.processedAt >= sinceMs).sort((a, b) => b.processedAt - a.processedAt);
+    }
+    async getRecord(key) { const d = await this.col('records').doc(safeId(key)).get(); return d.exists ? clean(d.data()) : null; }
     async updateRecord(key, patch) {
         const ref = this.col('records').doc(safeId(key));
         const d = await ref.get();
@@ -79,10 +102,14 @@ class FirestoreStore {
     }
     async listRecords({ sinceMs = 0, untilMs = Number.MAX_SAFE_INTEGER, limit = 5000 } = {}) {
         const q = await this.col('records').where('processedAt', '>=', sinceMs).where('processedAt', '<', untilMs).orderBy('processedAt', 'desc').limit(limit).get();
-        return q.docs.map(d => d.data());
+        return q.docs.map(d => clean(d.data()));
     }
-    async incStat(day, field, n = 1) {
-        await this.col('stats').doc(`${day}~${Math.floor(Math.random() * STAT_SHARDS)}`).set({ day, [field]: FieldValue.increment(n) }, { merge: true });
+    async incStat(day, field, n = 1) { await this.incStats(day, { [field]: n }); }
+    // Several counters of a day in one write ({ scanned: 40, moved: 2 }).
+    async incStats(day, counts) {
+        const v = { day };
+        for (const [k, n] of Object.entries(counts)) v[k] = FieldValue.increment(n);
+        await this.col('stats').doc(`${day}~${Math.floor(Math.random() * STAT_SHARDS)}`).set(v, { merge: true });
     }
     async getStats(fromDay, toDay) {
         const q = await this.col('stats').where('day', '>=', fromDay).where('day', '<=', toDay).orderBy('day').get();
@@ -94,14 +121,14 @@ class FirestoreStore {
         }
         return [...byDay.values()];
     }
+    // Created if new (no read, no lock); the first one's time if it exists (two instances racing: one
+    // creates it, the other reads it).
     async senderFirstSeen(hash, now) {
         const ref = this.col('senders').doc(hash);
-        return this.db.runTransaction(async (t) => {
-            const d = await t.get(ref);
-            if (d.exists) return d.data().firstSeen;
-            t.set(ref, { firstSeen: now });
-            return now;
-        });
+        try { await ref.create({ firstSeen: now }); return now; }
+        catch (e) { if (e.code !== ALREADY_EXISTS) throw e; }
+        const d = await ref.get();
+        return d.exists ? d.data().firstSeen : now;
     }
     // The domain-wide brake: a slot is reserved before each move, in one transaction on one of up to 32
     // shards (tried in random order), each with its share of the limit, so the shares add up to the limit
@@ -115,7 +142,7 @@ class FirestoreStore {
                 const d = await t.get(ref);
                 const count = d.exists ? d.data().count || 0 : 0;
                 if (count >= cap(i)) return false;
-                t.set(ref, { count: count + 1, at: now }, { merge: true });
+                t.set(ref, { count: count + 1, at: now, expireAt: this.expiry(now, 2 * DAY) }, { merge: true });
                 return true;
             });
             if (got) return { ok: true };
@@ -136,32 +163,38 @@ class FirestoreStore {
             if (c.decision) return { decision: c.decision, held: false };
             if (c.weakMoves >= holdAfter) {
                 const first = !c.heldAt;
-                if (first) t.set(ref, { key, label, heldAt: now, at: now }, { merge: true });
+                if (first) t.set(ref, { key, label, heldAt: now, at: now, expireAt: this.expiry(now) }, { merge: true });
                 return { held: true, first };
             }
-            t.set(ref, { key, label, weakMoves: c.weakMoves + 1, at: now }, { merge: true });
+            t.set(ref, { key, label, weakMoves: c.weakMoves + 1, at: now, expireAt: this.expiry(now) }, { merge: true });
             return { held: false, count: c.weakMoves + 1 };
         });
     }
     // Counts a campaign's moves (an increment, no transaction); true once, for the move that reached
     // alertAt first (the "large campaign" alert).
-    async campaignMoved(key, alertAt, now = Date.now()) {
+    // A moved copy of a campaign, counted until its alert is sent (alertAt moves). alerted() is called once
+    // it has been: the caller then stops counting (a campaign to 10,000 mailboxes writes ~50 times, not
+    // 10,000 times, to its one document).
+    async campaignMoved(key, alertAt, now = Date.now(), alerted = () => {}) {
         const ref = this.col('campaigns').doc(safeId(key));
-        await ref.set({ key, moves: FieldValue.increment(1), at: now }, { merge: true });
+        await ref.set({ key, moves: FieldValue.increment(1), at: now, expireAt: this.expiry(now) }, { merge: true });
         const v = (await ref.get()).data() || {};
-        if ((v.moves || 0) < alertAt || v.alertedAt) return false;
-        return this.db.runTransaction(async (t) => {
+        if (v.alertedAt) { alerted(); return false; }
+        if ((v.moves || 0) < alertAt) return false;
+        const sent = await this.db.runTransaction(async (t) => {
             const d = await t.get(ref);
             if (d.data().alertedAt) return false;
             t.set(ref, { alertedAt: now }, { merge: true });
             return true;
         });
+        alerted();
+        return sent;
     }
-    async getCampaign(key) { const d = await this.col('campaigns').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
-    async setCampaign(key, patch) { await this.col('campaigns').doc(safeId(key)).set(Object.assign({ key }, patch, { at: Date.now() }), { merge: true }); }
+    async getCampaign(key) { const d = await this.col('campaigns').doc(safeId(key)).get(); return d.exists ? clean(d.data()) : null; }
+    async setCampaign(key, patch) { const at = Date.now(); await this.col('campaigns').doc(safeId(key)).set(Object.assign({ key }, patch, { at, expireAt: this.expiry(at) }), { merge: true }); }
     // Only the campaigns ever held (the dashboard asks every 30 s: a few documents, not every campaign).
-    async listHeldCampaigns() { return (await this.col('campaigns').where('heldAt', '>', 0).limit(500).get()).docs.map(d => d.data()); }
-    async listCampaignStates() { return (await this.col('campaigns').where('at', '>=', Date.now() - 90 * 24 * 3600 * 1000).limit(2000).get()).docs.map(d => d.data()); }
+    async listHeldCampaigns() { return (await this.col('campaigns').where('heldAt', '>', 0).limit(500).get()).docs.map(d => clean(d.data())); }
+    async listCampaignStates() { return (await this.col('campaigns').where('at', '>=', Date.now() - 90 * 24 * 3600 * 1000).limit(2000).get()).docs.map(d => clean(d.data())); }
     // Sets a state only when it isn't set yet (the brake: one alert when instances trip it together).
     async setStateIfUnset(name, value) {
         const ref = this.col('state').doc(name);
@@ -174,10 +207,10 @@ class FirestoreStore {
     }
     async getState(name) { const d = await this.col('state').doc(name).get(); return d.exists ? (d.data().value ?? null) : null; }
     async setState(name, value) { await this.col('state').doc(name).set({ value }); }
-    async addEvent(ev) { await this.col('events').add(Object.assign({ at: Date.now() }, ev)); }
+    async addEvent(ev) { const e = Object.assign({ at: Date.now() }, ev); await this.col('events').add(Object.assign(e, { expireAt: this.expiry(Number(e.at) || Date.now()) })); }
     async listEvents(sinceMs = 0) {
         const q = await this.col('events').where('at', '>=', sinceMs).orderBy('at', 'desc').limit(500).get();
-        return q.docs.map(d => d.data());
+        return q.docs.map(d => clean(d.data()));
     }
     // Files shared by every instance (the phishing lists), split into chunks under Firestore's 1 MiB
     // document limit: blobs/{name} holds the information, blobs/{name}~{i} the chunks.
@@ -198,16 +231,20 @@ class FirestoreStore {
     }
     // Remembered answers shared by every instance (registry dates of domains): cache/{kind|key}.
     async getCached(kind, key) { const d = await this.col('cache').doc(safeId(`${kind}|${key}`)).get(); const v = d.exists ? d.data() : null; return v && v.exp > Date.now() ? v.value : null; }
-    async setCached(kind, key, value, ttlMs) { await this.col('cache').doc(safeId(`${kind}|${key}`)).set({ value, exp: Date.now() + ttlMs }); }
+    async setCached(kind, key, value, ttlMs) { await this.col('cache').doc(safeId(`${kind}|${key}`)).set({ value, exp: Date.now() + ttlMs, expireAt: this.expiry(Date.now(), ttlMs) }); }
     async countActions(sinceMs, action) {
         const q = await this.col('records').where('processedAt', '>=', sinceMs).orderBy('processedAt', 'desc').limit(5000).get();
         return q.docs.filter(d => d.data().action === action).length;
     }
-    async purge(beforeMs) {
+    // What is older than beforeMs, 400 at a time, until budgetMs is spent (the rest at the next run): with
+    // TTL policies on, only documents written before 0.4.0, or made old by a shorter RETENTION_DAYS.
+    async purge(beforeMs, { budgetMs = 90 * 1000 } = {}) {
         let n = 0;
+        const started = Date.now();
         for (const name of ['records', 'seen', 'events', 'moveCounts', 'campaigns']) {
             const field = name === 'records' ? 'processedAt' : 'at';
             for (;;) {
+                if (Date.now() - started > budgetMs) return n;
                 const q = await this.col(name).where(field, '<', beforeMs).limit(400).get();
                 if (q.empty) break;
                 const batch = this.db.batch();

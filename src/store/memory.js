@@ -17,10 +17,10 @@ class MemoryStore {
     async putUser(email, patch) { this.users.set(email, Object.assign({}, this.users.get(email) || { email }, patch)); }
     async listUsers() { return [...this.users.values()]; }
     // The mailbox's sync position, only ever moved forward. Returns the position kept.
-    async raiseHistoryId(email, historyId) {
+    async raiseHistoryId(email, historyId, extra = {}) {
         const u = this.users.get(email);
         if (u && !movesForward(historyId, u.historyId)) return u.historyId;
-        await this.putUser(email, { historyId: String(historyId) });
+        await this.putUser(email, Object.assign({}, extra, { historyId: String(historyId) }));
         return String(historyId);
     }
     // Messages: claimed by one instance while it judges them ({ tries }), or { done } / { busy } (another
@@ -56,10 +56,12 @@ class MemoryStore {
         Object.assign(r, patch, { updatedAt: Math.max(Date.now(), (r.updatedAt || 0) + 1) });
         return JSON.parse(JSON.stringify(r));
     }
+    async listCampaignRecords(key, sinceMs = 0) { return (await this.listRecords({ sinceMs, limit: Infinity })).filter(r => r.campaign === key); }
     async listRecords({ sinceMs = 0, untilMs = Infinity, limit = 5000 } = {}) {
         return [...this.records.values()].filter(r => r.processedAt >= sinceMs && r.processedAt < untilMs)
             .sort((a, b) => b.processedAt - a.processedAt).slice(0, limit).map(r => JSON.parse(JSON.stringify(r)));
     }
+    async incStats(day, counts) { for (const [k, n] of Object.entries(counts)) await this.incStat(day, k, n); }
     async incStat(day, field, n = 1) {
         const s = this.stats.get(day) || { day };
         s[field] = (s[field] || 0) + n;
@@ -86,11 +88,12 @@ class MemoryStore {
         c.weakMoves++; c.at = now; this.campaignState.set(key, c);
         return { held: false, count: c.weakMoves };
     }
-    async campaignMoved(key, alertAt, now = Date.now()) {
+    async campaignMoved(key, alertAt, now = Date.now(), alerted = () => {}) {
         const c = Object.assign({ key, weakMoves: 0, moves: 0, alertedAt: null }, this.campaignState.get(key));
+        if (c.alertedAt) { alerted(); return false; }
         c.moves = (c.moves || 0) + 1; c.at = now;
-        const alert = c.moves >= alertAt && !c.alertedAt;
-        if (alert) c.alertedAt = now;
+        const alert = c.moves >= alertAt;
+        if (alert) { c.alertedAt = now; alerted(); }
         this.campaignState.set(key, c);
         return alert;
     }

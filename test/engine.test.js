@@ -78,3 +78,18 @@ test('allowlisted senders are "trusted": never escalated, whatever the checks fi
     const r = await analyze(await readMessage(fixture('phish-storage.eml')), Object.assign({ trusted: true }, CTX));
     assert.equal(r.status, 'trusted');
 });
+
+test('the model (0.4.0): a pass\'s answer is remembered by a hash of its input, so identical copies cost one pass; the answer is the same', () => {
+    const E = require('../src/engine/spruce').load();
+    let passes = 0;
+    const fwd = E.model.forward;
+    E.model.forward = function (ids) { passes++; return fwd.call(this, ids); };
+    try {
+        const text = 'from: billing@harbor-supply-invoices.example text: Our bank details have changed; please update the account number on file and pay today. ' + Math.random();
+        const a = E.model.margin(text), b = E.model.margin(text);
+        assert.equal(passes, 1, 'the second copy costs no pass');
+        assert.equal(a, b);
+        E.model.margin(text + ' (another one)');
+        assert.equal(passes, 2);
+    } finally { E.model.forward = fwd; }
+});

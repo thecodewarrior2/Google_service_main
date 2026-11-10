@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.4.0: Ready for a district (10,000 mailboxes, 100,000 emails a day); its own engine
+
+Measured with the service's own code on a made-up district's mail; the numbers, and the plan for what
+is left, are in `docs/SCALING.md`.
+
+- **This project's own engine.** The checks and the AI model in `vendor/spruce/` began as the
+  S.P.R.U.C.E+ browser extension's; they are now changed here, with tests. `tools/sync-engine.js` is
+  gone. The dashboard says "The rule checks" (it said "The extension's checks").
+- **The watches stay renewed at 10,000 mailboxes.** The daily renewal went through mailboxes one at a
+  time and was cut off after 120 seconds: about 700 renewed a day, the others no longer checked after 7
+  days. Now 10 at a time within 95 seconds, the oldest (and new members) first, the rest at the next run:
+  about 5,800 a run, each mailbox every two days or so. Activity says how many are left for the next run.
+- **The AI model twice as fast, with the same answers.** One pass at 256 tokens: 146 ms (it was 289);
+  checked on 3,230 passes, identical to the bit. Each instance remembers a pass's answer by a hash of its
+  input (in memory): a campaign's identical copies cost one pass. Per email: 97 ms of processor time (it
+  was 217); one worker instance checks 4.8 emails a second (it was 2.8).
+- **Far fewer Firestore operations, and no hot documents in a campaign burst:**
+  - per notification without new mail: 2 reads and 1 write (it was 3 and 2), the "last notification"
+    time written with the sync position;
+  - per email: a message's claim and a new sender created without a transaction; when the service was
+    installed, and senders' first-seen times, remembered per instance; the day's counters added up and
+    written every 5 seconds (and when the instance stops), in 30 shards; domain ages remembered 6 hours;
+  - a campaign's move counter stops once its alert is sent: a campaign to 10,000 mailboxes writes its
+    campaign document 59 times (it was 5,000), and its sender's 10 (it was 10,000 transactions).
+- **The dashboard counts every record.** It read at most 50,000 records and built pages from 20,000, so
+  at a district's size the 30-day numbers were too low. Now every record of the period, kept slim (169 MB
+  for 180,000 records; it was about 300 MB for 50,000), pages in 30–350 ms, past days' counters read once.
+  A campaign's page and "Confirm phishing: move every copy" read that campaign's records only.
+- **Old documents delete themselves.** What expires carries `expireAt`, and Firestore's TTL policies
+  delete it (typically within a day). The daily cleanup job only takes older documents, within 90 seconds.
+- **Scaling settings:** the worker up to `WORKER_MAX_INSTANCES` instances (new, 30 by default; it was
+  10), gen2 with startup CPU boost; the dashboard 1 GiB (it was 512 MiB); Pub/Sub retries after 10 s.
+- **Tokens:** calls for the same mailbox's access token at once share one request.
+- **Install this version from Cloud Shell** (`bash deploy/update.sh`): it sets up the TTL policies and the
+  new service settings (`installLevel` 2), so Settings → Update says so instead of offering the button.
+  `upgrade.sh` adds `WORKER_MAX_INSTANCES=` (empty: 30).
+- **Tests:** 109 (from 103): the renewal at scale (10 at a time, the oldest first, the rest next time),
+  the counters added up, the same model answer remembered, shared token requests, the installer's TTL and
+  scaling settings, and in the Firestore emulator: `expireAt` written and left out of reads, claims and
+  senders created by one of 12 racing callers, the cleanup's time limit.
+- **Docs:** `docs/SCALING.md` (new), `CLAUDE.md` (the engine is this project's own), `README.md`,
+  `docs/DEPLOY.md`, `docs/ARCHITECTURE.md`, `docs/RETRAINING.md`, `docs/ROADMAP.md`.
+
 ## 0.3.12: Settings → Update loads while an update is under way
 
 - **Fixed: "Couldn't load this page. internal error." on Settings → Update** as soon as **Update to …**
