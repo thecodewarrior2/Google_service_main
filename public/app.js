@@ -730,27 +730,34 @@
         const toggle = h('input', { type: 'checkbox', role: 'switch', checked: !!g.enabled, 'aria-label': 'Allow the retraining export' });
         toggle.addEventListener('change', async () => {
             acting++;
-            try { await api('/api/training-export/allow', { method: 'POST', body: { enabled: toggle.checked } }); toast(toggle.checked ? 'The retraining export is allowed (Model health).' : 'The retraining export is off.'); render(); }
+            try { await api('/api/training-export/allow', { method: 'POST', body: { enabled: toggle.checked } }); toast(toggle.checked ? 'The retraining export is allowed (Status → Model health).' : 'The retraining export is off.'); render(); }
             catch (e) { toggle.checked = !toggle.checked; toast(`Couldn't change it: ${e.message}`); } finally { acting--; }
         });
         const facts = g.updatedBy ? `${g.enabled ? 'Allowed' : 'Turned off'} by ${g.updatedBy}, ${when(g.updatedAt)}.` : 'Off: nobody has allowed it.';
         return h('section', { class: 'card spaced' }, h('h2', { text: 'Retraining export' }),
-            h('div', { class: 'sub', text: 'Lets dashboard admins download the emails an admin marked, with the people in them taken out, to retrain the AI model (Model health → Download for retraining; docs/RETRAINING.md). Each download reads those emails from Gmail at that moment: the file is the only copy, and Activity notes who downloaded it. Turn it on only while someone is preparing training examples.' }),
+            h('div', { class: 'sub', text: 'Lets dashboard admins download the emails an admin marked, with the people in them taken out, to retrain the AI model (Status → Model health → Download for retraining; docs/RETRAINING.md). Each download reads those emails from Gmail at that moment: the file is the only copy, and Activity notes who downloaded it. Turn it on only while someone is preparing training examples.' }),
             h('label', { class: 'switch' }, toggle, h('span', { text: 'Allow the retraining export' })),
             h('div', { class: 'small muted', text: facts }));
     }
 
     // The tab's title shows how many things need you (the brake, held campaigns, users who took flagged
-    // mail back); the Review tab, how many emails wait for review. Every 30 s, with the live updates.
-    let pendingAt = 0;
+    // mail back); the Email tab and its Review item, how many emails wait for review. Every 30 s, with
+    // the live updates.
+    let pendingAt = 0, unreviewed = 0;
+    function showUnreviewed() {
+        const badge = $('#reviewCount');
+        if (badge) { badge.hidden = !unreviewed; badge.textContent = num(unreviewed); badge.title = `${num(unreviewed)} email${unreviewed === 1 ? '' : 's'} to review`; }
+        const item = document.querySelector('.side a[data-page="review"]');
+        if (item) item.textContent = unreviewed ? `Review (${num(unreviewed)})` : 'Review';
+    }
     async function refreshPending() {
         if (Date.now() - pendingAt < 25000) return;
         pendingAt = Date.now();
         try {
             const p = await api('/api/pending');
             document.title = p.total ? `(${p.total}) Mail Protection Admin` : 'Mail Protection Admin';
-            const tab = document.querySelector('.tabs a[data-tab="review"]');
-            if (tab) tab.textContent = p.unreviewed ? `Review (${num(p.unreviewed)})` : 'Review';
+            unreviewed = p.unreviewed || 0;
+            showUnreviewed();
         } catch (e) { /* the next tick tries again */ }
     }
 
@@ -779,24 +786,45 @@
 
     // --- Routing ---------------------------------------------------------------------------------
     const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings };
+    // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
+    // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
+    // and "Check an email" belong to Messages.
+    const SECTIONS = {
+        email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['users', 'Users']] },
+        status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] }
+    };
+    const PAGE_OF = { message: 'messages', check: 'messages' };
+    function placeOf(name) {
+        const page = PAGE_OF[name] || name;
+        const section = Object.keys(SECTIONS).find(k => SECTIONS[k].pages.some(([p]) => p === page));
+        return { page, section, tab: section || page };
+    }
+    function withSideMenu(section, page, nodes) {
+        const s = SECTIONS[section];
+        const menu = h('nav', { class: 'side', 'aria-label': s.label },
+            s.pages.map(([p, label]) => h('a', { href: `#/${p}`, 'data-page': p, 'aria-current': p === page ? 'page' : null,
+                text: p === 'review' && unreviewed ? `${label} (${num(unreviewed)})` : label })));
+        return h('div', { class: 'with-side' }, menu, h('div', { class: 'side-page' }, nodes));
+    }
     let pageBusy = () => false;   // a page sets it when live updates should wait (Messages with emails selected)
     let rendering = 0;
     // quiet: a live update (no loading fade, the scroll position kept, and on failure the page stays).
     async function render({ quiet = false } = {}) {
         const [path, query] = (currentHash().replace(/^#\/?/, '') || 'overview').split('?');
         const name = ROUTES[path] ? path : 'overview';
-        const tab = name === 'message' || name === 'check' ? 'messages' : name;
-        for (const a of document.querySelectorAll('.tabs a')) { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
+        const place = placeOf(name);
+        for (const a of document.querySelectorAll('.tabs a')) { if (a.dataset.tab === place.tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
         for (const b of document.querySelectorAll('.range')) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
         const id = ++rendering;
         if (!quiet) { view().classList.add('loading'); hideTip(); }
         pageBusy = () => false;
         const scrollY = window.scrollY;
         try {
-            const nodes = await ROUTES[name](new URLSearchParams(query || ''));
+            let nodes = [].concat(await ROUTES[name](new URLSearchParams(query || ''))).flat(Infinity).filter(Boolean);
             if (id !== rendering) return;
+            if (place.section) nodes = [withSideMenu(place.section, place.page, nodes)];
             view().textContent = '';
-            view().append(...[].concat(nodes).flat(Infinity).filter(Boolean));
+            view().append(...nodes);
             if (quiet) window.scrollTo(0, scrollY);
             liveDone(null);
         } catch (e) {

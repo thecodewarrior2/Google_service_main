@@ -59,6 +59,22 @@ button { font: inherit; }
 .tabs a { padding: 11px 14px; color: var(--text-2); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 500; }
 .tabs a:hover { color: var(--text); }
 .tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+/* How many emails wait for review, on the Email tab. */
+.tabs .count { display: inline-block; min-width: 20px; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 600; text-align: center; }
+
+/* Email and Status: a menu on the left, the page beside it (above it on narrow screens). */
+.with-side { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; align-items: start; }
+.side { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 12px; padding-top: 6px; }
+.side a { padding: 8px 12px; border-radius: 8px; color: var(--text-2); text-decoration: none; font-weight: 500; white-space: nowrap; }
+.side a:hover { background: var(--surface-2); color: var(--text); }
+.side a[aria-current="page"] { background: var(--accent-soft); color: var(--text); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.side-page { min-width: 0; }
+@media (max-width: 760px) {
+  .with-side { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .side { flex-direction: row; position: static; overflow-x: auto; padding-top: 0; gap: 6px; }
+  .side a { border: 1px solid var(--border); padding: 6px 12px; }
+  .side a[aria-current="page"] { border-color: var(--accent); box-shadow: none; }
+}
 
 .filters { display: flex; align-items: center; gap: 6px; padding: 14px 24px 0; flex-wrap: wrap; }
 .filter-label { color: var(--text-2); font-size: 12px; margin-right: 4px; }

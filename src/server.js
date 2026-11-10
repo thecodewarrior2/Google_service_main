@@ -127,9 +127,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             add('lists', lists.length > 0 && oldest > now - 2 * 24 * 3600 * 1000, lists.length && oldest ? `The phishing lists were updated ${Math.round((now - oldest) / 3600000)} hours ago at the oldest.` : 'The phishing lists haven\'t been downloaded yet.', 'Activity → Errors shows why a download failed.');
         }
         // (install.sh always sets it, to the admin group by default: empty means ALERT_EMAIL=off, a choice)
-        add('alerts', true, cfg.alertEmail ? `Alerts are emailed to ${cfg.alertEmail}.` : 'Alerts aren\'t emailed (ALERT_EMAIL=off): they show in Activity.');
+        add('alerts', true, cfg.alertEmail ? `Alerts are emailed to ${cfg.alertEmail}.` : 'Alerts aren\'t emailed (ALERT_EMAIL=off): they show in Status → Activity.');
         const errors = (await store.listEvents(now - 24 * 3600 * 1000)).filter(e => e.kind === 'error').length;
-        add('errors', errors === 0, errors ? `${errors} errors in the last day.` : 'No errors in the last day.', 'Activity → Errors and gaps.');
+        add('errors', errors === 0, errors ? `${errors} errors in the last day.` : 'No errors in the last day.', 'Status → Activity → Errors and gaps.');
         const brake = await store.getState('brake');
         add('brake', !brake, brake ? 'The domain-wide brake is on: nothing is moved.' : 'The domain-wide brake is off.', 'Overview → Resume.');
         return out;

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.5: The dashboard in four tabs
+
+- **Four tabs instead of ten:** **Overview**, **Email**, **Status**, **Settings**.
+- **Email** has a menu on the left: **Review**, **Campaigns**, **Messages**, **Users**, in that order.
+  - The Email tab opens on Review.
+  - The number of emails waiting for review is on the Email tab, and next to Review in the menu.
+  - An email's page and **Check an email** belong to Messages.
+- **Status** has the same kind of menu: **Service status** (the end-to-end checks that were the Status
+  tab), **Model health**, **Readiness**, **Activity**.
+- **On a phone** the menu is a row of buttons above the page, which scrolls sideways when it doesn't
+  fit.
+- **Every page keeps its address** (`#/review`, `#/health`, `#/activity`…), so links to a page keep
+  working: bookmarks, and the Overview's links to held campaigns.
+- **Where to go, in the texts:** the alert emails, the Status checks, the weekly summary, the
+  Settings cards, `deploy/clear-data.sh` and the docs now say "Email → Campaigns", "Status → Model
+  health" and so on.
+- **Docs:** `README.md` (the dashboard, by tab), `docs/INSTALL.md`, `docs/RETRAINING.md`,
+  `docs/PRIVACY.md`.
+
 ## 0.3.4: Clearing the dashboard's data
 
 - **`deploy/clear-data.sh`** (Cloud Shell, from the install folder) clears what the dashboard shows, to

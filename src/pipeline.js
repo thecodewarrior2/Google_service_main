@@ -327,7 +327,7 @@ class Service {
         await this.store.incStat(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
         if (decision.action === 'move') {
             if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now)) {
-                await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Campaigns page lists who received it.`, { campaign: campaign.key });
+                await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Email → Campaigns page lists who received it.`, { campaign: campaign.key });
             }
         }
         if (userPlaced && result.status === 'flagged') {
@@ -352,7 +352,7 @@ class Service {
             const h = await this.store.campaignHold(campaignKey, this.cfg.campaignHoldAfter, now, campaignLabel);
             if (h.decision === 'released') return released(decision);
             if (h.held) {
-                if (h.first) await this.alert('campaign-held', `Copies of "${campaignLabel}" are held: more than ${this.cfg.campaignHoldAfter} were moved on evidence nothing outside the email confirms. Confirm it as phishing (every copy is moved) or release it, on the dashboard's Messages page for the campaign.`, { campaign: campaignKey });
+                if (h.first) await this.alert('campaign-held', `Copies of "${campaignLabel}" are held: more than ${this.cfg.campaignHoldAfter} were moved on evidence nothing outside the email confirms. Confirm it as phishing (every copy is moved) or release it: on the dashboard, Email → Campaigns, then open the campaign.`, { campaign: campaignKey });
                 return { decision: { action: 'would-move', trigger: decision.trigger, why: `${decision.why} (held: over ${this.cfg.campaignHoldAfter} copies of this campaign on evidence nothing outside the email confirms; an admin confirms or releases it)` }, held: 'campaign' };
             }
         }
@@ -683,7 +683,7 @@ class Service {
         return { enabled: !!enabled };
     }
 
-    // --- The retraining export (Model health; off until an admin allows it in Settings) ---------------
+    // --- The retraining export (Status → Model health; off until an admin allows it in Settings) ------
     // The emails an admin marked (confirmed phishing; with falseAlarms, false alarms too), one per
     // campaign, newest first, read from Gmail now and turned into the extension's training format with
     // the people taken out (src/training.js). Nothing of them is stored: the rows are only returned.
@@ -728,7 +728,7 @@ class Service {
     async setTrainingExport(enabled, by) {
         const st = (await this.store.getState('trainingExport')) || {};
         await this.store.setState('trainingExport', Object.assign({}, st, { enabled: !!enabled, updatedBy: by, updatedAt: this.now() }));
-        await this.store.addEvent({ kind: 'settings', text: `${by} ${enabled ? 'allowed' : 'turned off'} the retraining export (Model health: Download for retraining).` });
+        await this.store.addEvent({ kind: 'settings', text: `${by} ${enabled ? 'allowed' : 'turned off'} the retraining export (Status → Model health: Download for retraining).` });
         return { enabled: !!enabled };
     }
 

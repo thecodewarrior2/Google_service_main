@@ -48,7 +48,7 @@ function buildDigest(records, stats, events, ctx) {
         `Suspicious only (not moved): ${n(s.flagged)}.`,
         enforce ? `Moved back to the Inbox: ${n(s.released)} (${n(s.userReleased || 0)} by users themselves).` : null,
         `Marked as false alarms: ${n(s.falseAlarms)}.`,
-        `Alerts: ${n(alerts)} (Activity in the dashboard).`,
+        `Alerts: ${n(alerts)} (Status → Activity in the dashboard).`,
         '',
         waiting.length ? `Waiting for you: ${waiting.join('; ')}.` : 'Nothing is waiting for you.',
         top.length ? ['', 'Largest campaigns:', ...top.map(c => `  - ${c.label} (${plural(c.messages, 'copy', 'copies')}, ${n(c.moved)} moved)`)] : null,

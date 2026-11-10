@@ -71,9 +71,9 @@ To delete what the dashboard shows sooner, all at once: `bash deploy/clear-data.
 - **Alert emails** go to `ALERT_EMAIL` (the admin group by default). They say what happened, with what
   the dashboard shows for it: a campaign's sender domain and subject, and for a user who took a flagged
   email into their Inbox, their address and the sender's.
-- **The CSV export** (Messages → Download CSV) holds what the Messages page shows: keep the file as you
+- **The CSV export** (Email → Messages → Download CSV) holds what the Messages page shows: keep the file as you
   would the dashboard.
-- **The retraining export** (Model health → Download for retraining) is off until an admin allows it in
+- **The retraining export** (Status → Model health → Download for retraining) is off until an admin allows it in
   Settings, and Activity notes who allowed it and every download.
   - It reads the emails admins marked from Gmail at the moment of the download: confirmed phishing, and
     false alarms only when asked.

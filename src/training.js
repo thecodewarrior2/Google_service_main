@@ -1,5 +1,5 @@
 'use strict';
-// The retraining export (Model health → "Download for retraining"; off until an admin allows it in
+// The retraining export (Status → Model health → "Download for retraining"; off until an admin allows it in
 // Settings). The emails an admin marked (confirmed as phishing; with a tick, false alarms too) are read
 // from Gmail at the moment of the download, one per campaign, and each becomes one line of the
 // extension's own training format (tools/ai/data/extra/*.jsonl: { facts, label }): the facts phish-tiny

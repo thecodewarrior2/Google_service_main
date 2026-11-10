@@ -10,7 +10,7 @@ model, without any person's details reaching a repository or an outside service.
 
 **In short:**
 
-1. **Allow and download.** An admin downloads the marked emails from Model health. They arrive with
+1. **Allow and download.** An admin downloads the marked emails from Status → Model health. They arrive with
    the people already taken out.
 2. **Review.** A person reads every example and decides on each word marked ⟦like this⟧.
 3. **Replace the placeholders.** [NAME] and the others become made-up names, by hand or with claude.ai
@@ -42,7 +42,7 @@ model, without any person's details reaching a repository or an outside service.
 
 1. **Settings → Retraining export → Allow the retraining export.** It is off by default. Activity
    notes who turned it on, and every download.
-2. **Model health → Examples for retraining the model.** Choose the period at the top (7, 30 or 90
+2. **Status → Model health → Examples for retraining the model.** Choose the period at the top (7, 30 or 90
    days).
 3. **Include false alarms** if you want genuine examples. They are worth the most, because they teach
    the model what not to flag, but they are real people's mail: check them with the most care (step 2).
@@ -86,7 +86,7 @@ one line, spread out (from the demo's made-up data):
 
 | Field | What it is |
 |---|---|
-| `name` | `spruce-` and the email's Gmail ID. To see the email's record, paste the ID into **Messages → Search**. That page also shows the email's Message-ID, for Google Workspace's Email log search. |
+| `name` | `spruce-` and the email's Gmail ID. To see the email's record, paste the ID into **Email → Messages → Search**. That page also shows the email's Message-ID, for Google Workspace's Email log search. |
 | `label` | `1`: phishing or spam (an admin confirmed it). `0`: genuine (an admin marked it a false alarm). |
 | `note` | What the service did on arrival: what it did with the email, what triggered it, the rules score, the AI score. It is for you; training ignores it. |
 | `facts.subject`, `senderName`, `bodyText` | What the email said, with the people taken out (below). `bodyText` is cut to about 1,200 characters, a little more than the model reads. |
@@ -337,7 +337,7 @@ With 30 held-out emails, one email is 3%, so a small set tells you about large c
   - the maintainer trying that version and approving it.
 
   Admins then upgrade with `bash deploy/update.sh`, which shows the model's version change.
-- **After the upgrade:** watch Model health for a week. If the undo rate for **AI score** moves go up,
+- **After the upgrade:** watch Status → Model health for a week. If the undo rate for **AI score** moves go up,
   roll back (`bash deploy/rollback.sh`) and look at the emails it moved.
 - **Clean up:**
   - delete the downloaded file and the in-between files (and the claude.ai conversation, if you used

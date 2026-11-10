@@ -89,51 +89,61 @@ The dashboard keeps itself up to date: the page you're on is fetched again every
 the tab is visible (not while you're typing in it, or using it otherwise). The bar under the tabs says
 when it last updated, and **Pause updates** stops it.
 
-The dashboard has these pages:
-- **Review:** the moved or "would move" emails nobody has reviewed, one at a time, oldest first: **F** false
-  alarm, **P** phishing, **N** next. The tab shows how many are left.
-- **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per day by trigger; top
-  reasons; largest campaigns; alerts.
-- **Campaigns** and **Users:** each opens the list of emails behind it.
-  - For a campaign: **Confirm phishing: move every copy** (optionally searching every watched mailbox for
-    copies the service didn't record), **False alarm: release every copy**, and **Find other copies**.
-- **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download CSV**
-  gives the same list.
-  - Tick several to **release**, **mark false alarm** or **confirm phishing** them at once.
-  - Each email shows how strong the evidence was, and its **Message-ID** and Gmail ID, each with a
-    **Copy** button. The Message-ID is what Google Workspace's Email log search and the security
-    investigation tool look an email up by.
-  - **Check an email:** paste a reported email's original (Gmail: Show original), or an `.eml` file, to see
-    what the service would decide and why. Nothing is stored, moved or counted.
-  - It shows the signs found with their weights, flagged links, the AI score with what weighed most,
-    and the sender check.
-  - Buttons: **Release to Inbox**, **Mark false alarm**, **Confirm phishing**.
-- **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
-  often by users themselves). This is
-  the number to tune the threshold with.
-  - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings, off by
-    default) gives the emails admins marked, read from Gmail at that moment with the people taken out,
-    as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says how to
-    check the file and train the model with it.
-- **Readiness:** whether monitor mode has shown enough to switch to enforce mode, as checks: time,
-  emails reviewed, false alarms, staff mail failing DMARC, the busiest hour against the brake,
-  notifications arriving, the group re-read reaching the service.
-- **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
-- **Status:** whether the service works end to end, with what to do for each problem: Identity-Aware
-  Proxy off on the worker, who may call it, both services on the same build, the jobs reaching it,
-  notifications arriving, watches renewed, the phishing lists, alerts, errors, the brake.
-  `deploy/doctor.sh` checks the rest from Cloud Shell.
+The dashboard has four tabs: **Overview**, **Email**, **Status** and **Settings**. Email and Status
+each have a menu on the left (a row of buttons above the page on a phone).
+
+- **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per
+  day by trigger; top reasons; largest campaigns; alerts.
+- **Email**, with the number of emails waiting for review on the tab:
+  - **Review:** the moved or "would move" emails nobody has reviewed, one at a time, oldest first: **F**
+    false alarm, **P** phishing, **N** next. The menu shows how many are left.
+  - **Campaigns:** each opens the list of emails behind it, with **Confirm phishing: move every copy**
+    (optionally searching every watched mailbox for copies the service didn't record), **False alarm:
+    release every copy**, and **Find other copies**.
+  - **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download
+    CSV** gives the same list.
+    - Tick several to **release**, **mark false alarm** or **confirm phishing** them at once.
+    - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
+      most, the sender check, and how strong the evidence was. Buttons: **Release to Inbox**, **Mark
+      false alarm**, **Confirm phishing**.
+    - Each email also shows its **Message-ID** and Gmail ID, each with a **Copy** button. The Message-ID
+      is what Google Workspace's Email log search and the security investigation tool look an email
+      up by.
+    - **Check an email:** paste a reported email's original (Gmail: Show original), or an `.eml` file, to
+      see what the service would decide and why. Nothing is stored, moved or counted.
+  - **Users:** everyone who had mail moved, would have had it moved, or got suspicious mail; each opens
+    the list of their emails.
+- **Status:**
+  - **Service status:** whether the service works end to end, with what to do for each problem:
+    - Identity-Aware Proxy off on the worker, and who may call it;
+    - both services on the same build, and the jobs reaching the worker;
+    - notifications arriving and watches renewed;
+    - the phishing lists, alerts, errors, the brake.
+
+    `deploy/doctor.sh` checks the rest from Cloud Shell.
+  - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
+    often by users themselves). This is the number to tune the threshold with.
+    - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings, off by
+      default) gives the emails admins marked, read from Gmail at that moment with the people taken
+      out, as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says
+      how to check the file and train the model with it.
+  - **Readiness:** whether monitor mode has shown enough to switch to enforce mode, as checks:
+    - time in monitor mode, emails reviewed, false alarms;
+    - staff mail failing DMARC, and the busiest hour against the brake;
+    - notifications arriving, and the group re-read reaching the service.
+  - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
 - **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
   notified the service about it.
   - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
-    run.
-  - It also says when the group was last read and whether that reached the service.
-  - **Retraining export** (off by default): allows **Download for retraining** on Model health.
-  - **Weekly summary email** (off by default; changed here, like the retraining export): every Monday from 7 AM
-    (`TIME_ZONE`), the week's numbers, what waits, and the largest campaigns go into each dashboard admin's
-    Inbox. **Preview** and **Send one now** are next to it.
+    run. It also says when the group was last read and whether that reached the service.
+  - **Weekly summary email** (off by default; changed here, like the retraining export): every Monday
+    from 7 AM (`TIME_ZONE`), the week's numbers, what waits, and the largest campaigns go into each
+    dashboard admin's Inbox. **Preview** and **Send one now** are next to it.
+  - **Retraining export** (off by default): allows **Download for retraining** on Status → Model health.
 - **The browser tab's title** counts what needs you: the brake, held campaigns, users who took flagged
   mail back.
+
+Each page keeps its own address (`#/review`, `#/health`…), so links to a page keep working.
 
 The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mockup
 (`tools/build-mockup.js`) uses that same file with made-up data.

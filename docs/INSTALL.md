@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.4.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.5.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.4.zip
+   unzip spruce-mail-protection-0.3.5.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.4
+   cd spruce-mail-protection-0.3.5
    ```
 
 4. Make your settings file:
@@ -147,7 +147,7 @@ When it finishes, it prints the **dashboard address**.
    - Mail you send from a watched mailbox to itself isn't checked: it's your own sent mail.
    - An email whose text includes the link `http://malware.testcategory.com/` should be recorded. That
      address is Cloudflare's own test site for its malware block. The email should show in
-     **Messages** as *Would be moved*, or at least *Suspicious*. In monitor mode it stays in the Inbox.
+     **Email → Messages** as *Would be moved*, or at least *Suspicious*. In monitor mode it stays in the Inbox.
    - If Gmail puts the test email in Spam on its own, the service never sees it. It only reads mail
      that reaches the Inbox.
 4. **The worker's log:**
@@ -175,8 +175,8 @@ When it finishes, it prints the **dashboard address**.
 - **Monitor for two to three weeks.**
   - Open the *Would be moved* emails.
   - Use **Mark false alarm** or **Confirm phishing**.
-  - Watch **Model health**.
-  - **Readiness** turns these into checks; switch when they are all green.
+  - Watch **Status → Model health**.
+  - **Status → Readiness** turns these into checks; switch when they are all green.
 - **To move mail for real:**
   1. Set `MODE=enforce` in `deploy/settings.env`.
   2. Run `bash deploy/install.sh` again.
@@ -189,7 +189,7 @@ When it finishes, it prints the **dashboard address**.
     - **Confirm phishing** moves every copy, optionally searching every watched mailbox for more;
     - **False alarm** releases the moved ones, and later copies aren't moved.
   - **The domain-wide brake** (an alert, and a red banner). Far more moves in an hour than a campaign
-    makes: something may be wrong. Look at Messages, then:
+    makes: something may be wrong. Look at Email → Messages, then:
     - **Resume and move held mail** moves what it held;
     - **Resume without moving** leaves it in the Inbox.
   - Clear phishing (rules plus outside confirmation) is never held.
@@ -268,10 +268,11 @@ bash deploy/clear-data.sh
 
 It shows what it deletes and what it keeps, and asks you to type the project ID first.
 - **Deleted:**
-  - every recorded email (Overview, Messages, Campaigns, Users, Review, Model health, Readiness);
+  - every recorded email (Overview; under Email: Review, Campaigns, Messages, Users; under Status:
+    Model health, Readiness);
   - the daily counts;
   - campaign holds and admins' campaign decisions;
-  - the Activity page.
+  - Status → Activity.
 - **Kept:**
   - the watched mailboxes;
   - which emails were already checked, so none is judged twice;
@@ -285,7 +286,7 @@ It can't be undone.
 
 | Option | What it does |
 |---|---|
-| `--keep-activity` | Keeps the Activity page (what admins did, alerts) |
+| `--keep-activity` | Keeps Status → Activity (what admins did, alerts) |
 | `--reset-clock` | Also restarts the monitor-mode clock: Readiness counts days again, and senders are learned for 14 days again |
 | `--even-if-held` | Clears even when the brake or a campaign hold is on. The emails they held stay in the Inbox and are no longer tracked, so decide on them on the dashboard first |
 | `--yes` | No question (for scripts) |
@@ -326,18 +327,18 @@ To turn the alert off, set `BUDGET_ALERT=off`.
 
 ## Investigating an email in Google Workspace
 
-Every recorded email shows its **Message-ID**, with a **Copy** button (Messages → open the email →
+Every recorded email shows its **Message-ID**, with a **Copy** button (Email → Messages → open the email →
 Details).
 - In the Admin console, go to **Reporting → Email log search** and paste it into **Message ID**: you see
   every delivery of that email in the domain.
 - Or use the **security investigation tool** (Gmail log events, Message ID), where your edition has it.
-- For an email someone reported but the service didn't record: **Messages → Check an email**. Paste its
+- For an email someone reported but the service didn't record: **Email → Messages → Check an email**. Paste its
   original (in Gmail: ⋮ → Show original → Copy to clipboard). You see what the service would decide, and
   its Message-ID.
 
 ## Troubleshooting
 
-- **Start with the Status page** in the dashboard. In Cloud Shell, `bash deploy/doctor.sh` checks the
+- **Start with Status → Service status** in the dashboard. In Cloud Shell, `bash deploy/doctor.sh` checks the
   rest (the subscription, Gmail's permission to publish, the jobs, the alert policies, recent errors)
   and says what to run.
 
@@ -372,7 +373,7 @@ Details).
   notifying the service about it. Run `install.sh` again: step 5 lets Gmail publish to the topic, and
   step 9 starts the watches again.
 - **"Alerts couldn't be set up from here" (step 9/9).** The alerts still show on the dashboard (Overview,
-  Activity). Setting them up needs the Monitoring Editor role, or Owner, on the project. Run `install.sh`
+  Status → Activity). Setting them up needs the Monitoring Editor role, or Owner, on the project. Run `install.sh`
   again with it.
 - **No alert emails arrive.** The address in `ALERT_EMAIL` (or the admin group) must accept email from
   outside the domain: alerts come from Google Cloud (`alerting-noreply@google.com`). For a group, allow
