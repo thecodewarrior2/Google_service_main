@@ -1,21 +1,15 @@
-# Dependabot proposes dependency updates as pull requests on this testing repository, never straight to
-# the product. Each one is tested by .github/workflows/test.yml, then tried and approved like any other
-# change before it goes to google_service_main (CLAUDE.md).
-# Security fixes come as soon as an advisory is published once "Dependabot security updates" is on
-# (Settings > Code security); the weekly runs below propose ordinary updates.
+# Dependabot: security fixes for the npm packages, as pull requests on google_service_testing.
+# This file is in both repositories (each release copies google_service_testing unchanged to
+# google_service_main), so routine version updates are off here: they would open pull requests in the
+# release repository too, where nothing is ever changed. Security updates are switched on per repository
+# instead: on in google_service_testing, off in google_service_main (Settings > Code security >
+# Dependabot security updates). Each fix is tested (.github/workflows/test.yml), then tried and approved
+# like any other change before it goes to google_service_main (CLAUDE.md).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    groups:
-      # Minor and patch updates in one pull request a week; a major version gets its own.
-      minor-and-patch:
-        update-types: [minor, patch]
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: monthly
+    # 0: no routine version updates; security updates still come (they have their own limit).
+    open-pull-requests-limit: 0

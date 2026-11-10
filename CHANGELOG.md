@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.14: The files that are in both repositories read right in both
+
+Each release copies `google_service_testing` unchanged to `google_service_main`. So `CLAUDE.md`, `README.md`
+and `.github/dependabot.yml` are in both, but they were written for the testing repository alone. The
+service itself is the same as 0.2.13.
+
+- **`CLAUDE.md`** says it is in both repositories, and how to tell which one you're in
+  (`git remote get-url origin`).
+  - The rules for each are in their own section. The release repository: nothing is developed or
+    edited there. The testing repository: tests, safety defaults, made-up data, the vendored engine,
+    version bumps.
+  - The approval rule for `google_service_main` is unchanged. A release now only moves
+    `google_service_main` forward (the two share their history since 0.2.13).
+- **`README.md`** opens with the two repositories instead of "This is the testing repository".
+- **Dependabot:** only security fixes now, switched on per repository (on in `google_service_testing`,
+  off in `google_service_main`). Routine version updates are off: from the copy of the file in
+  `google_service_main`, they opened pull requests there too.
+
 ## 0.2.13: "Update group membership now" in Settings
 
 - **Settings → Mailboxes watched** has a button, **Update group membership now**. It re-reads the

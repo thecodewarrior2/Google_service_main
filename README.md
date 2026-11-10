@@ -1,7 +1,9 @@
 # S.P.R.U.C.E+ Mail Protection for Google Workspace
 
-**Status: testing.** This is the testing repository. The approved product lands in
-`google_service_main` (see `CLAUDE.md`).
+**Two repositories.** `google_service_testing` is where it's developed and tested.
+`google_service_main` holds only the versions the maintainer has tried and approved, each copied there
+unchanged. Which one you're reading: the repository's name on GitHub, or `git remote get-url origin`.
+The version is in `package.json` and `CHANGELOG.md`.
 
 S.P.R.U.C.E+ Mail Protection checks every new email in your Google Workspace domain with the same
 checks and AI model as the S.P.R.U.C.E+ browser extension. It moves suspicious ones to Spam, or in
@@ -96,11 +98,15 @@ The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mo
 
 ## Dependency updates
 
-Dependabot proposes updates as pull requests on this repository: a weekly one with every minor and
-patch update, and one per major version. GitHub runs the tests and `npm audit` on each pull request
-(`.github/workflows/test.yml`). An update reaches the product like any change: merged here, installed,
-tried, then approved for `google_service_main`. Security fixes come as soon as an advisory appears once
-**Settings → Code security → Dependabot security updates** is on for this repository.
+Dependabot proposes **security fixes** for the npm packages as pull requests on
+`google_service_testing`. GitHub runs the tests and `npm audit` on each one (`.github/workflows/test.yml`).
+A fix reaches the product like any change: merged in `google_service_testing`, installed, tried, then
+approved for `google_service_main`.
+
+- **Turn on** Settings → Code security → **Dependabot security updates** in `google_service_testing`.
+- **Leave it off** in `google_service_main`. Nothing changes there except approved releases.
+- **Routine version updates are off** (`.github/dependabot.yml`). The file is copied unchanged into
+  `google_service_main` with each release, so they would open pull requests there too.
 
 ## Try it
 
@@ -151,6 +157,6 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `upgrade.sh`, `rollback.sh` and `stop.sh` (Cloud Shell), `settings.example.env` |
-| `.github/` | Dependabot (`dependabot.yml`: dependency updates as pull requests) and the tests on every pull request (`workflows/test.yml`) |
+| `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip) |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |
