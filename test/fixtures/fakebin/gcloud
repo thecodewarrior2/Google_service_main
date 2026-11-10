@@ -12,6 +12,17 @@ case "$a" in
   "firestore databases describe"*) exit 0 ;;
   "iam service-accounts describe"*oauth2ClientId*) echo 111122223333 ;;
   "iam service-accounts describe"*) exit 0 ;;
+  "artifacts docker images describe"*) [ "${FAKE_IMAGE:-new}" = exists ] || exit 1 ;;
+  "run services describe spruce-admin"*"--format=json"*) if [ "${FAKE_ADMIN_IAP:-on}" = on ]; then printf '{\n  "metadata": {\n    "annotations": {\n      "run.googleapis.com/iap-enabled": "true"\n    }\n  }\n}\n'; else echo '{}'; fi ;;
+  "run services describe spruce-admin"*"containers[0].image"*) echo "us-east1-docker.pkg.dev/test-proj/spruce/mail-protection:${FAKE_ADMIN_VERSION:-${FAKE_INSTALLED:-0.2.14}}-src0123456789ab" ;;
+  "run services describe spruce-worker"*"spruce-model"*) echo "${FAKE_MODEL:-0-4-0}" ;;
+  "run services get-iam-policy spruce-worker"*) [ "${FAKE_INVOKER:-ok}" = ok ] && echo '{"bindings":[{"members":["serviceAccount:spruce-invoker@test-proj.iam.gserviceaccount.com"],"role":"roles/run.invoker"}]}' || echo '{}' ;;
+  "pubsub subscriptions describe gmail-spruce-push"*pushEndpoint*) [ "${FAKE_SUB:-ok}" = ok ] && printf 'https://spruce-worker-abc.a.run.app/pubsub/push\tspruce-invoker@test-proj.iam.gserviceaccount.com\thttps://spruce-worker-123456789.us-east1.run.app\n' ;;
+  "pubsub topics get-iam-policy"*) echo '{"bindings":[{"members":["serviceAccount:gmail-api-push@system.gserviceaccount.com"],"role":"roles/pubsub.publisher"}]}' ;;
+  "scheduler jobs describe spruce-sync-feeds"*state*) echo ENABLED ;;
+  "scheduler jobs describe spruce-sync-feeds"*status.code*) ;;
+  "monitoring policies list --filter=displayName:"*) [ "${FAKE_ALERTS:-yes}" = yes ] && printf 'projects/test-proj/alertPolicies/1\nprojects/test-proj/alertPolicies/2\n' ;;
+  "logging read"*cloud_run_revision*) for i in $(seq 1 "${FAKE_ERRORS:-0}"); do echo 2026-11-10T00:00:00Z; done ;;
   "run services describe spruce-worker"*"--format=json"*) if [ "${FAKE_IAP:-off}" = on ]; then printf '{\n  "metadata": {\n    "annotations": {\n      "run.googleapis.com/iap-enabled": "true"\n    }\n  }\n}\n'; else echo '{}'; fi ;;
   "run services describe spruce-worker"*"containers[0].image"*) echo "us-east1-docker.pkg.dev/test-proj/spruce/mail-protection:${FAKE_INSTALLED:-0.2.14}-20261101-000000" ;;
   "run services describe"*status.url*) echo https://spruce-worker-abc.a.run.app ;;

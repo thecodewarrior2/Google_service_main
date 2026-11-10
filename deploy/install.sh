@@ -16,7 +16,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
-AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER=
+AI_MOVE_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +24,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -37,6 +37,9 @@ BUDGET_ALERT="${BUDGET_ALERT:-1}"
 ALERT_TO="${ALERT_EMAIL:-$(echo "$ADMIN_GROUP;$ADMIN_EMAILS" | tr ',;' '  ' | awk '{print $1}')}"
 [ "$ALERT_EMAIL" != off ] || ALERT_TO=
 case "$ALERT_TO" in '' | *@*.*) ;; *) fail "ALERT_EMAIL must be an email address, or off." ;; esac
+# The scheduled jobs (and the weekly summary) run in the district's time zone: an IANA name.
+TZ_NAME="${TIME_ZONE:-UTC}"
+[[ "$TZ_NAME" =~ ^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+)+)$ ]] || fail "TIME_ZONE must be a time zone name, like America/New_York (or empty for UTC)."
 [[ "$BUDGET_ALERT" =~ ^(off|[0-9]+(\.[0-9]{1,2})?)$ ]] || fail "BUDGET_ALERT must be an amount (like 1 or 5) or off."
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
@@ -102,6 +105,8 @@ retry gcloud iam service-accounts add-iam-policy-binding "$SA_INVOKER" --member=
 # The dashboard's "Update group membership now" runs the spruce-renew-watches job, and shows its last run.
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/cloudscheduler.jobRunner --condition=None --quiet >/dev/null
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/cloudscheduler.viewer --condition=None --quiet >/dev/null
+# The dashboard's Status page reads the worker's Cloud Run settings (Identity-Aware Proxy, who may call it).
+retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/run.viewer --condition=None --quiet >/dev/null
 # What Cloud Build runs as when it builds the image (step 6), instead of a default account whose roles
 # differ from project to project.
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_BUILD" --role=roles/cloudbuild.builds.builder --condition=None --quiet >/dev/null
@@ -137,7 +142,11 @@ if gcloud artifacts repositories set-cleanup-policies spruce --location="$REGION
 else
     echo "  (Couldn't set the image cleanup policy; old builds stay until deleted.)"
 fi
-IMAGE="$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-$(date -u +%Y%m%d-%H%M%S)"
+# The image is named after its source: a run with the same files (a change of settings only) uses the
+# image already built and just redeploys, in a minute or so. FORCE_BUILD=1 builds again anyway.
+SRC="$( { find src public vendor package.json package-lock.json Dockerfile -type f -print0 2>/dev/null || true; } | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-12)"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-src$SRC"
+MODEL="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
 # Cloud Build builds and stores the image inside Google Cloud, so it works where Docker can't upload.
 # It runs as spruce-build; its source and logs go to buckets in this project and region.
 cloud_build() {
@@ -145,7 +154,9 @@ cloud_build() {
         --default-buckets-behavior=regional-user-owned-bucket --quiet . \
         || fail "Cloud Build couldn't build the image (its log is above). If it says spruce-build lacks a permission, wait a minute (new permissions take a moment to apply) and run this again."
 }
-if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+if [ -z "${FORCE_BUILD:-}" ] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+    echo "  These files were built before: using that image, not building again (FORCE_BUILD=1 builds anyway)."
+elif command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet >/dev/null
     docker build -t "$IMAGE" . || fail "the image didn't build (the error is above)."
     if ! docker push "$IMAGE"; then
@@ -167,7 +178,10 @@ env_file() {
 }
 WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
-COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER")
+COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
+    TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app")
+# Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
+LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-')"
 
 step "7/9 Worker (reads the pilot mailboxes; only Pub/Sub and Scheduler may call it)"
 # Never behind Identity-Aware Proxy: Pub/Sub and Cloud Scheduler can't sign in through it, so every
@@ -181,9 +195,9 @@ fi
 gcloud run services remove-iam-policy-binding spruce-worker --region="$REGION" --member="serviceAccount:service-$NUMBER@gcp-sa-iap.iam.gserviceaccount.com" \
     --role=roles/run.invoker --quiet >/dev/null 2>&1 || true
 WF="$(env_file worker ROLE worker "${COMMON[@]}" PILOT_GROUP "$PILOT_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
-    PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD")"
+    PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP")"
 gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --concurrency=8 --timeout=120 --memory=1Gi --max-instances=10 --env-vars-file="$WF" --quiet
+    --concurrency=8 --timeout=120 --memory=1Gi --max-instances=10 --env-vars-file="$WF" --update-labels="$LABELS" --quiet
 # All traffic to this build, even after deploy/rollback.sh pinned an older one.
 gcloud run services update-traffic spruce-worker --region="$REGION" --to-latest --quiet >/dev/null
 WORKER_URL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(status.url)')"
@@ -193,7 +207,7 @@ step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAI
 AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
     RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO")"
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --memory=512Mi --max-instances=3 --env-vars-file="$AF" --quiet
+    --memory=512Mi --max-instances=3 --env-vars-file="$AF" --update-labels="$LABELS" --quiet
 gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
 ADMIN_URL="$(gcloud run services describe spruce-admin --region="$REGION" --format='value(status.url)')"
 iap_setup() {
@@ -225,8 +239,8 @@ job() { # name, schedule, path, extra flags...
     local name="$1" schedule="$2" path="$3"; shift 3
     local verb=create; gcloud scheduler jobs describe "$name" --location="$REGION" >/dev/null 2>&1 && verb=update
     gcloud scheduler jobs "$verb" http "$name" --location="$REGION" --schedule="$schedule" --uri="$WORKER_URL$path" --http-method=POST \
-        --oidc-service-account-email="$SA_INVOKER" --oidc-token-audience="$WORKER_AUD" "$@" --quiet >/dev/null
-    echo "  $name ($schedule UTC)"
+        --oidc-service-account-email="$SA_INVOKER" --oidc-token-audience="$WORKER_AUD" --time-zone="$TZ_NAME" "$@" --quiet >/dev/null
+    echo "  $name ($schedule, $TZ_NAME)"
 }
 # Whether the job's run since $2 (UTC) reached the worker: waits up to a minute, then stops with the reason.
 job_reached_worker() {
@@ -301,6 +315,7 @@ cat <<EOF
 
   The watches start within a minute. To see the worker's log:
       gcloud run services logs read spruce-worker --region=$REGION --limit=50
-  After you change the group's members, apply it now (otherwise it happens daily at 03:17 UTC):
+  After you change the group's members, apply it now (otherwise daily at 3:17 AM, $TZ_NAME), or press
+  Settings > Update group membership now in the dashboard:
       gcloud scheduler jobs run spruce-renew-watches --location=$REGION
 EOF

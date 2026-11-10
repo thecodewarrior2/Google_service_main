@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.0.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.1.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.0.zip
+   unzip spruce-mail-protection-0.3.1.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.0
+   cd spruce-mail-protection-0.3.1
    ```
 
 4. Make your settings file:
@@ -99,6 +99,7 @@ can only read groups. It never uses that account's password.
    | `ADMIN_EMAILS` | optional: more people who may open the dashboard, separated by semicolons |
    | `MODE` | leave `monitor` |
    | `BUDGET_ALERT` | leave `1`: an email at the first charge (see "Costs") |
+   | `TIME_ZONE` | your time zone, for example `America/New_York`: the nightly jobs and the weekly summary use it (empty = UTC) |
    | `ALERT_EMAIL` | leave empty: alerts go to `ADMIN_GROUP`. That group must accept email from outside the domain (alerts come from Google Cloud); otherwise put a person's address. `off` for none |
 
 ## 5. Install
@@ -160,6 +161,9 @@ When it finishes, it prints the **dashboard address**.
 
 ## 7. Running the test
 
+- **Changing a setting:** edit `deploy/settings.env` and run `bash deploy/install.sh`. It doesn't rebuild
+  when the files are the same as last time (about a minute). `FORCE_BUILD=1 bash deploy/install.sh`
+  rebuilds anyway.
 - **Add or remove people** in the security group. It applies daily, or at once with **Settings →
   Update group membership now** in the dashboard, or with:
 
@@ -193,7 +197,20 @@ When it finishes, it prints the **dashboard address**.
 
 ## Upgrading to a new version
 
-Each version comes as a new zip. Your settings, records and the Admin console steps carry over.
+Your settings, records and the Admin console steps carry over.
+
+**The quick way: from the approved releases.** In Cloud Shell, from the folder you installed or last
+upgraded from:
+
+```bash
+bash deploy/update.sh
+```
+
+It downloads the newest approved version from `google_service_main`, unpacks it next to your folder, and
+runs its `upgrade.sh` (below). That shows what changes, including the AI model's version, and asks first.
+The AI model (phish-tiny) comes with each version, so a new model arrives only with an approved version.
+
+**From a zip:**
 
 1. In Cloud Shell, upload the new zip, then unzip it **next to the old folder** (both in your home
    folder):
@@ -272,7 +289,22 @@ The installer keeps it there:
 
 To turn the alert off, set `BUDGET_ALERT=off`.
 
+## Investigating an email in Google Workspace
+
+Every recorded email shows its **Message-ID**, with a **Copy** button (Messages → open the email →
+Details).
+- In the Admin console, go to **Reporting → Email log search** and paste it into **Message ID**: you see
+  every delivery of that email in the domain.
+- Or use the **security investigation tool** (Gmail log events, Message ID), where your edition has it.
+- For an email someone reported but the service didn't record: **Messages → Check an email**. Paste its
+  original (in Gmail: ⋮ → Show original → Copy to clipboard). You see what the service would decide, and
+  its Message-ID.
+
 ## Troubleshooting
+
+- **Start with the Status page** in the dashboard. In Cloud Shell, `bash deploy/doctor.sh` checks the
+  rest (the subscription, Gmail's permission to publish, the jobs, the alert policies, recent errors)
+  and says what to run.
 
 - **"Gmail couldn't be allowed to publish" (step 5/9).** An organization policy, *Domain restricted
   sharing* (`iam.allowedPolicyMemberDomains`), allows only your own domain's accounts. Gmail's

@@ -114,3 +114,21 @@ test('records, events and the shared phishing lists round-trip; purge deletes wh
     assert.ok(await s.getRecord(`${U}|r1`));
     assert.deepEqual((await s.listEvents(old - 1)).map(e => e.text), ['new']);
 });
+
+test('the dashboard\'s cache reads: records carry updatedAt, changed ones are listed in order; only held campaigns are listed', { skip }, async () => {
+    const s = getStore();
+    const t0 = Date.now() - 1000;
+    await s.saveRecord({ key: `${U}|c1`, user: U, processedAt: Date.now(), action: 'flag', sender: { address: 'a@b.example' } });
+    await s.saveRecord({ key: `${U}|c2`, user: U, processedAt: Date.now(), action: 'move', sender: { address: 'a@b.example' } });
+    const got = await s.listRecordsChangedSince(t0);
+    assert.deepEqual(got.filter(r => /\|c[12]$/.test(r.key)).map(r => r.key), [`${U}|c1`, `${U}|c2`]);
+    const mid = Math.max(...got.map(r => r.updatedAt));
+    await new Promise(r => setTimeout(r, 5));
+    const upd = await s.updateRecord(`${U}|c1`, { state: 'released' });
+    assert.ok(upd.updatedAt > mid);
+    assert.deepEqual((await s.listRecordsChangedSince(mid)).map(r => r.key), [`${U}|c1`]);
+    await s.campaignHold('h1', 0, Date.now(), 'held.example: x');   // held at once (limit 0)
+    await s.campaignHold('h2', 5, Date.now(), 'fine.example: y');
+    const held = (await s.listHeldCampaigns()).map(c => c.key);
+    assert.ok(held.includes('h1') && !held.includes('h2'));
+});

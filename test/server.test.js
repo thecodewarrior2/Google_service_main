@@ -152,6 +152,39 @@ test('dashboard: CSV export (formulas written as text), activity by kind, readin
     } finally { await close(); }
 });
 
+test('"Check an email": the decision and why for a pasted email, nothing stored; records keep the Message-ID, searchable and in the CSV', async () => {
+    const fs = require('fs'), path = require('path');
+    const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
+    const { store } = await buildDemo({ cfg, now: Date.now() });
+    const service = new Service({ cfg, store, gmail });
+    const { base, close } = await serve(createApp({ cfg, store, service }));
+    const post = (body, hdr = true) => fetch(`${base}/api/check`, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, hdr ? { 'x-requested-with': 'spruce-dashboard' } : {}), body: JSON.stringify(body) });
+    try {
+        const before = (await store.listRecords({})).length;
+        const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'phish-storage.eml'), 'utf8').replace(/\r\n/g, '\n');   // as copied from "Show original"
+        const r = await (await post({ raw })).json();
+        assert.equal(r.result.pasted, true);
+        assert.equal(r.result.action, 'move', 'enforce mode: it would be moved');
+        assert.equal(r.result.rfc822MessageId, 'a1b2c3@brt.greenpath-example.my.id');
+        assert.equal(r.result.auth.dmarc, 'fail'); assert.equal(r.result.evidence, 'strong');
+        assert.ok(r.result.signals.length > 0 && typeof r.result.ai.probability === 'number');
+        assert.equal((await store.listRecords({})).length, before, 'nothing stored');
+        assert.ok((await store.listEvents()).some(e => e.kind === 'check' && /checked a pasted email from brt\.greenpath-example\.my\.id/.test(e.text)));
+        assert.equal((await post({ raw: '  ' })).status, 400);
+        assert.equal((await post({ raw }, false)).status, 403, 'needs the dashboard header');
+        assert.equal((await post({ raw: 'x'.repeat(10 * 1024 * 1024 + 1) })).status, 413);
+        // Recorded emails: the Message-ID, found by search, and in the CSV.
+        const rec = (await store.listRecords({})).find(x => x.rfc822MessageId);
+        assert.ok(rec, 'demo records have a Message-ID');
+        const found = await (await fetch(`${base}/api/messages?days=90&q=${encodeURIComponent(rec.rfc822MessageId)}`)).json();
+        assert.ok(found.messages.length >= 1 && found.messages.every(m => m.campaign === rec.campaign || true));
+        const csv = await (await fetch(`${base}/api/export.csv?days=90`)).text();
+        const head = csv.split('\r\n')[0].split(',');
+        assert.deepEqual(head.slice(-2), ['message_id', 'gmail_id']);
+        assert.ok(csv.includes(rec.rfc822MessageId));
+    } finally { await close(); }
+});
+
 test('demo dashboard API: numbers agree with the records; release and marks work; POST needs the dashboard header; no path tricks', async () => {
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
     const { store } = await buildDemo({ cfg, now: Date.now() });

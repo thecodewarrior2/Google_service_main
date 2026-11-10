@@ -16,6 +16,8 @@ const { analyze, senderVerified } = require('./engine/analyze');
 const { decide, isAllowed } = require('./policy');
 const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds } = require('./store/history');
+const { buildDigest, mime, isSummary, localParts } = require('./digest');
+const A = require('./dashboard/aggregate');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -27,6 +29,9 @@ const CLAIM_LEASE_MS = 5 * 60 * 1000;
 const WAIT_FOR_OTHERS_MS = 5000;
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const hourOf = (ms) => new Date(ms).toISOString().slice(0, 13);
+// The Message-ID header without its angle brackets: what Google Workspace's Email log search and the
+// security investigation tool look an email up by.
+const messageIdOf = (v) => String(v || '').trim().replace(/^<|>$/g, '').slice(0, 300);
 // The address in a From header ("Name <a@b>" or "a@b").
 const addressOf = (from) => { const m = /<([^<>@\s]+@[^<>\s]+)>/.exec(String(from || '')); return (m ? m[1] : String(from || '').trim()).toLowerCase(); };
 // Runs fn over items, n at a time, until stop() says so.
@@ -180,6 +185,31 @@ class Service {
         return out;
     }
 
+    // "Check an email" (dashboard): an email an admin pasted (its original, from Gmail's "Show original")
+    // or uploaded, judged as on arrival with the same lookups, in the current mode, brakes aside.
+    // Nothing is stored, moved or counted. The answer has a record's shape, for the same view.
+    async checkPasted(raw, { by = '' } = {}) {
+        const facts = await readMessage(Buffer.from(String(raw), 'utf8'));
+        const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        // Judged for the recipient in the organization, if the email names one; else for the admin.
+        const mailbox = (facts.to || []).find(a => this.cfg.orgDomains.includes(a.split('@')[1])) || by;
+        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel });
+        result.allowlistedUnverified = allowlisted && !verified;
+        const decision = decide(result, this.cfg, {});
+        const domain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
+        return {
+            pasted: true, key: null, messageId: null, rfc822MessageId: messageIdOf(facts.messageIdHeader), user: mailbox,
+            receivedAt: facts.date || null, processedAt: this.now(),
+            sender: { name: facts.senderName.slice(0, 200), address: facts.senderAddress.slice(0, 320), domain }, subject: facts.subject.slice(0, 300),
+            status: result.status, score: result.score, signals: result.signals.slice(0, 30), links: result.links.slice(0, 20), checks: result.checks || null,
+            ai: result.ai ? { probability: result.ai.probability, model: result.ai.model, reasons: (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) } : null,
+            auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
+            attachments: facts.attachments.slice(0, 10).map(a => ({ name: a.name.slice(0, 120), type: a.type })),
+            action: decision.action, trigger: decision.trigger, why: decision.why, mode: this.cfg.mode,
+            evidence: decision.action === 'none' ? null : result.strong ? 'strong' : 'weak', confirmedBy: result.confirmedBy || []
+        };
+    }
+
     // An email that came into the Inbox other than by arriving there (the user took it out of Spam, or
     // moved it from another folder) and that the service never checked: checked now and recorded, never
     // moved (the user put it there), with an alert when the checks flag it. Older mail moved back from an
@@ -220,6 +250,8 @@ class Service {
         let msg;
         try { msg = await this.gmail.raw(user, id); }
         catch (e) { if (e instanceof GoogleApiError && e.status === 404) return null; throw e; } // deleted before it was read
+        // The service's own weekly summary (put in an admin's Inbox): never judged.
+        if (isSummary(msg.raw)) return null;
         // An earlier try that moved it and failed before its record was written: write the record now,
         // without moving it again (it has the service's own label, which only the service adds).
         if (tries > 1 && !(await this.store.getRecord(recordKey(user, id)))
@@ -274,6 +306,7 @@ class Service {
             key: recordKey(user, msg.id), user, messageId: msg.id, threadId: msg.threadId || '',
             // The message's history id when it was read: an Inbox label added after it is the user's.
             readHistoryId: msg.historyId ? String(msg.historyId) : null,
+            rfc822MessageId: messageIdOf(facts.messageIdHeader),
             receivedAt: msg.internalDate || facts.date || now, processedAt: now,
             sender: { name: facts.senderName.slice(0, 200), address: facts.senderAddress.slice(0, 320), domain: senderDomain },
             subject: this.cfg.storeSubjects ? facts.subject.slice(0, 300) : '',
@@ -444,7 +477,7 @@ class Service {
                     if (moving) await this.gmail.modify(user, id, ['SPAM', await this.gmail.labelId(user, this.cfg.movedLabel)], ['INBOX']);
                     const now = this.now();
                     await this.store.saveRecord({
-                        key: recordKey(user, id), user, messageId: id, threadId: m.threadId || '', readHistoryId: null,
+                        key: recordKey(user, id), user, messageId: id, threadId: m.threadId || '', readHistoryId: null, rfc822MessageId: messageIdOf(m.messageId),
                         receivedAt: m.internalDate || now, processedAt: now,
                         sender: { name: '', address: address.slice(0, 320), domain }, subject: this.cfg.storeSubjects ? String(m.subject).slice(0, 300) : '',
                         campaign: key, campaignLabel: recs[0].campaignLabel, status: 'flagged', score: null,
@@ -582,13 +615,86 @@ class Service {
     // downloaded once a day for everyone (src/intel/feeds.js; a failed download is tried again the next
     // day, not every hour).
     async syncFeeds() {
-        let health;
+        let health, digest = null;
         try { health = await this.health(); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
+        try { digest = await this.maybeDigest(); } catch (e) { digest = { error: String(e.message || e).slice(0, 200) }; this.log.error('weekly summary:', e); }
+        if (digest) health.digest = digest;
         if (!this.intel || !this.intel.feeds) return { health, skipped: 'phishing lists are off' };
         const last = Number(await this.store.getState('feedsAttemptedAt')) || 0;
         if (this.now() - last < 20 * HOUR) return { health, skipped: 'checked within the day' };
         await this.store.setState('feedsAttemptedAt', this.now());
         return Object.assign({ health }, await this.intel.feeds.sync());
+    }
+
+    // --- The weekly summary email (dashboard Settings; off by default) --------------------------------
+    // To the dashboard's admins in the organization: ADMIN_EMAILS and the members of ADMIN_GROUP.
+    async digestRecipients() {
+        const out = new Set(this.cfg.adminEmails);
+        for (const g of this.cfg.adminGroups) for (const u of await this.gmail.groupMembers(this.cfg.directoryAdmin, g, this.cfg.orgDomains)) out.add(u);
+        return [...out].filter(a => this.cfg.orgDomains.includes(a.split('@')[1]));
+    }
+    async digestContent(now = this.now()) {
+        const records = await this.store.listRecords({ sinceMs: now - 8 * DAY, limit: 20000 });
+        const stats = await this.store.getStats(dayOf(now - 7 * DAY), dayOf(now));
+        const events = await this.store.listEvents(now - 7 * DAY);
+        const users = (await this.store.listUsers()).filter(u => u.watched);
+        const held = (await this.store.listHeldCampaigns()).filter(c => !c.decision).length;
+        const readiness = this.cfg.mode === 'enforce' ? null : A.readiness(records, { now, days: 7, mode: this.cfg.mode, installedAt: await this.store.getState('installedAt'),
+            brakeLimit: await this.brakeLimit(), holdAfter: this.cfg.campaignHoldAfter, watched: users.length,
+            lastNotification: Math.max(0, ...users.map(u => Number(u.lastNotification) || 0)) || null, quietHours: this.cfg.quietHours, renew: null });
+        return buildDigest(records, stats, events, { now, mode: this.cfg.mode, timeZone: this.cfg.timeZone, dashboardUrl: this.cfg.dashboardUrl,
+            watched: users.length, held, brake: !!(await this.store.getState('brake')), readiness });
+    }
+    // Puts this week's summary in each admin's Inbox now. { sent, to, failed }.
+    async sendDigest({ by = null } = {}) {
+        const to = await this.digestRecipients();
+        if (!to.length) return { sent: 0, to: [], failed: [], error: 'nobody to send it to (ADMIN_EMAILS, ADMIN_GROUP)' };
+        const d = await this.digestContent();
+        const org = this.cfg.orgDomains[0] || 'localhost';
+        const from = `"S.P.R.U.C.E+ Mail Protection" <${this.cfg.directoryAdmin || `no-reply@${org}`}>`;
+        const out = { sent: 0, to, failed: [] };
+        for (const user of to) {
+            try {
+                const raw = mime({ from, to: user, subject: d.subject, text: d.text, date: new Date(this.now()), messageId: `<spruce-summary-${this.now()}-${crypto.randomBytes(6).toString('hex')}@${org}>` });
+                const r = await this.gmail.insert(user, raw, ['INBOX', 'UNREAD']);
+                if (r && r.id) await this.store.markSeen(user, r.id);   // (and isSummary) never judged
+                out.sent++;
+            } catch (e) { out.failed.push(user); this.log.error(`weekly summary to ${user}:`, e); }
+        }
+        const st = (await this.store.getState('digest')) || {};
+        await this.store.setState('digest', Object.assign({}, st, { lastSentAt: this.now(), lastSentBy: by }));
+        await this.store.addEvent({ kind: 'digest', text: `The weekly summary was put in ${out.sent} admin Inbox${out.sent === 1 ? '' : 'es'}${by ? ` (sent now by ${by})` : ''}${out.failed.length ? `; ${out.failed.length} couldn't be reached` : ''}.` });
+        return out;
+    }
+    // From the hourly job: on Monday from 7 AM (TIME_ZONE), once a week, when it is on.
+    async maybeDigest() {
+        const st = (await this.store.getState('digest')) || {};
+        if (!st.enabled) return null;
+        const t = localParts(this.now(), this.cfg.timeZone);
+        if (t.weekday !== 1 || t.hour < 7) return null;
+        if (!(await this.store.setStateIfUnset(`digest-${t.week}`, { at: this.now() }))) return null;   // once, whichever instance
+        return this.sendDigest();
+    }
+    async setDigest(enabled, by) {
+        const st = (await this.store.getState('digest')) || {};
+        await this.store.setState('digest', Object.assign({}, st, { enabled: !!enabled, updatedBy: by, updatedAt: this.now() }));
+        await this.store.addEvent({ kind: 'settings', text: `${by} turned the weekly summary email ${enabled ? 'on' : 'off'}.` });
+        return { enabled: !!enabled };
+    }
+
+    // --- Several emails at once (Messages, and the review queue) -------------------------------------
+    // action: release | false-alarm | phishing. { done, skipped, failed }.
+    async bulk(keys, action, by) {
+        const out = { done: 0, skipped: 0, failed: 0 };
+        await pool(keys, 10, async (key) => {
+            try {
+                const r = action === 'release' ? await this.release(key, by, { quiet: true }) : await this.mark(key, action === 'false-alarm', by);
+                if (r && r.record) out.done++; else out.skipped++;
+            } catch (e) { out.failed++; this.log.error(`bulk ${action} ${key}:`, e); }
+        });
+        const what = { release: 'released', 'false-alarm': 'marked as false alarms', phishing: 'confirmed as phishing' }[action];
+        if (out.done) await this.store.addEvent({ kind: action === 'release' ? 'release' : 'mark', text: `${by} ${what} ${out.done} email${out.done === 1 ? '' : 's'} at once.` });
+        return out;
     }
 
     // Whether the service is getting Gmail's notifications at all, and its watches are renewed. Each

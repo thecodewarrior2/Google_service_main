@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.3.1: Quality of life: review, bulk actions, Status, Check an email, the weekly summary
+
+- **Review** (a new tab): the moved or "would move" emails nobody has reviewed, one at a time, oldest
+  first. **F** marks a false alarm, **P** phishing, **N** goes to the next. The tab says how many are left;
+  that's the Readiness check that asks for 80% reviewed.
+- **Several at once** on Messages: tick emails (or all on the page), then **Release to Inbox**, **Mark
+  false alarm** or **Confirm phishing**. Live updates wait while some are ticked.
+- **The browser tab's title counts what needs you:** the brake, campaigns held for a decision, users who
+  took a flagged email back.
+- **Check an email** (Messages): paste a reported email's original (Gmail: Show original), or choose an
+  `.eml` file. You see what the service would decide and why, judged as on arrival with the same lookups.
+  Nothing is stored, moved or counted; Activity notes who checked one.
+- **Message-ID on every email**, with a **Copy** button, for Google Workspace's Email log search and the
+  security investigation tool. Messages can be searched by it, and the CSV has it. The Gmail ID of each
+  copy is shown and copyable too. Emails recorded before 0.3.1 have no Message-ID.
+- **Status** (a new tab) checks the service end to end, from the dashboard, and says what to do for each
+  problem:
+  - Identity-Aware Proxy off on the worker, and who may call it;
+  - both services on the same build;
+  - the re-read and hourly jobs reaching the worker;
+  - Gmail's notifications arriving, and watches renewed;
+  - the phishing lists, alerts, errors in the last day, and the brake.
+
+  It needs the Cloud Run Viewer role (install.sh).
+- **`deploy/doctor.sh`** checks the rest from Cloud Shell and says what to run for each problem:
+  - billing;
+  - Identity-Aware Proxy on both services;
+  - the subscription's endpoint, sign-in and audience;
+  - Gmail's permission to publish;
+  - the jobs;
+  - the alert policies;
+  - errors in the worker's log.
+
+  It is read-only.
+- **A settings change doesn't rebuild.** The image is named after its files. `install.sh` with the same
+  files reuses it and only redeploys, in about a minute. `FORCE_BUILD=1` builds anyway.
+- **`TIME_ZONE`** (for example `America/New_York`): the scheduled jobs run in it (`--time-zone`), the
+  installer shows times in it, and the weekly summary goes out Monday from 7 AM there. Empty means UTC,
+  as before.
+- **`deploy/update.sh`: upgrades without a zip.** It downloads the newest approved version from
+  `google_service_main` (public), unpacks it next to your folder, and runs its `upgrade.sh`.
+  - The upgrade shows the AI model's version change. Each service is now labelled with its version and
+    model's (`spruce-version`, `spruce-model`).
+  - The AI model comes with each version, so a new one arrives only with an approved version.
+- **Weekly summary email** (Settings; **off by default**, the only setting changed from the dashboard;
+  Activity says who turned it on or off):
+  - every Monday from 7 AM, put straight into each dashboard admin's Inbox: `ADMIN_EMAILS`, and the
+    members of `ADMIN_GROUP` in your domains;
+  - the week's numbers, what waits for you, the largest campaigns, and (in monitor mode) the Readiness
+    checks;
+  - **Preview** and **Send one now** are next to the switch;
+  - it uses the Gmail API's `messages.insert`, which the existing `gmail.modify` scope allows: nothing is
+    sent and no new permission is needed;
+  - the service never judges its own summary.
+- **The dashboard reads far less from Firestore.** Since 0.2.12 every open dashboard re-read up to 20,000
+  records every 30 s. It now keeps a copy and asks only for records changed since (records carry
+  `updatedAt`; changes are read from a minute before the newest one seen, so none is missed).
+- **Fixed:** the summary's campaign lines counted the copies wrongly ("0 copies"), found by its test
+  before release.
+- **Tests:** 77 (from 67). `test/qol.test.js` covers the summary, bulk, review, pending, Status and the
+  cache. More in `test/install.test.js` (build reuse, `TIME_ZONE`, labels, `doctor.sh`, `update.sh`),
+  `test/firestore.test.js` (change tracking, held campaigns) and `test/server.test.js` (Check an email,
+  Message-ID).
+- **Docs:** `README.md`, `docs/INSTALL.md` (upgrading with `update.sh`, investigating an email in Google
+  Workspace, changing a setting, Troubleshooting starts at Status and `doctor.sh`), `docs/DEPLOY.md`,
+  `docs/ARCHITECTURE.md`, `docs/PRIVACY.md`.
+
 ## 0.3.0: Brakes that protect a whole district, alerts, campaign decisions
 
 With 7,000 mailboxes, the brake (100 moves an hour, for everyone) would have stopped protecting people

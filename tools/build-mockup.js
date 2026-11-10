@@ -35,6 +35,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     mailboxes: (await store.listUsers()).sort((a, b) => a.email.localeCompare(b.email)).map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                     renew: { available: true, last: { at: now - 15 * 60 * 60 * 1000, code: 0 } },
                     brakePerHour: 0, brakeLimit: 100, campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: 'spruce-admins@maple-schools.example',
+                    digest: { enabled: false }, timeZone: 'America/New_York', version: require('../package.json').version,
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
@@ -74,6 +75,14 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
         const k = (f) => c.filter(f).length;
         return Object.assign(base, { campaign: { key: q.get('key'), label: c[0].campaignLabel, decision: null, copies: c.length, moved: k(r => r.state === 'moved'), held: 0, recorded: k(r => r.state === 'inbox'),
           released: k(r => r.state === 'released'), strong: k(r => r.evidence === 'strong'), holdAfter: D.settings.campaignHoldAfter } }); }
+      case '/api/pending': return Object.assign(base, { brake: false, held: 0, rescues: recs.filter(r => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai').length,
+        unreviewed: recs.filter(r => (r.action === 'move' || r.action === 'would-move') && !r.markedBy).length, total: 0 });
+      case '/api/review': { const l = recs.filter(r => r.processedAt >= since && (r.action === 'move' || r.action === 'would-move') && !r.markedBy).sort((a, b) => a.processedAt - b.processedAt);
+        return Object.assign(base, { total: l.length, keys: l.map(r => r.key) }); }
+      case '/api/status': return Object.assign(base, { checks: [{ id: 'mockup', ok: null, text: 'The clickable mockup has no service to check: the real dashboard checks it here.', fix: null }] });
+      case '/api/digest/preview': return Object.assign(base, { preview: { subject: 'S.P.R.U.C.E+ weekly summary (mockup)', text: 'The real dashboard shows the summary of the last 7 days here.' } });
+      case '/api/digest': return Object.assign(base, { enabled: body.enabled === true });
+      case '/api/bulk': return Object.assign(base, { done: (body.keys || []).length, skipped: 0, failed: 0 });
       case '/api/campaign/confirm': return Object.assign(base, { moved: { moved: 0, gone: 0, failed: 0, left: 0 }, found: null });
       case '/api/campaign/release': return Object.assign(base, { released: 0, failed: 0 });
       case '/api/campaign/find': return Object.assign(base, { found: { searched: 0, of: 0, found: 0, moved: 0, failed: 0 } });

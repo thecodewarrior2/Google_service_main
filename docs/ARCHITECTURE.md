@@ -73,6 +73,15 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   checked (it went to Spam first) is checked when its Inbox label shows in the history, and never moved.
   After a gap in a mailbox's history, its Inbox since the last notification is checked in batches of 25
   with the next notifications.
+- **The weekly summary** (`src/digest.js`; off until an admin turns it on in Settings) is put straight into
+  each admin's Inbox with the Gmail API's `messages.insert`, which the `gmail.modify` scope already allows.
+  Nothing is sent, nothing leaves Google, and no mailbox or new permission is needed. The hourly job sends
+  it on Monday from 7 AM in `TIME_ZONE`, once a week whichever instance runs. The service never judges its
+  own summary: it is marked as seen, and has the `X-SPRUCE-Summary` header with no `Received:` header,
+  which mail from outside always has.
+- **The dashboard reads little.** It keeps a copy of the records (`src/dashboard/cache.js`). After one full
+  read, it asks only for records changed since (each record has `updatedAt`), at most every 15 s, however
+  many dashboards are open.
 - **Lookups that never block mail.** Every lookup has its own time limit and limits on requests at once,
   and answers are remembered (6 hours to a day; registry dates 30 days, shared). One that fails or is
   slow leaves the email "not checked". The verdict can only get stronger from a lookup, never weaker.

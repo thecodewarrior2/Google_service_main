@@ -45,6 +45,13 @@ function loadConfig(env = process.env) {
         campaignAlertAfter: num(env.CAMPAIGN_ALERT_AFTER, 50),
         quietHours: num(env.QUIET_HOURS, 12),
         alertEmail: env.ALERT_EMAIL || '',                // shown in Settings (deploy/install.sh sets up the alerts)
+        // The district's time zone (an IANA name, e.g. America/New_York): the scheduled jobs and the weekly
+        // summary (Monday from 7 AM) use it. UTC when unset.
+        timeZone: env.TIME_ZONE || 'UTC',
+        // The dashboard's address (in the weekly summary), and where the services run (the Status page).
+        dashboardUrl: env.DASHBOARD_URL || '',
+        project: env.GOOGLE_CLOUD_PROJECT || '',
+        region: env.CLOUD_RUN_REGION || '',
         movedLabel: env.MOVED_LABEL || 'SPRUCE/Moved',
         releasedLabel: env.RELEASED_LABEL || 'SPRUCE/Released',
         monitorLabel: env.MONITOR_LABEL || '',            // '' = monitor mode leaves mailboxes untouched

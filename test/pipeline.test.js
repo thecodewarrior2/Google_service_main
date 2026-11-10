@@ -99,6 +99,7 @@ test('a notification: first one only starts the history; then new Inbox messages
     assert.deepEqual(gmail.modified, [{ user: USER, id: 'm1', add: ['SPAM', 'L_SPRUCE/Moved'], remove: ['INBOX'] }]);
     const rec = await store.getRecord(`${USER}|m1`);
     assert.equal(rec.action, 'move'); assert.equal(rec.state, 'moved'); assert.equal(rec.trigger, 'rules+ai');
+    assert.equal(rec.rfc822MessageId, 'a1b2c3@brt.greenpath-example.my.id', 'the Message-ID header, for Email log search');
     assert.equal(await store.getRecord(`${USER}|m2`), null, 'clean mail is counted, not recorded');
     assert.equal((await store.getUser(USER)).historyId, '150');
     // The same notification again does nothing twice.

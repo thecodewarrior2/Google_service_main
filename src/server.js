@@ -15,6 +15,8 @@ const { loadConfig, configProblems } = require('./config');
 const { createStore } = require('./store');
 const { Service } = require('./pipeline');
 const { verifyPush, verifyTask, verifyAdmin, adminGroupCheck } = require('./auth/verify');
+const { RecordCache } = require('./dashboard/cache');
+const VERSION = require('../package.json').version;
 const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
 
@@ -44,8 +46,17 @@ const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, se
 // The group re-read from the dashboard: at most once a minute, and its last run remembered for 15 s
 // (Settings is fetched every 30 s by each open dashboard).
 const RENEW_GAP_MS = 60 * 1000, RENEW_STATUS_MS = 15 * 1000;
+// "Check an email": the largest email accepted (as pasted or uploaded).
+const CHECK_MAX_BYTES = 10 * 1024 * 1024;
 
-function createApp({ cfg, store, service, scheduler = null }) {
+// Recorded emails nobody has reviewed yet (the review queue): moved or "would move", not by an admin.
+const unreviewed = (r) => (r.action === 'move' || r.action === 'would-move') && r.trigger !== 'admin' && !r.markedBy;
+// A user took back an email the checks flagged, and no admin has looked yet.
+const rescueToCheck = (r) => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai';
+
+function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
+    // (records past RETENTION_DAYS are deleted daily: the copy forgets them too)
+    const cache = new RecordCache(store, { keepDays: Math.min(92, cfg.retentionDays || 92) });
     let renewAskedAt = 0, renewStatus = null, renewStatusAt = 0;
     const canRenew = () => !!(scheduler && cfg.renewJob);
     async function lastRenew() {
@@ -60,7 +71,7 @@ function createApp({ cfg, store, service, scheduler = null }) {
     const groupCheck = cfg.adminGroups.length && service.gmail && service.gmail.hasMember ? adminGroupCheck(cfg, service.gmail) : null;
     const since = (q) => Date.now() - Math.min(90, Math.max(1, Number(q.get('days')) || 30)) * A.DAY;
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
-    const load = async (q) => ({ records: await store.listRecords({ sinceMs: since(q) - A.DAY, limit: 20000 }), stats: await store.getStats(A.dayOf(since(q)), A.dayOf(Date.now())) });
+    const load = async (q) => ({ records: await cache.list(since(q) - A.DAY, 20000), stats: await store.getStats(A.dayOf(since(q)), A.dayOf(Date.now())) });
 
     // The brake, and how many emails it holds (still in the Inbox, recorded since it came on).
     async function brakeInfo(records) {
@@ -70,9 +81,57 @@ function createApp({ cfg, store, service, scheduler = null }) {
     }
     // Campaigns held on weak evidence, waiting for an admin's decision.
     async function heldCampaigns(records) {
-        const held = (await store.listCampaignStates()).filter(c => c.heldAt && !c.decision);
+        const held = (await store.listHeldCampaigns()).filter(c => !c.decision);
         return held.map(c => ({ campaign: c.key, label: c.label, heldAt: c.heldAt, held: records.filter(r => r.campaign === c.key && r.held === 'campaign' && r.state === 'inbox').length }))
             .sort((a, b) => b.held - a.held).slice(0, 20);
+    }
+    let digestSentAt = 0;
+    // The Status page's checks: { id, ok (true, false, or null: couldn't check), text, fix }.
+    async function statusChecks() {
+        const now = Date.now(), out = [];
+        const add = (id, ok, text, fix) => out.push({ id, ok, text, fix: ok === true ? null : fix || null });
+        const project = cfg.project || (cfg.demo ? 'demo' : ''), region = cfg.region || (cfg.demo ? 'demo' : '');
+        if (cloudrun && project && region) {
+            try {
+                const w = await cloudrun.service(project, region, 'spruce-worker');
+                add('iap', !w.iap, w.iap ? 'Identity-Aware Proxy is ON for spruce-worker: Gmail\'s notifications and the scheduled jobs are refused.' : 'Identity-Aware Proxy is off for spruce-worker, as it must be.',
+                    'Run bash deploy/install.sh (it turns it off), or: gcloud beta run services update spruce-worker --region=REGION --no-iap');
+                const wv = ((w.image.split(':')[1] || '').split('-')[0]) || '';
+                add('version', wv === VERSION, wv === VERSION ? `Both services run ${VERSION}.` : `The worker runs ${wv || 'an unknown build'}, the dashboard ${VERSION}.`, 'Run bash deploy/install.sh (or upgrade.sh), so both run the same build.');
+                const inv = await cloudrun.invokers(project, region, 'spruce-worker');
+                const okInv = inv.some(m => /^serviceAccount:spruce-invoker@/.test(m));
+                add('invoker', okInv, okInv ? 'spruce-invoker may call the worker (Pub/Sub and the scheduled jobs sign in as it).' : 'spruce-invoker may not call the worker: notifications and jobs are refused.', 'Run bash deploy/install.sh (it grants roles/run.invoker to spruce-invoker).');
+            } catch (e) { add('cloudrun', null, `Couldn't read the worker's settings: ${String(e.message).slice(0, 160)}`, 'The service account needs the Cloud Run Viewer role: run bash deploy/install.sh again.'); }
+        } else add('cloudrun', null, 'The worker\'s settings aren\'t checked here (GOOGLE_CLOUD_PROJECT and CLOUD_RUN_REGION aren\'t set).', 'Run bash deploy/install.sh again.');
+        const renew = await lastRenew();
+        if (renew && renew.at) add('renew', !renew.code, renew.code ? `The last re-read of the group (${new Date(renew.at).toISOString().slice(0, 16).replace('T', ' ')} UTC) didn't reach the worker.` : 'The last re-read of the group reached the worker.',
+            'docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused" (or run bash deploy/doctor.sh).');
+        else add('renew', null, renew && renew.error ? `Couldn't read the re-read job: ${renew.error}` : 'The re-read job isn\'t known here (RENEW_JOB).', 'Run bash deploy/install.sh again.');
+        if (canRenew()) {
+            const sync = await scheduler.lastRun(cfg.renewJob.replace(/spruce-renew-watches$/, 'spruce-sync-feeds')).catch(e => ({ error: e.message }));
+            if (sync.error) add('hourly', null, `Couldn't read the hourly job: ${String(sync.error).slice(0, 160)}`);
+            else add('hourly', !!sync.at && !sync.code && now - sync.at < 2 * 3600 * 1000, sync.at ? `The hourly job (health check, phishing lists, weekly summary) last ran ${Math.round((now - sync.at) / 60000)} minutes ago${sync.code ? ', and didn\'t reach the worker' : ''}.` : 'The hourly job hasn\'t run yet.',
+                'Check spruce-sync-feeds in Cloud Scheduler, or run bash deploy/doctor.sh.');
+        }
+        const users = (await store.listUsers()).filter(u => u.watched);
+        const last = Math.max(0, ...users.map(u => Number(u.lastNotification) || 0));
+        add('notifications', users.length > 0 && !!last && now - last < cfg.quietHours * 3600 * 1000,
+            !users.length ? 'No mailbox is watched.' : last ? `Gmail's last notification: ${Math.round((now - last) / 60000)} minutes ago, for ${users.length} watched mailboxes.` : 'No notification from Gmail yet.',
+            !users.length ? 'Settings → Update group membership now, then Settings → Mailboxes watched.' : 'Send a test email to a watched mailbox; if nothing comes, run bash deploy/doctor.sh.');
+        const expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + 24 * 3600 * 1000).length;
+        add('watches', !expiring, expiring ? `${expiring} mailbox watches end within a day.` : 'Every watch is renewed in time.', 'Settings → Update group membership now.');
+        if (service.intel && service.intel.feeds) {
+            const lists = await service.intel.feeds.status().catch(() => []);
+            const oldest = Math.min(...lists.map(l => l.updated || 0));
+            add('lists', lists.length > 0 && oldest > now - 2 * 24 * 3600 * 1000, lists.length && oldest ? `The phishing lists were updated ${Math.round((now - oldest) / 3600000)} hours ago at the oldest.` : 'The phishing lists haven\'t been downloaded yet.', 'Activity → Errors shows why a download failed.');
+        }
+        // (install.sh always sets it, to the admin group by default: empty means ALERT_EMAIL=off, a choice)
+        add('alerts', true, cfg.alertEmail ? `Alerts are emailed to ${cfg.alertEmail}.` : 'Alerts aren\'t emailed (ALERT_EMAIL=off): they show in Activity.');
+        const errors = (await store.listEvents(now - 24 * 3600 * 1000)).filter(e => e.kind === 'error').length;
+        add('errors', errors === 0, errors ? `${errors} errors in the last day.` : 'No errors in the last day.', 'Activity → Errors and gaps.');
+        const brake = await store.getState('brake');
+        add('brake', !brake, brake ? 'The domain-wide brake is on: nothing is moved.' : 'The domain-wide brake is off.', 'Overview → Resume.');
+        return out;
     }
     const ACTIONS_GAP_MS = 5000;   // a campaign action at most every 5 s per campaign (no double clicks)
     const lastAction = new Map();
@@ -98,6 +157,7 @@ function createApp({ cfg, store, service, scheduler = null }) {
         'GET /api/settings': async () => {
             const E = spruce.load();
             const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
+            const digest = Object.assign({ enabled: false }, await store.getState('digest'));
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
@@ -108,7 +168,7 @@ function createApp({ cfg, store, service, scheduler = null }) {
                      // started means no notifications arrive for it.
                      mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
                          .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
-                     renew,
+                     renew, digest, timeZone: cfg.timeZone, version: VERSION,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
@@ -149,6 +209,47 @@ function createApp({ cfg, store, service, scheduler = null }) {
             const { records } = await load(q);
             const list = A.filterRecords(records, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since: since(q) });
             return { csv: A.toCsv(list), filename: `spruce-messages-${A.dayOf(Date.now())}.csv` };
+        },
+        // "Check an email": what the service would decide for a pasted email, and why. Nothing of it is
+        // stored; Activity notes who checked one, and the sender's domain.
+        'POST /api/check': async (q, body, admin) => {
+            const raw = typeof body.raw === 'string' ? body.raw : '';
+            if (!raw.trim()) return { error: 'Paste the email\'s original (in Gmail: Show original), or choose an .eml file.', status: 400 };
+            if (Buffer.byteLength(raw) > CHECK_MAX_BYTES) return { error: 'That email is over 10 MB.', status: 413 };
+            const result = await service.checkPasted(raw, { by: admin.email });
+            await store.addEvent({ kind: 'check', text: `${admin.email} checked a pasted email from ${result.sender.domain || 'an unknown sender'}.` });
+            return { result };
+        },
+        // The review queue: emails moved or "would move" nobody has reviewed, oldest first.
+        'GET /api/review': async (q) => {
+            const list = (await cache.list(since(q))).filter(unreviewed).sort((a, b) => a.processedAt - b.processedAt);
+            return { total: list.length, keys: list.slice(0, 1000).map(r => r.key) };
+        },
+        // Several emails at once: release, false-alarm or phishing (at most 500).
+        'POST /api/bulk': async (q, body, admin) => {
+            const keys = Array.isArray(body.keys) ? [...new Set(body.keys.map(String))].slice(0, 500) : [];
+            if (!['release', 'false-alarm', 'phishing'].includes(body.action) || !keys.length) return { error: 'Choose emails and what to do with them.', status: 400 };
+            return service.bulk(keys, body.action, admin.email);
+        },
+        // What needs an admin (the browser tab's title shows the count): the brake, held campaigns, users
+        // who took flagged mail back; and how many emails wait for review.
+        'GET /api/pending': async () => {
+            const records = await cache.list(Date.now() - 30 * A.DAY);
+            const brake = !!(await store.getState('brake'));
+            const held = (await store.listHeldCampaigns()).filter(c => !c.decision).length;
+            const rescues = records.filter(rescueToCheck).length;
+            return { brake, held, rescues, unreviewed: records.filter(unreviewed).length, total: (brake ? 1 : 0) + held + rescues };
+        },
+        // The Status page: what this week's troubleshooting needed, checked in one place.
+        'GET /api/status': async () => ({ checks: await statusChecks() }),
+        // The weekly summary email: on or off (off by default), a preview, and one now.
+        'GET /api/digest/preview': async () => ({ preview: await service.digestContent() }),
+        'POST /api/digest': async (q, body, admin) => service.setDigest(body.enabled === true, admin.email),
+        'POST /api/digest/send': async (q, body, admin) => {
+            if (Date.now() - digestSentAt < 60 * 1000) return { error: 'Sent less than a minute ago.', status: 429 };
+            digestSentAt = Date.now();
+            if (cfg.demo) return { sent: 0, to: [], failed: [], demo: true };
+            try { return await service.sendDigest({ by: admin.email }); } catch (e) { return { error: `Couldn't send it: ${String(e.message).slice(0, 200)}`, status: 502 }; }
         },
         // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
         'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500) }),
@@ -209,8 +310,10 @@ function createApp({ cfg, store, service, scheduler = null }) {
             if (!admin.ok) return send(res, admin.status || 403, { error: admin.why });
             if (api[route]) {
                 if (req.method === 'POST' && req.headers['x-requested-with'] !== 'spruce-dashboard') return send(res, 403, { error: 'missing request header' });
-                const body = req.method === 'POST' ? await readBody(req, 64 * 1024) : {};
+                // (a pasted email for "Check an email" can be large: its attachments come with it)
+                const body = req.method === 'POST' ? await readBody(req, route === 'POST /api/check' ? CHECK_MAX_BYTES * 2 : 64 * 1024) : {};
                 const out = await api[route](url.searchParams, body, admin);
+                if (req.method === 'POST') cache.stale();
                 if (out && typeof out.csv === 'string') return send(res, 200, out.csv, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${out.filename}"` });
                 return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo }, out));
             }
@@ -243,14 +346,17 @@ async function main() {
         const { GmailClient } = require('./gmail/client');
         store = createStore(cfg);
         gmail = new GmailClient(new DelegatedAuth(cfg));
-        // The network checks run where mail is judged (the worker).
-        if (cfg.role !== 'admin') intel = require('./intel').createIntel({ cfg, store, engine: spruce.load(), version: require('../package.json').version });
+        // The network checks: where mail is judged (the worker), and for "Check an email" (the dashboard).
+        intel = require('./intel').createIntel({ cfg, store, engine: spruce.load(), version: require('../package.json').version });
     }
     spruce.load();
     const service = new Service({ cfg, store, gmail, intel });
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
     const scheduler = !cfg.demo && cfg.role !== 'worker' && cfg.renewJob ? require('./scheduler').createScheduler() : null;
-    http.createServer(createApp({ cfg, store, service, scheduler })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
+    // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
+    const cloudrun = cfg.demo ? { service: async () => ({ iap: false, image: `demo:${VERSION}-demo`, url: '' }), invokers: async () => ['serviceAccount:spruce-invoker@demo.iam.gserviceaccount.com'] }
+        : cfg.role !== 'worker' ? require('./cloudrun').createCloudRun() : null;
+    http.createServer(createApp({ cfg, store, service, scheduler, cloudrun })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

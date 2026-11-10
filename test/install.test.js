@@ -23,6 +23,8 @@ function workspace(name = 'spruce-mail-protection-0.3.0', settings = SETTINGS) {
     for (const d of [path.join(dir, 'deploy'), bin, fake]) fs.mkdirSync(d, { recursive: true });
     for (const f of fs.readdirSync(path.join(ROOT, 'deploy'))) fs.copyFileSync(path.join(ROOT, 'deploy', f), path.join(dir, 'deploy', f));
     for (const f of ['package.json', 'CHANGELOG.md']) fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
+    fs.mkdirSync(path.join(dir, 'vendor', 'spruce'), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'vendor', 'spruce', 'VENDOR.json'), path.join(dir, 'vendor', 'spruce', 'VENDOR.json'));
     if (settings !== null) fs.writeFileSync(path.join(dir, 'deploy', 'settings.env'), settings);
     for (const f of ['gcloud', 'docker']) { fs.copyFileSync(path.join(FAKEBIN, f), path.join(bin, f)); fs.chmodSync(path.join(bin, f), 0o755); }
     const run = (script, env = {}, args = []) => {
@@ -30,7 +32,7 @@ function workspace(name = 'spruce-mail-protection-0.3.0', settings = SETTINGS) {
         fs.writeFileSync(log, '');
         const r = spawnSync('bash', [path.join('deploy', script), ...args], { cwd: dir, encoding: 'utf8', input: '',
             env: Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_LOG: log, FAKE_DIR: fake, SPRUCE_WAIT_STEP: '0', SPRUCE_STOP_WAIT: '0' }, env) });
-        return { code: r.status, out: `${r.stdout}${r.stderr}`, calls: fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) };
+        return { code: r.status, out: `${r.stdout}${r.stderr}`.replace(/\x1b\[[0-9;]*m/g, ''), calls: fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) };
     };
     return { home, dir, fake, run, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
@@ -130,5 +132,69 @@ test('upgrade.sh: finds the old settings, adds new ones empty, says what\'s new,
         assert.equal(s.code, 0, s.out);
         assert.ok(has(s.calls, /^gcloud config set project test-proj --quiet$/));
         assert.ok(has(s.calls, /scheduler jobs pause spruce-renew-watches --location=us-east1 /));
+    } finally { w.cleanup(); }
+});
+
+test('install.sh: the same files again reuse the image (a settings change only redeploys); jobs run in TIME_ZONE; services are labelled', { skip: !hasBash }, () => {
+    const w = workspace();
+    try {
+        fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), SETTINGS + 'TIME_ZONE=America/New_York\n');
+        let r = w.run('install.sh', { FAKE_IMAGE: 'exists' });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /These files were built before: using that image/);
+        assert.ok(!has(r.calls, /docker build|builds submit/), 'nothing built');
+        assert.ok(has(r.calls, /run deploy spruce-worker --image=us-east1-docker\.pkg\.dev\/test-proj\/spruce\/mail-protection:\d+\.\d+\.\d+-src[0-9a-f]{12} /));
+        assert.ok(has(r.calls, /run deploy spruce-worker .*--update-labels=spruce-version=\d+-\d+-\d+,spruce-model=\d+-\d+-\d+/));
+        assert.ok(has(r.calls, /jobs create http spruce-renew-watches .*--time-zone=America\/New_York/));
+        assert.match(r.out, /spruce-renew-watches \(17 3 \* \* \*, America\/New_York\)/);
+        r = w.run('install.sh', { FAKE_IMAGE: 'exists', FORCE_BUILD: '1' });
+        assert.ok(has(r.calls, /docker build/), 'FORCE_BUILD builds anyway');
+        fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), SETTINGS + 'TIME_ZONE=Eastern\n');
+        r = w.run('install.sh');
+        assert.equal(r.code, 1); assert.match(r.out, /TIME_ZONE must be a time zone name/);
+    } finally { w.cleanup(); }
+});
+
+test('doctor.sh: everything working, then each problem with what to do; read-only', { skip: !hasBash }, () => {
+    const w = workspace();
+    try {
+        let r = w.run('doctor.sh');
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /Everything checked works/);
+        assert.equal((r.out.match(/ OK /g) || []).length, 11, r.out);
+        assert.ok(!r.calls.some(c => /\b(create|update|delete|add-iam-policy-binding|remove-iam-policy-binding|deploy|enable|run spruce|pause|resume)\b/.test(c.replace(/^gcloud config set .*/, ''))), 'it changes nothing');
+        r = w.run('doctor.sh', { FAKE_IAP: 'on', FAKE_INVOKER: 'missing', FAKE_SUB: 'wrong', FAKE_ALERTS: 'no', FAKE_ERRORS: '3', FAKE_JOB: 'refused', FAKE_ADMIN_VERSION: '0.1.0' });
+        assert.equal(r.code, 1);
+        for (const re of [/Identity-Aware Proxy is ON for spruce-worker.*\n.*--no-iap/, /spruce-invoker may not call the worker/, /The Pub\/Sub subscription doesn't match the worker/,
+            /The job spruce-renew-watches's last run didn't reach the worker \(status 2\)/, /The alert policies are missing \(0 of 2\)/, /3 errors in the worker's log/, /The worker runs 0\.2\.14 and the dashboard 0\.1\.0/]) assert.match(r.out, re);
+        assert.match(r.out, /7 to fix/);
+    } finally { w.cleanup(); }
+});
+
+test('update.sh: fetches the newest approved version, unpacks it next to this folder, and upgrades from it; nothing when already newest', { skip: !hasBash }, () => {
+    const w = workspace('spruce-mail-protection-0.2.14');
+    try {
+        // A stand-in for the approved releases' repository, at a newer version.
+        const rel = path.join(w.home, 'releases-src'), bare = path.join(w.home, 'releases.git');
+        fs.mkdirSync(path.join(rel, 'deploy'), { recursive: true }); fs.mkdirSync(path.join(rel, 'vendor', 'spruce'), { recursive: true });
+        for (const f of fs.readdirSync(path.join(ROOT, 'deploy'))) if (f !== 'settings.env') fs.copyFileSync(path.join(ROOT, 'deploy', f), path.join(rel, 'deploy', f));
+        fs.copyFileSync(path.join(ROOT, 'CHANGELOG.md'), path.join(rel, 'CHANGELOG.md'));
+        fs.copyFileSync(path.join(ROOT, 'vendor', 'spruce', 'VENDOR.json'), path.join(rel, 'vendor', 'spruce', 'VENDOR.json'));
+        fs.writeFileSync(path.join(rel, 'package.json'), JSON.stringify({ name: 'spruce-gmail-service', version: '9.9.0' }, null, 2));
+        fs.writeFileSync(path.join(w.dir, 'package.json'), JSON.stringify({ name: 'spruce-gmail-service', version: '0.2.14' }, null, 2));
+        const git = (...a) => { const x = spawnSync('git', a, { cwd: rel, encoding: 'utf8', env: Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x.example', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x.example' }) }); assert.equal(x.status, 0, x.stderr); return x; };
+        git('init', '-q', '-b', 'main'); git('add', '-A'); git('commit', '-q', '-m', 'release 9.9.0');
+        assert.equal(spawnSync('git', ['clone', '-q', '--bare', rel, bare]).status, 0);
+        const r = w.run('update.sh', { SPRUCE_RELEASES: `file://${bare}` });
+        assert.equal(r.code, 0, r.out);
+        const dest = path.join(w.home, 'spruce-mail-protection-9.9.0');
+        assert.match(r.out, /Unpacked 9\.9\.0 in .*spruce-mail-protection-9\.9\.0/);
+        assert.ok(fs.existsSync(path.join(dest, 'deploy', 'settings.env')), 'the settings were copied over');
+        assert.match(r.out, /Upgrade S\.P\.R\.U\.C\.E\+ Mail Protection in test-proj \(us-east1\): 0\.2\.14 -> 9\.9\.0/);
+        assert.match(r.out, /AI model \(phish-tiny\): \d+\.\d+\.\d+ -> \d+\.\d+\.\d+ \(the same\)/);
+        assert.ok(has(r.calls, /run deploy spruce-worker/));
+        // From the new folder: already the newest.
+        const again = spawnSync('bash', [path.join(dest, 'deploy', 'update.sh')], { cwd: dest, encoding: 'utf8', env: Object.assign({}, process.env, { SPRUCE_RELEASES: `file://${bare}` }) });
+        assert.equal(again.status, 0); assert.match(again.stdout, /already 9\.9\.0, the newest approved version/);
     } finally { w.cleanup(); }
 });

@@ -90,13 +90,21 @@ the tab is visible (not while you're typing in it, or using it otherwise). The b
 when it last updated, and **Pause updates** stops it.
 
 The dashboard has these pages:
+- **Review:** the moved or "would move" emails nobody has reviewed, one at a time, oldest first: **F** false
+  alarm, **P** phishing, **N** next. The tab shows how many are left.
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per day by trigger; top
   reasons; largest campaigns; alerts.
 - **Campaigns** and **Users:** each opens the list of emails behind it.
   - For a campaign: **Confirm phishing: move every copy** (optionally searching every watched mailbox for
     copies the service didn't record), **False alarm: release every copy**, and **Find other copies**.
-- **Messages:** search and filters, opening each email's decision. **Download CSV** gives the same list.
-  - It says how strong the evidence was.
+- **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download CSV**
+  gives the same list.
+  - Tick several to **release**, **mark false alarm** or **confirm phishing** them at once.
+  - Each email shows how strong the evidence was, and its **Message-ID** and Gmail ID, each with a
+    **Copy** button. The Message-ID is what Google Workspace's Email log search and the security
+    investigation tool look an email up by.
+  - **Check an email:** paste a reported email's original (Gmail: Show original), or an `.eml` file, to see
+    what the service would decide and why. Nothing is stored, moved or counted.
   - It shows the signs found with their weights, flagged links, the AI score with what weighed most,
     and the sender check.
   - Buttons: **Release to Inbox**, **Mark false alarm**, **Confirm phishing**.
@@ -107,11 +115,20 @@ The dashboard has these pages:
   emails reviewed, false alarms, staff mail failing DMARC, the busiest hour against the brake,
   notifications arriving, the group re-read reaching the service.
 - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
+- **Status:** whether the service works end to end, with what to do for each problem: Identity-Aware
+  Proxy off on the worker, who may call it, both services on the same build, the jobs reaching it,
+  notifications arriving, watches renewed, the phishing lists, alerts, errors, the brake.
+  `deploy/doctor.sh` checks the rest from Cloud Shell.
 - **Settings:** the policy in force, read-only, and each watched mailbox with the last time Gmail
   notified the service about it.
   - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
     run.
   - It also says when the group was last read and whether that reached the service.
+  - **Weekly summary email** (off by default; the only setting changed here): every Monday from 7 AM
+    (`TIME_ZONE`), the week's numbers, what waits, and the largest campaigns go into each dashboard admin's
+    Inbox. **Preview** and **Send one now** are next to it.
+- **The browser tab's title** counts what needs you: the brake, held campaigns, users who took flagged
+  mail back.
 
 The dashboard's numbers come from `src/dashboard/aggregate.js`. The clickable mockup
 (`tools/build-mockup.js`) uses that same file with made-up data.
@@ -167,8 +184,16 @@ The last command writes `build/mockup.html`, a single file to share the look and
 ## Deploying
 
 **To test in your own Workspace, limited to one security group:** `docs/INSTALL.md`. A script,
-`deploy/install.sh`, sets everything up from Cloud Shell; `deploy/upgrade.sh` installs a new version over
-it, `deploy/rollback.sh` goes back, and `deploy/stop.sh` stops it.
+`deploy/install.sh`, sets everything up from Cloud Shell, and the others look after it:
+- **`deploy/update.sh`** upgrades to the newest approved version (from `google_service_main`), with no
+  zip to upload. Each version brings its own AI model; the upgrade says when the model changes.
+- **`deploy/upgrade.sh`** installs a version you unzipped over the installed one.
+- **`deploy/rollback.sh`** goes back to the previous build.
+- **`deploy/stop.sh`** stops it.
+- **`deploy/doctor.sh`** checks the installation end to end and says what to run for each problem.
+
+Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` again. It reuses the image
+built from the same files, so it only redeploys, in about a minute.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
 `docs/ARCHITECTURE.md` explains the pieces.
@@ -185,10 +210,13 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `src/store/` | Firestore (production) and memory (demo, tests) |
 | `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |
 | `src/scheduler.js` | Cloud Scheduler, for the dashboard's "Update group membership now" (runs the daily re-read job) |
+| `src/digest.js` | The weekly summary email (put in admins' Inboxes; never judged by the service) |
+| `src/cloudrun.js` | Cloud Run, read-only, for the Status page |
+| `src/dashboard/cache.js` | The dashboard's copy of the records: one full read, then only what changed |
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
-| `deploy/` | `install.sh`, `upgrade.sh`, `rollback.sh` and `stop.sh` (Cloud Shell), `settings.example.env` |
+| `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh` and `doctor.sh` (Cloud Shell), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
 | `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip) |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

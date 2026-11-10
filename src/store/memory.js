@@ -43,12 +43,17 @@ class MemoryStore {
         if (!this.seenIds.has(k) && this.seenIds.size > 200000) this.seenIds.delete(this.seenIds.keys().next().value);
         this.seenIds.set(k, v);
     }
-    async saveRecord(rec) { this.records.set(rec.key, JSON.parse(JSON.stringify(rec))); }
+    async saveRecord(rec) { this.records.set(rec.key, JSON.parse(JSON.stringify(Object.assign({}, rec, { updatedAt: Date.now() })))); }
+    // Records saved or changed after a time (the dashboard's cache: src/dashboard/cache.js).
+    async listRecordsChangedSince(ms, limit = 5000) {
+        return [...this.records.values()].filter(r => (r.updatedAt || r.processedAt) > ms).sort((a, b) => (a.updatedAt || a.processedAt) - (b.updatedAt || b.processedAt))
+            .slice(0, limit).map(r => JSON.parse(JSON.stringify(r)));
+    }
     async getRecord(key) { const r = this.records.get(key); return r ? JSON.parse(JSON.stringify(r)) : null; }
     async updateRecord(key, patch) {
         const r = this.records.get(key);
         if (!r) return null;
-        Object.assign(r, patch);
+        Object.assign(r, patch, { updatedAt: Math.max(Date.now(), (r.updatedAt || 0) + 1) });
         return JSON.parse(JSON.stringify(r));
     }
     async listRecords({ sinceMs = 0, untilMs = Infinity, limit = 5000 } = {}) {
@@ -92,6 +97,7 @@ class MemoryStore {
     async getCampaign(key) { const c = this.campaignState.get(key); return c ? JSON.parse(JSON.stringify(c)) : null; }
     async setCampaign(key, patch) { this.campaignState.set(key, Object.assign({ key }, this.campaignState.get(key) || {}, patch, { at: Date.now() })); }
     async listCampaignStates() { return [...this.campaignState.values()].map(c => JSON.parse(JSON.stringify(c))); }
+    async listHeldCampaigns() { return (await this.listCampaignStates()).filter(c => c.heldAt); }
     // Sets a state only when it isn't set yet (the brake: one alert when instances trip it together).
     async setStateIfUnset(name, value) {
         if (this.state.get(name)) return false;

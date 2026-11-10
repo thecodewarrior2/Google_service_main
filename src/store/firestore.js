@@ -62,14 +62,20 @@ class FirestoreStore {
     }
     async unclaim(user, id) { await this.seenRef(user, id).set({ state: 'retry' }, { merge: true }); }
     async markSeen(user, id, extra = {}) { await this.seenRef(user, id).set(Object.assign({ at: Date.now(), state: 'done' }, extra), { merge: true }); }
-    async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(rec); }
+    async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(Object.assign({}, rec, { updatedAt: Date.now() })); }
+    // Records saved or changed after a time, oldest change first (the dashboard's cache).
+    async listRecordsChangedSince(ms, limit = 5000) {
+        const q = await this.col('records').where('updatedAt', '>', ms).orderBy('updatedAt').limit(limit).get();
+        return q.docs.map(d => d.data());
+    }
     async getRecord(key) { const d = await this.col('records').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
     async updateRecord(key, patch) {
         const ref = this.col('records').doc(safeId(key));
         const d = await ref.get();
         if (!d.exists) return null;
-        await ref.set(patch, { merge: true });
-        return Object.assign(d.data(), patch);
+        const p = Object.assign({}, patch, { updatedAt: Date.now() });
+        await ref.set(p, { merge: true });
+        return Object.assign(d.data(), p);
     }
     async listRecords({ sinceMs = 0, untilMs = Number.MAX_SAFE_INTEGER, limit = 5000 } = {}) {
         const q = await this.col('records').where('processedAt', '>=', sinceMs).where('processedAt', '<', untilMs).orderBy('processedAt', 'desc').limit(limit).get();
@@ -153,6 +159,8 @@ class FirestoreStore {
     }
     async getCampaign(key) { const d = await this.col('campaigns').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
     async setCampaign(key, patch) { await this.col('campaigns').doc(safeId(key)).set(Object.assign({ key }, patch, { at: Date.now() }), { merge: true }); }
+    // Only the campaigns ever held (the dashboard asks every 30 s: a few documents, not every campaign).
+    async listHeldCampaigns() { return (await this.col('campaigns').where('heldAt', '>', 0).limit(500).get()).docs.map(d => d.data()); }
     async listCampaignStates() { return (await this.col('campaigns').where('at', '>=', Date.now() - 90 * 24 * 3600 * 1000).limit(2000).get()).docs.map(d => d.data()); }
     // Sets a state only when it isn't set yet (the brake: one alert when instances trip it together).
     async setStateIfUnset(name, value) {

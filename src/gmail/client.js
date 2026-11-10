@@ -66,11 +66,15 @@ class GmailClient {
         const r = await this.call(user, 'GET', '/messages', { query: Object.assign({ q, maxResults: String(max) }, pageToken ? { pageToken } : {}) });
         return { ids: (r.messages || []).map(m => m.id), next: r.nextPageToken || null };
     }
-    // From, Subject and labels of a message, without its body.
+    // From, Subject, Message-ID and labels of a message, without its body.
     async headers(user, id) {
-        const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'metadata', metadataHeaders: ['From', 'Subject'] } });
+        const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] } });
         const get = (n) => ((r.payload && r.payload.headers) || []).find(x => String(x.name).toLowerCase() === n.toLowerCase());
-        return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], internalDate: Number(r.internalDate) || null, from: get('From') ? get('From').value : '', subject: get('Subject') ? get('Subject').value : '' };
+        return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], internalDate: Number(r.internalDate) || null, from: get('From') ? get('From').value : '', subject: get('Subject') ? get('Subject').value : '', messageId: get('Message-ID') ? get('Message-ID').value : '' };
+    }
+    // Puts a message straight into a mailbox (the weekly summary): no sending, nothing leaves Google.
+    insert(user, raw, labelIds = ['INBOX', 'UNREAD']) {
+        return this.call(user, 'POST', '/messages', { query: { internalDateSource: 'dateHeader' }, body: { raw: Buffer.from(raw).toString('base64url'), labelIds } });
     }
     modify(user, id, add = [], remove = []) { return this.call(user, 'POST', `/messages/${encodeURIComponent(id)}/modify`, { body: { addLabelIds: add, removeLabelIds: remove } }); }
     // The id of a label of ours ("SPRUCE/Moved"), made if the mailbox doesn't have it yet.

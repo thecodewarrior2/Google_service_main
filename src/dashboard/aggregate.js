@@ -116,7 +116,7 @@
         return records.filter(r => (!q.user || r.user === q.user) && (!q.campaign || r.campaign === q.campaign)
             && (!q.action || r.action === q.action) && (!q.state || r.state === q.state)
             && (!q.since || r.processedAt >= q.since)
-            && (!text || `${r.user} ${r.sender.address} ${r.sender.name} ${r.subject}`.toLowerCase().includes(text)));
+            && (!text || `${r.user} ${r.sender.address} ${r.sender.name} ${r.subject} ${r.rfc822MessageId || ''} ${r.messageId || ''}`.toLowerCase().includes(text)));
     }
 
     // How the AI and the rules are doing: scores of recorded emails, and how often each kind of move
@@ -187,12 +187,12 @@
             ['sender_name', r => r.sender && r.sender.name], ['subject', r => r.subject], ['campaign', r => r.campaignLabel], ['status', r => r.status], ['score', r => r.score],
             ['ai', r => (r.ai && typeof r.ai.probability === 'number' ? Math.round(r.ai.probability * 1000) / 1000 : '')], ['action', r => r.action], ['trigger', r => r.trigger],
             ['evidence', r => r.evidence], ['where', r => r.state], ['released_by', r => r.releasedBy], ['false_alarm', r => (r.falseAlarm === null || r.falseAlarm === undefined ? '' : r.falseAlarm)],
-            ['marked_by', r => r.markedBy], ['why', r => r.why]];
+            ['marked_by', r => r.markedBy], ['why', r => r.why], ['message_id', r => r.rfc822MessageId], ['gmail_id', r => r.messageId]];
         return [cols.map(c => c[0]).join(','), ...records.map(r => cols.map(c => cell(c[1](r))).join(','))].join('\r\n') + '\r\n';
     }
 
     // Recent activity, by kind: alerts, what admins did, errors, and the watching of mailboxes.
-    const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
+    const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
     return { DAY, dayOf, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity };

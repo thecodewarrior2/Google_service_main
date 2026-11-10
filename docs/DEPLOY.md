@@ -109,6 +109,13 @@ gcloud iam service-accounts add-iam-policy-binding spruce-delegate@PROJECT.iam.g
 gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/datastore.user
 ```
 
+For the dashboard's Status page: read the worker's Cloud Run settings (Identity-Aware Proxy, who may call
+it, its build).
+
+```bash
+gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/run.viewer
+```
+
 For the dashboard's "Update group membership now": run the re-read job, and read when it last ran.
 
 ```bash
@@ -279,6 +286,9 @@ Creator** on `spruce-invoker`. Check Google's push-authentication docs.)
 | `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
 | `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before the rest wait for an admin; strong evidence is never held |
 | `CAMPAIGN_ALERT_AFTER` | `50` | a campaign moved this many times sends an alert |
+| `TIME_ZONE` | `UTC` | the time zone (IANA name) of the scheduled jobs (`--time-zone`) and of the weekly summary (Monday from 7 AM) |
+| `DASHBOARD_URL` | none | the dashboard's address, in the weekly summary (install.sh: `https://spruce-admin-NUMBER.REGION.run.app`) |
+| `GOOGLE_CLOUD_PROJECT`, `CLOUD_RUN_REGION` | none | where the services run, for the dashboard's Status page |
 | `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |
 | `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Released` | labels added to moved and released mail |

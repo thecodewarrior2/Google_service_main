@@ -35,6 +35,7 @@ For emails the policy moved, would have moved, or found suspicious, it keeps:
 - the AI score, and up to three short quotes (160 characters) the model weighed most (`STORE_AI_QUOTES`);
 - Gmail's DMARC, SPF and DKIM results;
 - attachment names;
+- its Message-ID (the header Google Workspace's Email log search uses), and Gmail's ID of the copy;
 - the decision, and who released or marked it (including "moved back by the user" when a user takes a
   moved email out of Spam themselves).
 
@@ -60,6 +61,11 @@ And:
   Every release and mark records who did it.
 - **The service's own accounts:** in your Cloud project, under IAM. Limit project access to the people
   who run the service.
+- **The weekly summary** (off by default) goes into the Inbox of each dashboard admin. It has the week's
+  counts, what waits for an admin, and the largest campaigns: each one's sender domain, and its subject
+  if `STORE_SUBJECTS` keeps subjects. It names no recipient.
+- **Check an email:** the pasted email is judged in memory and never stored. Its links and sender go to the
+  same lookups as arriving mail. Activity notes who checked one, and the sender's domain.
 - **Alert emails** go to `ALERT_EMAIL` (the admin group by default). They say what happened, with what
   the dashboard shows for it: a campaign's sender domain and subject, and for a user who took a flagged
   email into their Inbox, their address and the sender's.

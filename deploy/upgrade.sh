@@ -54,8 +54,12 @@ gcloud config set project "$PROJECT" --quiet >/dev/null
 IMG="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(spec.template.spec.containers[0].image)' 2>/dev/null || true)"
 [ -n "$IMG" ] || fail "no spruce-worker in $PROJECT ($REGION): nothing to upgrade. For a first install: bash deploy/install.sh"
 FROM="${IMG##*:}"; FROM="${FROM%%-*}"
+# The AI model (phish-tiny) comes with each version: the one installed (a label since 0.3.1) and this one.
+NEWMODEL="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
+OLDMODEL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(metadata.labels.spruce-model)' 2>/dev/null | tr '-' '.' || true)"
 echo
 echo "Upgrade S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION): $FROM -> $VERSION"
+echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')"
 echo "Mode stays: $(get MODE)"
 if [ "$FROM" = "$VERSION" ]; then echo "(Same version: this redeploys it.)"
 elif [ "$(printf '%s\n%s\n' "$FROM" "$VERSION" | sort -V | tail -1)" = "$FROM" ]; then echo "Note: $VERSION is OLDER than what is installed. To go back to the previous build, deploy/rollback.sh is quicker."; fi

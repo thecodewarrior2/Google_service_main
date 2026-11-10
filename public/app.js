@@ -327,7 +327,7 @@
     async function messages(params) {
         const filt = { user: params.get('user') || '', campaign: params.get('campaign') || '', action: params.get('action') || '', state: params.get('state') || '', q: params.get('q') || '' };
         const d = await api(`/api/messages?days=${days}&${q(filt)}`);
-        const search = h('input', { type: 'search', placeholder: 'Search sender, recipient or subject', value: filt.q, 'aria-label': 'Search' });
+        const search = h('input', { type: 'search', placeholder: 'Search sender, recipient, subject or Message-ID', value: filt.q, 'aria-label': 'Search' });
         const action = h('select', { 'aria-label': 'Action' }, h('option', { value: '', text: 'Any action' }), Object.entries(ACTION).map(([k, [l]]) => h('option', { value: k, text: l, selected: filt.action === k })));
         const state = h('select', { 'aria-label': 'Where it is' }, h('option', { value: '', text: 'Anywhere' }), Object.entries(STATE).map(([k, [l]]) => h('option', { value: k, text: l, selected: filt.state === k })));
         const apply = () => go(`#/messages?${q(Object.assign({}, filt, { q: search.value.trim(), action: action.value, state: state.value }))}`);
@@ -336,11 +336,37 @@
         const scope = filt.user ? `for ${filt.user}` : filt.campaign ? 'in this campaign' : '';
         const bar = filt.campaign ? await campaignBar(filt.campaign) : null;
         const csv = MEMORY ? null : h('a', { class: 'btn', href: `/api/export.csv?${q(Object.assign({ days: String(days) }, filt))}`, download: '' }, 'Download CSV');
+        // Several at once: a checkbox on each row, and a bar with what to do with the selected ones.
+        const selected = new Set(), boxes = [];
+        const count = h('b', { text: '' });
+        const bulkBar = h('div', { class: 'bulk-bar card', hidden: true });
+        const changed = () => { bulkBar.hidden = !selected.size; count.textContent = `${num(selected.size)} selected`; };
+        pageBusy = () => selected.size > 0;   // (live updates wait while some are selected)
+        const box = (m) => {
+            const c = h('input', { type: 'checkbox', 'aria-label': `Select the email from ${m.sender.address} to ${m.user}` });
+            c.addEventListener('click', (e) => { e.stopPropagation(); if (c.checked) selected.add(m.key); else selected.delete(m.key); changed(); });
+            c.addEventListener('keydown', (e) => e.stopPropagation());
+            boxes.push([m, c]);
+            return c;
+        };
+        const all = h('input', { type: 'checkbox', 'aria-label': 'Select every email on this page' });
+        all.addEventListener('change', () => { for (const [m, c] of boxes) { c.checked = all.checked; if (all.checked) selected.add(m.key); else selected.delete(m.key); } changed(); });
+        const bulk = (action, done, ask) => postButton('/api/bulk', () => ({ action, keys: [...selected] }),
+            (o) => `${done}: ${num(o.done)}${o.skipped ? ` (${num(o.skipped)} skipped: not in Spam, or already so)` : ''}${o.failed ? `, ${num(o.failed)} failed` : ''}.`, ask);
+        bulkBar.append(count,
+            h('button', { class: 'btn', type: 'button', onclick: bulk('release', 'Released to the Inbox', 'Release the selected emails that are in Spam to the Inbox?') }, 'Release to Inbox'),
+            h('button', { class: 'btn', type: 'button', onclick: bulk('false-alarm', 'Marked as false alarms') }, 'Mark false alarm'),
+            h('button', { class: 'btn', type: 'button', onclick: bulk('phishing', 'Confirmed as phishing') }, 'Confirm phishing'),
+            h('button', { class: 'linkbtn', type: 'button', onclick: () => { selected.clear(); all.checked = false; for (const [, c] of boxes) c.checked = false; changed(); } }, 'Clear'));
         return [h('h1', { text: `Messages ${scope}`.trim() }),
             h('p', { class: 'sub' }, `${num(d.total)} recorded in the last ${days} days. `, (filt.user || filt.campaign) ? h('a', { href: '#/messages', text: 'Show all' }) : null),
             bar,
-            h('div', { class: 'toolbar' }, search, action, state, h('button', { class: 'btn', type: 'button', onclick: apply }, 'Filter'), csv),
+            h('div', { class: 'toolbar' }, search, action, state, h('button', { class: 'btn', type: 'button', onclick: apply }, 'Filter'), csv,
+                MEMORY ? null : h('a', { class: 'btn', href: '#/check' }, 'Check an email'),
+                d.messages.length ? h('label', { class: 'small select-all' }, all, ' Select all on this page') : null),
+            bulkBar,
             h('section', { class: 'card' }, clickTable([
+                { name: '', get: m => box(m) },
                 { name: 'When', get: m => when(m.processedAt) },
                 { name: 'To', get: m => m.user },
                 { name: 'From', cls: 'trunc', get: m => h('div', {}, h('div', { text: m.sender.name || m.sender.address }), h('div', { class: 'muted small', text: m.sender.address })) },
@@ -355,24 +381,51 @@
     async function message(params) {
         const key = params.get('key') || '';
         const { message: m } = await api(`/api/message?${q({ key })}`);
+        return emailView(m);
+    }
+    // A Copy button: the text goes to the clipboard (or, where the browser doesn't allow it, by a hidden
+    // field), and a message says so.
+    function copyButton(text, what) {
+        return h('button', { class: 'linkbtn copy', type: 'button', 'aria-label': `Copy the ${what}`, onclick: async () => {
+            try { await navigator.clipboard.writeText(text); }
+            catch (e) {
+                const t = h('textarea', { 'aria-hidden': 'true' });
+                t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+                document.body.append(t); t.select();
+                try { document.execCommand('copy'); } finally { t.remove(); }
+            }
+            toast(`${what} copied.`);
+        } }, 'Copy');
+    }
+    // A row with an identifier, its Copy button, and what it is for.
+    const idRow = (label, value, note) => [h('dt', { text: label }),
+        h('dd', {}, value ? [h('code', { class: 'mid', text: value }), ' ', copyButton(value, label), note ? h('div', { class: 'muted small', text: note }) : null]
+            : h('span', { class: 'muted', text: 'not recorded (emails before 0.3.1)' }))];
+    const PASTED = { move: 'Would be moved to Spam', 'would-move': 'Would be recorded as "would move" (monitor mode: nothing is moved)', flag: 'Would be recorded as suspicious, not moved', none: 'Nothing would happen: the checks find nothing to act on' };
+
+    // One email's decision: a record (Messages), or a pasted email's answer (Check an email: m.pasted).
+    // opts.inReview: the review queue shows its own buttons and title.
+    function emailView(m, opts = {}) {
+        const pasted = !!m.pasted, quiet = pasted || !!opts.inReview;
         const ai = m.ai && typeof m.ai.probability === 'number' ? m.ai.probability : null;
         // A user took back an email the checks flagged, and no admin has looked yet: worth a look.
-        const rescueToCheck = m.state === 'released' && m.releasedByUser && !m.markedBy && m.score >= 5 && m.trigger !== 'ai';
-        const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : 'flag';
+        const rescueToCheck = !pasted && m.state === 'released' && m.releasedByUser && !m.markedBy && m.score >= 5 && m.trigger !== 'ai';
+        const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : m.action === 'none' ? 'released' : 'flag';
         const act = async (path, body, done) => { acting++; try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; } };
-        const actions = h('div', { class: 'actions' },
+        const actions = quiet ? null : h('div', { class: 'actions' },
             m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Released: back in the Inbox.') }, 'Release to Inbox') : null,
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
             m.falseAlarm !== false ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false }, 'Confirmed as phishing or spam.') }, 'Confirm phishing') : null);
-        const verdictText = m.falseAlarm === true && m.releasedByUser && !m.markedBy ? 'Counted as a false alarm because the user moved it back. No admin has reviewed it yet.'
+        const verdictText = pasted ? 'Checked from a pasted copy: nothing was stored, moved or counted.'
+            : m.falseAlarm === true && m.releasedByUser && !m.markedBy ? 'Counted as a false alarm because the user moved it back. No admin has reviewed it yet.'
             : m.falseAlarm === true ? 'An admin marked this a false alarm.' : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
-        return [h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
-            h('h1', { text: m.subject || '(subject not stored)' }),
-            h('p', { class: 'sub', text: `From ${m.sender.name ? `${m.sender.name} <${m.sender.address}>` : m.sender.address} to ${m.user}, ${when(m.receivedAt)}` }),
+        return [quiet ? null : h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
+            h(quiet ? 'h2' : 'h1', { class: quiet ? 'pasted-title' : null, text: m.subject || (pasted ? '(no subject)' : '(subject not stored)') }),
+            h('p', { class: 'sub', text: `From ${m.sender.name ? `${m.sender.name} <${m.sender.address}>` : m.sender.address || 'an unknown sender'} to ${m.user || '–'}${m.receivedAt ? `, ${when(m.receivedAt)}` : ''}` }),
             h('div', { class: 'grid detail' },
                 h('div', { class: 'grid' },
                     h('section', { class: 'card' }, h('h2', { text: 'What happened' }),
-                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Released by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : `Because ${m.why}.` }),
+                        h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Released by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
                         m.evidence ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. The brakes never hold it.`
@@ -393,8 +446,42 @@
                         h('dt', { text: 'Mode' }), h('dd', { text: m.mode }),
                         h('dt', { text: 'Looked up' }), h('dd', { text: m.checks ? [m.checks.cloudflare ? `Cloudflare: ${m.checks.cloudflare} site${m.checks.cloudflare === 1 ? '' : 's'}` : '', m.checks.safeBrowsing ? `Safe Browsing: ${m.checks.safeBrowsing} link${m.checks.safeBrowsing === 1 ? '' : 's'}` : '', m.checks.lists ? 'phishing lists' : '', m.checks.ages ? `site age: ${m.checks.ages}` : '', m.checks.notChecked ? `${m.checks.notChecked} not checked` : ''].filter(Boolean).join(' · ') || 'nothing to look up' : 'offline checks only' }),
                         h('dt', { text: 'Attachments' }), h('dd', { text: m.attachments && m.attachments.length ? m.attachments.map(a => a.name || a.type).join(', ') : 'none' }),
-                        h('dt', { text: 'Message ID' }), h('dd', { class: 'small', text: m.messageId }),
+                        idRow('Message-ID', m.rfc822MessageId, 'To look it up in Google Workspace: Admin console → Reporting → Email log search (Message ID), or the security investigation tool.'),
+                        pasted ? null : idRow('Gmail ID', m.messageId, 'The Gmail API\'s id of this copy, in this mailbox.'),
                         h('dt', { text: 'Checked' }), h('dd', { text: when(m.processedAt) })))))];
+    }
+
+    // --- Check an email: what the service would decide for a reported email ----------------------------
+    async function check() {
+        const area = h('textarea', { class: 'paste', rows: 10, spellcheck: 'false', 'aria-label': 'The email\'s original',
+            placeholder: 'In Gmail, open the email, then ⋮ → Show original → Copy to clipboard, and paste it here. Or choose a saved .eml file below.' });
+        const file = h('input', { type: 'file', accept: '.eml,message/rfc822,text/plain', 'aria-label': 'An .eml file' });
+        const out = h('div', { class: 'check-result', 'aria-live': 'polite' });
+        const run = async (raw) => {
+            if (!raw.trim()) { toast('Paste the email\'s original first, or choose an .eml file.'); return; }
+            acting++;
+            out.textContent = '';
+            out.append(h('div', { class: 'muted', text: 'Checking…' }));
+            try {
+                const { result } = await api('/api/check', { method: 'POST', body: { raw } });
+                out.textContent = '';
+                out.append(...[].concat(emailView(result)).flat(Infinity).filter(Boolean));
+            } catch (e) {
+                out.textContent = '';
+                out.append(h('div', { class: 'alert critical', role: 'alert' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '⚠️' }), h('div', {}, h('b', { text: 'Couldn\'t check it. ' }), e.message)));
+            } finally { acting--; }
+        };
+        file.addEventListener('change', async () => {
+            const f = file.files && file.files[0];
+            if (!f) return;
+            if (f.size > 10 * 1024 * 1024) { toast('That file is over 10 MB.'); return; }
+            run(await f.text());
+        });
+        return [h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
+            h('h1', { text: 'Check an email' }),
+            h('p', { class: 'sub', text: 'What the service would decide for an email someone reported, and why: judged as on arrival, in the current mode, with the same lookups. Nothing is stored, moved or counted; Activity notes that you checked one.' }),
+            h('section', { class: 'card' }, area, h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => run(area.value) }, 'Check'), file)),
+            out];
     }
 
     async function health() {
@@ -413,7 +500,8 @@
         const d = await api('/api/settings');
         const yes = (b) => (b ? 'Yes' : 'No');
         const row = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
-        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Read-only here: they are set when the service is deployed (environment variables, see docs/DEPLOY.md), so every change is reviewed.' }),
+        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Read-only here, apart from the weekly summary email: the rest are set when the service is deployed (deploy/settings.env, docs/DEPLOY.md), so every change is reviewed.' }),
+            digestCard(d),
             h('div', { class: 'grid two' },
                 h('section', { class: 'card' }, h('h2', { text: 'Policy' }), h('dl', { class: 'kv' },
                     row('Mode', d.mode === 'enforce' ? 'Enforce: moves to Spam' : 'Monitor: records only'),
@@ -428,6 +516,8 @@
                     row('Organization', d.orgDomains.join(', ') || '–'),
                     row('Mailboxes watched', `${num(d.watched)}${[...(d.pilotGroups || []).map(g => `group ${g}`), d.pilotOu ? `unit ${d.pilotOu}` : ''].filter(Boolean).map(s => ` (${s})`).join('')}`),
                     row('Records kept', `${d.retentionDays} days`),
+                    row('Time zone', `${d.timeZone || 'UTC'} (the scheduled jobs and the weekly summary)`),
+                    row('Version', d.version || ''),
                     row('Subjects stored', yes(d.storeSubjects)),
                     row('AI quotes stored', yes(d.storeAiQuotes)),
                     row('Model', `${d.model.name} ${d.model.version}`),
@@ -458,7 +548,7 @@
     const clock = (ms) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     function inUse() {
         const v = view(), a = document.activeElement, sel = window.getSelection && window.getSelection();
-        return acting > 0 || !tip().hidden || (a && a !== v && v.contains(a))
+        return acting > 0 || pageBusy() || !tip().hidden || (a && a !== v && v.contains(a))
             || [...v.querySelectorAll('input, textarea')].some(i => i.value !== i.defaultValue)
             || !!(sel && !sel.isCollapsed && sel.anchorNode && v.contains(sel.anchorNode));
     }
@@ -476,7 +566,9 @@
     }
     function liveDone(err) { liveError = err; updatedAt = Date.now(); showLive(); }
     function liveTick() {
-        if (live && !document.hidden && Date.now() - updatedAt >= LIVE_MS && !inUse()) render({ quiet: true });
+        // (not on Check an email: its answer isn't fetched again)
+        if (!document.hidden) refreshPending();
+        if (live && !document.hidden && Date.now() - updatedAt >= LIVE_MS && !inUse() && !/^#\/?(check|review)/.test(currentHash())) render({ quiet: true });
     }
 
     // --- Activity: alerts, what admins did, errors, the watching of mailboxes ---------------------
@@ -513,6 +605,95 @@
                 dataTable([{ name: 'Campaign', get: c => h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }) }, { name: 'Copies', num: true, get: c => num(c.count) }], r.campaignsOverHold)) : null];
     }
 
+    // --- Review: the emails nobody has reviewed, one at a time (F, P, N) ----------------------------------
+    let reviewState = null, reviewKeys = null;
+    async function review(params) {
+        if (!reviewState || params.get('restart') || reviewState.days !== days) {
+            const d = await api(`/api/review?days=${days}`);
+            reviewState = { keys: d.keys, i: 0, done: 0, days };
+        }
+        const st = reviewState;
+        reviewKeys = null;
+        const head = [h('h1', { text: 'Review' })];
+        if (st.i >= st.keys.length) {
+            return [...head, h('div', { class: 'alert good', role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '✅' }),
+                h('div', { class: 'grow' }, h('b', { text: 'Nothing left to review.' }), ` ${num(st.done)} reviewed now; every moved or "would move" email of the last ${days} days has been looked at.`)),
+                h('div', { class: 'actions' }, h('a', { class: 'btn', href: '#/readiness' }, 'See Readiness'), h('a', { class: 'btn', href: '#/review?restart=1' }, 'Look again'))];
+        }
+        const key = st.keys[st.i];
+        let m;
+        try { ({ message: m } = await api(`/api/message?${q({ key })}`)); } catch (e) { st.i++; return review(new URLSearchParams()); }
+        if (m.markedBy) { st.i++; return review(new URLSearchParams()); }   // (someone reviewed it meanwhile)
+        const decide = async (falseAlarm) => {
+            acting++;
+            try { await api('/api/mark', { method: 'POST', body: { key, falseAlarm } }); st.done++; st.i++; toast(falseAlarm ? 'Marked as a false alarm.' : 'Confirmed as phishing.'); render(); }
+            catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; }
+        };
+        const next = () => { st.i++; render(); };
+        reviewKeys = { f: () => decide(true), p: () => decide(false), n: next };
+        return [...head,
+            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} moved or "would move" emails nobody has reviewed (last ${days} days, oldest first). Keys: F false alarm, P phishing, N next.` }),
+            h('div', { class: 'review-bar card' },
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ' False alarm'),
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), ' Phishing'),
+                h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided'),
+                h('a', { class: 'linkbtn', href: `#/message?${q({ key })}` }, 'Open it with its other buttons')),
+            ...[].concat(emailView(m, { inReview: true }))];
+    }
+
+    // --- Status: the service end to end, as checks with what to do ---------------------------------------
+    async function status() {
+        const d = await api('/api/status');
+        const bad = d.checks.filter(c => c.ok === false).length, unknown = d.checks.filter(c => c.ok === null).length;
+        return [h('h1', { text: 'Status' }),
+            h('p', { class: 'sub', text: 'Whether the service works end to end, checked from here. In Cloud Shell, bash deploy/doctor.sh checks more (the subscription, Gmail\'s permission to publish, the alert policies) and says what to run.' }),
+            h('div', { class: `alert ${bad ? 'critical' : unknown ? 'warning' : 'good'}`, role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: bad ? '⛔' : unknown ? '⏳' : '✅' }),
+                h('div', { class: 'grow' }, h('b', { text: bad ? `${bad} problem${bad === 1 ? '' : 's'} to fix.` : unknown ? 'No problem found, but not everything could be checked.' : 'Everything checked works.' }))),
+            h('section', { class: 'card' }, h('ul', { class: 'checks' }, d.checks.map(c => h('li', { class: c.ok === true ? 'ok' : c.ok === false ? 'todo' : 'unknown' },
+                h('span', { class: 'mark', 'aria-hidden': 'true', text: c.ok === true ? '✓' : c.ok === false ? '!' : '?' }),
+                h('span', { class: 'sr-only', text: c.ok === true ? 'Works: ' : c.ok === false ? 'Problem: ' : 'Not checked: ' }),
+                h('div', {}, h('div', { text: c.text }), c.fix ? h('div', { class: 'muted small', text: `What to do: ${c.fix}` }) : null)))))];
+    }
+
+    // --- Settings: the weekly summary email (off by default) ---------------------------------------------
+    function digestCard(d) {
+        const g = d.digest || { enabled: false };
+        const preview = h('pre', { class: 'digest-preview', hidden: true });
+        const toggle = h('input', { type: 'checkbox', role: 'switch', checked: !!g.enabled, 'aria-label': 'Send the weekly summary email' });
+        toggle.addEventListener('change', async () => {
+            acting++;
+            try { await api('/api/digest', { method: 'POST', body: { enabled: toggle.checked } }); toast(toggle.checked ? 'The weekly summary is on.' : 'The weekly summary is off.'); render(); }
+            catch (e) { toggle.checked = !toggle.checked; toast(`Couldn't change it: ${e.message}`); } finally { acting--; }
+        });
+        const show = async () => {
+            try { const { preview: p } = await api('/api/digest/preview'); preview.textContent = `Subject: ${p.subject}\n\n${p.text}`; preview.hidden = false; }
+            catch (e) { toast(`Couldn't make the preview: ${e.message}`); }
+        };
+        const facts = [g.updatedBy ? `Turned ${g.enabled ? 'on' : 'off'} by ${g.updatedBy}, ${when(g.updatedAt)}.` : 'Off: nobody has turned it on.', g.lastSentAt ? `Last sent ${when(g.lastSentAt)}.` : ''].filter(Boolean).join(' ');
+        return h('section', { class: 'card spaced' }, h('h2', { text: 'Weekly summary email' }),
+            h('div', { class: 'sub', text: `Every Monday from 7 AM (${d.timeZone || 'UTC'}), a summary of the week goes into the Inbox of each dashboard admin (ADMIN_EMAILS, and the members of ADMIN_GROUP): what was checked and moved, false alarms, what waits for you, the largest campaigns.` }),
+            h('label', { class: 'switch' }, toggle, h('span', { text: 'Send the weekly summary' })),
+            h('div', { class: 'small muted', text: facts }),
+            h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: show }, 'Preview'),
+                MEMORY ? null : h('button', { class: 'btn', type: 'button', onclick: postButton('/api/digest/send', () => ({}), (o) => (o.demo ? 'Demo mode: nothing sent.' : `Put in ${num(o.sent)} admin Inbox${o.sent === 1 ? '' : 'es'}${o.failed && o.failed.length ? `; ${o.failed.length} couldn't be reached` : ''}.`),
+                    'Put this week\'s summary in every dashboard admin\'s Inbox now?') }, 'Send one now')),
+            preview);
+    }
+
+    // The tab's title shows how many things need you (the brake, held campaigns, users who took flagged
+    // mail back); the Review tab, how many emails wait for review. Every 30 s, with the live updates.
+    let pendingAt = 0;
+    async function refreshPending() {
+        if (Date.now() - pendingAt < 25000) return;
+        pendingAt = Date.now();
+        try {
+            const p = await api('/api/pending');
+            document.title = p.total ? `(${p.total}) Mail Protection Admin` : 'Mail Protection Admin';
+            const tab = document.querySelector('.tabs a[data-tab="review"]');
+            if (tab) tab.textContent = p.unreviewed ? `Review (${num(p.unreviewed)})` : 'Review';
+        } catch (e) { /* the next tick tries again */ }
+    }
+
     // "Update group membership now" (Settings): runs the daily re-read of the pilot group at once, and
     // says when the group was last read and whether that reached the service.
     function renewBar(r) {
@@ -537,17 +718,19 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, campaigns, users, messages, message, health, readiness, activity, settings };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings };
+    let pageBusy = () => false;   // a page sets it when live updates should wait (Messages with emails selected)
     let rendering = 0;
     // quiet: a live update (no loading fade, the scroll position kept, and on failure the page stays).
     async function render({ quiet = false } = {}) {
         const [path, query] = (currentHash().replace(/^#\/?/, '') || 'overview').split('?');
         const name = ROUTES[path] ? path : 'overview';
-        const tab = name === 'message' ? 'messages' : name;
+        const tab = name === 'message' || name === 'check' ? 'messages' : name;
         for (const a of document.querySelectorAll('.tabs a')) { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
         for (const b of document.querySelectorAll('.range')) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
         const id = ++rendering;
         if (!quiet) { view().classList.add('loading'); hideTip(); }
+        pageBusy = () => false;
         const scrollY = window.scrollY;
         try {
             const nodes = await ROUTES[name](new URLSearchParams(query || ''));
@@ -569,6 +752,14 @@
         if (MEMORY) document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href^="#/"]'); if (a) { e.preventDefault(); go(a.getAttribute('href')); } });
         else window.addEventListener('hashchange', render);
         window.addEventListener('scroll', hideTip, { passive: true });
+        // The review queue's keys (not while typing, nor with Ctrl, Alt or Cmd).
+        document.addEventListener('keydown', (e) => {
+            if (!reviewKeys || !/^#\/?review/.test(currentHash()) || e.ctrlKey || e.metaKey || e.altKey || acting) return;
+            if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+            const f = reviewKeys[String(e.key).toLowerCase()];
+            if (f) { e.preventDefault(); f(); }
+        });
+        refreshPending();
         // Live updates (not in the clickable mockup, whose data never changes).
         if (!MEMORY && $('#live')) {
             $('#live').hidden = false;
