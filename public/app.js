@@ -204,9 +204,19 @@
         const d = await api(`/api/overview?days=${days}`);
         const sm = d.summary;
         const out = [];
-        if (d.brake) out.push(h('div', { class: 'alert critical', role: 'alert' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '⛔' }),
-            h('div', { class: 'grow' }, h('b', { text: 'Moving is paused (brake).' }), ` ${num(d.brake.moves)} emails were moved within an hour. Suspicious mail is only recorded until you resume.`),
-            h('button', { class: 'btn primary', type: 'button', onclick: async () => { await api('/api/resume', { method: 'POST', body: {} }); toast('Moving resumed.'); render(); } }, 'Resume moving')));
+        if (d.brake) {
+            const held = d.brake.held || 0;
+            const resume = (moveHeld) => postButton('/api/resume', () => ({ moveHeld }), (o) => (moveHeld && o.held && !o.held.monitor ? `Moving resumed: ${num(o.held.moved)} held emails moved to Spam${o.held.left ? `; ${num(o.held.left)} left, press again` : ''}.` : 'Moving resumed.'),
+                moveHeld ? `Resume moving, and move the ${num(held)} held emails to Spam now?` : 'Resume moving, and leave the held emails in the Inbox?');
+            out.push(h('div', { class: 'alert critical', role: 'alert' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '⛔' }),
+                h('div', { class: 'grow' }, h('b', { text: 'Moving is paused (brake).' }), ` ${num(d.brake.moves)} emails were moved within an hour (the limit is ${num(d.brake.limit || d.brake.moves)}). ${num(held)} suspicious emails are held in the Inbox until you resume.`),
+                h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'button', onclick: resume(true) }, `Resume and move held mail (${num(held)})`),
+                    h('button', { class: 'btn', type: 'button', onclick: resume(false) }, 'Resume without moving'))));
+        }
+        if (d.heldCampaigns && d.heldCampaigns.length) out.push(h('div', { class: 'alert warning', role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '✋' }),
+            h('div', { class: 'grow' }, h('b', { text: `${d.heldCampaigns.length} campaign${d.heldCampaigns.length === 1 ? '' : 's'} held for your decision.` }),
+                ' Many copies were moved on evidence nothing outside the email confirms, so later copies wait. Open one to confirm it as phishing (every copy is moved) or release it.',
+                h('ul', { class: 'held-list' }, d.heldCampaigns.slice(0, 5).map(c => h('li', {}, h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }), ` (${num(c.held)} held)`))))));
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
@@ -237,6 +247,40 @@
             h('section', { class: 'card' }, h('h2', { text: 'Recent activity' }), h('div', { class: 'sub', text: 'Alerts, releases and changes, last 7 days.' }),
                 d.alerts.length ? h('ul', { class: 'events' }, d.alerts.map(a => h('li', {}, h('time', { text: when(a.at) }), a.text))) : h('div', { class: 'empty', text: 'Nothing new.' }))));
         return out;
+    }
+    // A button's click handler that posts to the service (asking first when ask is set), says the
+    // outcome, and redraws the page.
+    function postButton(path, body, done, ask) {
+        return async (e) => {
+            if (ask && !window.confirm(ask)) return;
+            const b = e.currentTarget;
+            b.disabled = true; acting++;
+            try { const out = await api(path, { method: 'POST', body: body() }); toast(done(out)); render(); }
+            catch (err) { toast(`Couldn't do that: ${err.message}`); b.disabled = false; }
+            finally { acting--; }
+        };
+    }
+    // A campaign's state and an admin's decisions for every copy (Messages, filtered to a campaign).
+    async function campaignBar(key) {
+        let c;
+        try { ({ campaign: c } = await api(`/api/campaign?${q({ key })}`)); } catch (e) { return null; }
+        const status = c.decision === 'confirmed' ? `Confirmed as phishing by ${c.decidedBy}: every copy is moved, and later ones too.`
+            : c.decision === 'released' ? `Released as a false alarm by ${c.decidedBy}: its copies aren't moved.`
+            : c.held ? `${num(c.held)} copies held: over ${num(c.holdAfter)} were moved on evidence nothing outside the email confirms. Confirm or release it.`
+            : `${num(c.copies)} copies recorded: ${num(c.moved)} in Spam, ${num(c.recorded)} in the Inbox, ${num(c.released)} released.`;
+        const search = h('input', { type: 'checkbox', checked: true });
+        const found = (f) => (f ? `; ${num(f.found)} more found in ${num(f.searched)} of ${num(f.of)} mailboxes${f.moved ? `, ${num(f.moved)} moved` : ''}` : '');
+        return h('section', { class: `card campaign-bar${c.held && !c.decision ? ' held' : ''}` },
+            h('div', {}, h('b', { text: c.label }), h('div', { class: 'small muted', text: status })),
+            h('div', { class: 'actions' },
+                c.decision !== 'confirmed' ? [
+                    h('button', { class: 'btn primary', type: 'button', onclick: postButton('/api/campaign/confirm', () => ({ key, search: search.checked }),
+                        (o) => (o.moved && o.moved.monitor ? `Confirmed as phishing. Monitor mode: nothing moved${found(o.found)}.` : `Confirmed: ${num(o.moved.moved)} copies moved to Spam${found(o.found)}${o.moved.left ? `; ${num(o.moved.left)} left, press again` : ''}.`),
+                        `Confirm "${c.label}" as phishing and move every copy to Spam${search.checked ? ', searching every watched mailbox for more' : ''}?`) }, 'Confirm phishing: move every copy'),
+                    h('label', { class: 'small' }, search, ' also search every watched mailbox for copies not recorded')] : null,
+                c.decision !== 'released' ? h('button', { class: 'btn', type: 'button', onclick: postButton('/api/campaign/release', () => ({ key }), (o) => `Released: ${num(o.released)} copies back in the Inbox.`,
+                    `Release every copy of "${c.label}" to the Inbox, and stop moving it?`) }, 'False alarm: release every copy') : null,
+                c.decision === 'confirmed' ? h('button', { class: 'btn', type: 'button', onclick: postButton('/api/campaign/find', () => ({ key }), (o) => `Searched: ${num(o.found.found)} more found in ${num(o.found.searched)} of ${num(o.found.of)} mailboxes${o.found.moved ? `, ${num(o.found.moved)} moved` : ''}.`) }, 'Find other copies') : null));
     }
     const kpi = (label, value, note) => h('div', { class: 'card kpi' }, h('div', { class: 'label', text: label }), h('div', { class: 'value', text: value }), note ? h('div', { class: 'note', text: note }) : null);
 
@@ -290,16 +334,19 @@
         search.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
         action.addEventListener('change', apply); state.addEventListener('change', apply);
         const scope = filt.user ? `for ${filt.user}` : filt.campaign ? 'in this campaign' : '';
+        const bar = filt.campaign ? await campaignBar(filt.campaign) : null;
+        const csv = MEMORY ? null : h('a', { class: 'btn', href: `/api/export.csv?${q(Object.assign({ days: String(days) }, filt))}`, download: '' }, 'Download CSV');
         return [h('h1', { text: `Messages ${scope}`.trim() }),
             h('p', { class: 'sub' }, `${num(d.total)} recorded in the last ${days} days. `, (filt.user || filt.campaign) ? h('a', { href: '#/messages', text: 'Show all' }) : null),
-            h('div', { class: 'toolbar' }, search, action, state, h('button', { class: 'btn', type: 'button', onclick: apply }, 'Filter')),
+            bar,
+            h('div', { class: 'toolbar' }, search, action, state, h('button', { class: 'btn', type: 'button', onclick: apply }, 'Filter'), csv),
             h('section', { class: 'card' }, clickTable([
                 { name: 'When', get: m => when(m.processedAt) },
                 { name: 'To', get: m => m.user },
                 { name: 'From', cls: 'trunc', get: m => h('div', {}, h('div', { text: m.sender.name || m.sender.address }), h('div', { class: 'muted small', text: m.sender.address })) },
                 { name: 'Subject', cls: 'trunc', get: m => m.subject || '(not stored)' },
                 { name: 'AI', num: true, get: m => (m.ai === null ? '–' : pct(m.ai)) },
-                { name: 'Score', num: true, get: m => m.score },
+                { name: 'Score', num: true, get: m => (m.score === null || m.score === undefined ? '–' : m.score) },
                 { name: 'Action', get: m => pill(ACTION[m.action] || [m.action, '']) },
                 { name: 'Now', get: m => pill(stateOf(m)) }
             ], d.messages, m => go(`#/message?${q({ key: m.key })}`), 'No messages match.'))];
@@ -327,8 +374,11 @@
                     h('section', { class: 'card' }, h('h2', { text: 'What happened' }),
                         h('div', { class: `decision ${decisionClass}` }, h('b', { text: m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Released by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : `Because ${m.why}.` }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
-                        h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }), actions),
-                    h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The extension's checks: score ${m.score} (amber at 3, flagged at 5).` }),
+                        h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
+                        m.evidence ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. The brakes never hold it.`
+                            : m.evidence === 'admin' ? 'A copy found by an admin\'s search for a campaign.' : 'Weaker evidence: nothing outside the email confirms it, so the campaign brake can hold its copies.' }) : null,
+                        actions),
+                    h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The extension's checks: score ${m.score === null || m.score === undefined ? '–' : m.score} (amber at 3, flagged at 5).` }),
                         m.signals.length ? h('ul', { class: 'signals' }, m.signals.slice().sort((a, b) => b.weight - a.weight).map(sg => h('li', {}, h('span', { class: `weight ${sg.weight >= 3 ? 'high' : ''}`, text: String(sg.weight) }), h('span', { text: sg.text })))) : h('div', { class: 'empty', text: 'No signs.' })),
                     m.links && m.links.length ? h('section', { class: 'card' }, h('h2', { text: 'Flagged links' }), h('ul', { class: 'signals' }, m.links.map(l => h('li', {}, h('span', { class: `weight ${l.severity === 'danger' ? 'high' : ''}`, text: l.severity === 'danger' ? '!' : '?' }), h('span', {}, h('div', { text: l.reason || '' }), h('div', { class: 'muted small', text: l.finalUrl && l.finalUrl !== l.url ? `${l.url} → ${l.finalUrl}` : l.url })))))) : null),
                 h('div', { class: 'grid' },
@@ -369,7 +419,9 @@
                     row('Mode', d.mode === 'enforce' ? 'Enforce: moves to Spam' : 'Monitor: records only'),
                     row('Move when', `${d.moveOnRules ? 'the rules flag it (score 5+), or ' : ''}the AI scores ${pct(d.aiThreshold)} or more`),
                     row('AI alone, inside mail', d.aiMovesInside ? 'Moves it' : 'Never moves it (rules still can)'),
-                    row('Brake', `Stops moving after ${num(d.brakePerHour)} moves in an hour`),
+                    row('Brake (whole domain)', `Stops moving everywhere after ${num(d.brakeLimit)} moves in an hour (${d.brakePerHour ? 'BRAKE_PER_HOUR' : 'half the watched mailboxes, at least 100'}). A last resort against a misfire`),
+                    row('Campaign hold', `Holds the copies of one campaign after ${num(d.campaignHoldAfter)} moved on weaker evidence, until you confirm or release it. Strong evidence is never held`),
+                    row('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Recent activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
                     row('Never moved', [...d.allowDomains, d.allowAddresses ? `${d.allowAddresses} addresses` : ''].filter(Boolean).join(', ') || 'none set'),
                     row('Label on moved mail', d.movedLabel))),
                 h('section', { class: 'card' }, h('h2', { text: 'Scope and records' }), h('dl', { class: 'kv' },
@@ -427,6 +479,40 @@
         if (live && !document.hidden && Date.now() - updatedAt >= LIVE_MS && !inUse()) render({ quiet: true });
     }
 
+    // --- Activity: alerts, what admins did, errors, the watching of mailboxes ---------------------
+    async function activity(params) {
+        const kind = params.get('kind') || '';
+        const d = await api(`/api/activity?${q({ days: String(days), kind })}`);
+        const sel = h('select', { 'aria-label': 'Kind' }, [['', 'Everything'], ['alert', 'Alerts'], ['admin', 'What admins did'], ['error', 'Errors and gaps'], ['watch', 'Watching mailboxes']]
+            .map(([v, l]) => h('option', { value: v, text: l, selected: v === kind })));
+        sel.addEventListener('change', () => go(`#/activity?${q({ kind: sel.value })}`));
+        return [h('h1', { text: 'Activity' }), h('p', { class: 'sub', text: `Alerts, what admins did, errors and the watching of mailboxes, last ${days} days (newest first, up to 500).` }),
+            h('div', { class: 'toolbar' }, sel),
+            h('section', { class: 'card' }, d.events.length ? h('ul', { class: 'events' }, d.events.map(e => h('li', { class: e.alert ? 'alerted' : '' }, h('time', { text: `${when(e.at)}${e.alert ? ' · alert' : ''}` }), e.text)))
+                : h('div', { class: 'empty', text: 'Nothing in this period.' }))];
+    }
+
+    // --- Ready for enforce mode? -------------------------------------------------------------------
+    async function readiness() {
+        const { readiness: r } = await api(`/api/readiness?days=${days}`);
+        const todo = r.checks.filter(c => !c.ok).length;
+        return [h('h1', { text: 'Ready for enforce mode?' }),
+            h('p', { class: 'sub', text: r.mode === 'enforce' ? 'Enforce mode is on. The checks still show how the policy is doing.'
+                : `What monitor mode has shown in the last ${days} days. When every check is green: set MODE=enforce in deploy/settings.env and run deploy/install.sh (docs/INSTALL.md, step 7).` }),
+            h('div', { class: `alert ${r.ready ? 'good' : 'warning'}`, role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: r.ready ? '✅' : '⏳' }),
+                h('div', { class: 'grow' }, h('b', { text: r.ready ? 'Ready.' : `Not yet: ${todo} of ${r.checks.length} checks to look at.` }))),
+            h('section', { class: 'card' }, h('ul', { class: 'checks' }, r.checks.map(c => h('li', { class: c.ok ? 'ok' : 'todo' },
+                h('span', { class: 'mark', 'aria-hidden': 'true', text: c.ok ? '✓' : '!' }), h('span', { class: 'sr-only', text: c.ok ? 'Done: ' : 'To look at: ' }), h('span', { text: c.text }))))),
+            h('div', { class: 'grid kpis' },
+                kpi('Would be moved', num(r.wouldMove), r.strongShare === null ? '' : `${pct(r.strongShare)} on strong evidence`),
+                kpi('Reviewed', num(r.reviewed), `${num(r.falseAlarms)} false alarms`),
+                kpi('Busiest hour', num(r.peakHour), `the brake stops at ${num(r.brakeLimit)}`),
+                kpi('Days so far', num(r.monitorDays), 'since the install')),
+            r.campaignsOverHold.length ? h('section', { class: 'card spaced' }, h('h2', { text: 'Campaigns the hold would have stopped' }),
+                h('div', { class: 'sub', text: `More than ${r.holdAfter} copies on weaker evidence: in enforce mode the rest would wait for your decision.` }),
+                dataTable([{ name: 'Campaign', get: c => h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }) }, { name: 'Copies', num: true, get: c => num(c.count) }], r.campaignsOverHold)) : null];
+    }
+
     // "Update group membership now" (Settings): runs the daily re-read of the pilot group at once, and
     // says when the group was last read and whether that reached the service.
     function renewBar(r) {
@@ -451,7 +537,7 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, campaigns, users, messages, message, health, settings };
+    const ROUTES = { overview, campaigns, users, messages, message, health, readiness, activity, settings };
     let rendering = 0;
     // quiet: a live update (no loading fade, the scroll position kept, and on failure the page stays).
     async function render({ quiet = false } = {}) {

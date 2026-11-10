@@ -26,6 +26,15 @@ const CLAIM_LEASE_MS = 5 * 60 * 1000;
 // How long a notification waits for messages another instance is judging before it keeps the place.
 const WAIT_FOR_OTHERS_MS = 5000;
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+const hourOf = (ms) => new Date(ms).toISOString().slice(0, 13);
+// The address in a From header ("Name <a@b>" or "a@b").
+const addressOf = (from) => { const m = /<([^<>@\s]+@[^<>\s]+)>/.exec(String(from || '')); return (m ? m[1] : String(from || '').trim()).toLowerCase(); };
+// Runs fn over items, n at a time, until stop() says so.
+async function pool(items, n, fn, stop = () => false) {
+    let i = 0;
+    const worker = async () => { while (i < items.length && !stop()) { const item = items[i++]; await fn(item); } };
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
 // Sender addresses are remembered as a hash only (as the extension's senderHistoryKey).
 const senderHash = (address) => crypto.createHash('sha256').update(String(address || '').toLowerCase()).digest('hex').slice(0, 16);
 const recordKey = (user, messageId) => `${user}|${messageId}`;
@@ -86,9 +95,12 @@ class Service {
         catch (e) {
             if (e instanceof GoogleApiError && e.status === 404) {
                 // Too long since the last change we know of (Gmail keeps about a week): start again from now.
+                // Checking goes on from now, and the Inbox mail since the last notification (at most a
+                // week) is caught up on, a little with each later notification (backfillStep).
                 const p = await this.gmail.profile(user);
-                await this.store.putUser(user, { historyId: String(p.historyId) });
-                await this.store.addEvent({ kind: 'gap', user, text: `Changes to ${user}'s mailbox were missed (history too old); checking resumed from now.` });
+                const after = Math.max(Number(u.lastNotification) || 0, this.now() - 7 * DAY);
+                await this.store.putUser(user, { historyId: String(p.historyId), backfill: { after, pageToken: null, checked: 0 } });
+                await this.store.addEvent({ kind: 'gap', user, text: `Changes to ${user}'s mailbox were missed (history too old). Checking resumed from now, and the Inbox mail since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too.` });
                 return { resynced: true };
             }
             throw e;
@@ -102,8 +114,11 @@ class Service {
         const listedAsNew = new Set(added.ids);
         const inboxedAt = added.inboxedAt || {};
         for (const id of added.inboxed || []) {
-            try { await this.userReleased(user, id, { at: inboxedAt[id], listedAsNew: listedAsNew.has(id) }); }
-            catch (e) { this.log.error(`user release ${user} ${id}:`, e); }
+            try {
+                const r = await this.userReleased(user, id, { at: inboxedAt[id], listedAsNew: listedAsNew.has(id) });
+                // Not one the service recorded: maybe one it never checked (the user took it out of Spam).
+                if (r && r.noRecord && !listedAsNew.has(id)) await this.checkUnseenInbox(user, id);
+            } catch (e) { this.log.error(`user release ${user} ${id}:`, e); }
         }
         const busy = [];
         for (const id of added.ids) {
@@ -124,6 +139,7 @@ class Service {
         }
         if (busy.length && !(await this.othersDone(user, busy))) hold = true;
         if (!hold) await this.store.raiseHistoryId(user, String(added.historyId));
+        if (u.backfill) { try { await this.backfillStep(user, u.backfill); } catch (e) { this.log.error(`backfill ${user}:`, e); } }
         if (this.log.info) this.log.info(`notification: ${added.ids.length} new in the Inbox, ${results.length} checked${hold ? ', some left to try again' : ''}`);
         return Object.assign({ processed: results.length, results }, hold ? { held: true } : {}, added.more ? { more: true } : {});
     }
@@ -164,6 +180,42 @@ class Service {
         return out;
     }
 
+    // An email that came into the Inbox other than by arriving there (the user took it out of Spam, or
+    // moved it from another folder) and that the service never checked: checked now and recorded, never
+    // moved (the user put it there), with an alert when the checks flag it. Older mail moved back from an
+    // archive (over 7 days) is left alone.
+    async checkUnseenInbox(user, id) {
+        const claim = await this.store.claim(user, id, this.now(), CLAIM_LEASE_MS);
+        if (claim.done || claim.busy) return null;
+        try {
+            let msg;
+            try { msg = await this.gmail.raw(user, id); }
+            catch (e) { if (e instanceof GoogleApiError && e.status === 404) { await this.store.markSeen(user, id); return null; } throw e; }
+            const recent = msg.internalDate && this.now() - msg.internalDate < 7 * DAY;
+            let out = null;
+            if (recent && msg.labelIds.includes('INBOX') && !msg.labelIds.some(l => l === 'SENT' || l === 'DRAFT' || l === 'SPAM')) {
+                out = await this.judge(user, msg, await readMessage(msg.raw), { userPlaced: true });
+            }
+            await this.store.markSeen(user, id);
+            return out;
+        } catch (e) { await this.store.unclaim(user, id).catch(() => {}); throw e; }
+    }
+
+    // After a gap in a mailbox's history: its Inbox mail since b.after is checked, 25 at a time with each
+    // notification, until done (messages already checked are skipped by their claim).
+    async backfillStep(user, b) {
+        const { ids, next } = await this.gmail.search(user, `in:inbox after:${Math.floor(b.after / 1000)}`, { max: 25, pageToken: b.pageToken || null });
+        let checked = b.checked || 0;
+        for (const id of ids) {
+            try { const r = await this.processMessage(user, id); if (r && !r.busy) checked++; }
+            catch (e) { this.log.error(`backfill ${user} ${id}:`, e); }
+        }
+        if (next) { await this.store.putUser(user, { backfill: Object.assign({}, b, { pageToken: next, checked }) }); return { more: true, checked }; }
+        await this.store.putUser(user, { backfill: null });
+        await this.store.addEvent({ kind: 'gap', user, text: `Caught up on ${user}'s Inbox after the gap: ${checked} emails checked.` });
+        return { more: false, checked };
+    }
+
     async checkMessage(user, id, tries) {
         let msg;
         try { msg = await this.gmail.raw(user, id); }
@@ -182,7 +234,8 @@ class Service {
 
     // Analysis, decision, action and record for one message (also used by the tests and the demo).
     // alreadyMoved: an earlier try moved it (and was counted); only the record is written.
-    async judge(user, msg, facts, { alreadyMoved = false } = {}) {
+    // userPlaced: the user moved it into the Inbox themselves (checkUnseenInbox): never moved.
+    async judge(user, msg, facts, { alreadyMoved = false, userPlaced = false } = {}) {
         const now = this.now();
         const day = dayOf(now);
         if (!alreadyMoved) await this.store.incStat(day, 'scanned');
@@ -196,7 +249,16 @@ class Service {
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });
         if (alreadyMoved) decision = { action: 'move', trigger: decision.trigger, why: `${decision.why || 'moved'} (moved by an earlier try)` };
+        if (userPlaced && (decision.action === 'move' || decision.action === 'would-move')) {
+            decision = { action: 'flag', trigger: decision.trigger, why: `${decision.why}; the user moved it into the Inbox themselves (out of Spam or another folder), so it isn't moved` };
+        }
         if (decision.action === 'none') return { user, messageId: msg.id, action: 'none', status: result.status, ai: result.ai && result.ai.probability };
+        const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
+        const campaign = campaignOf(senderDomain, facts.subject, user);
+        const campaignLabel = this.cfg.storeSubjects ? campaign.label : senderDomain;
+        // The brake was already on (decide): held for the admin's resume.
+        let held = decision.braked ? 'brake' : null;
+        if (decision.action === 'move' && !alreadyMoved) ({ decision, held } = await this.brakes(decision, result, campaign.key, campaignLabel, now));
 
         let state = 'inbox';
         if (decision.action === 'move') {
@@ -208,8 +270,6 @@ class Service {
         } else if (decision.action === 'would-move' && this.cfg.monitorLabel) {
             await this.gmail.modify(user, msg.id, [await this.gmail.labelId(user, this.cfg.monitorLabel)], []);
         }
-        const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
-        const campaign = campaignOf(senderDomain, facts.subject, user);
         const rec = {
             key: recordKey(user, msg.id), user, messageId: msg.id, threadId: msg.threadId || '',
             // The message's history id when it was read: an Inbox label added after it is the user's.
@@ -217,41 +277,191 @@ class Service {
             receivedAt: msg.internalDate || facts.date || now, processedAt: now,
             sender: { name: facts.senderName.slice(0, 200), address: facts.senderAddress.slice(0, 320), domain: senderDomain },
             subject: this.cfg.storeSubjects ? facts.subject.slice(0, 300) : '',
-            campaign: campaign.key, campaignLabel: this.cfg.storeSubjects ? campaign.label : senderDomain,
+            campaign: campaign.key, campaignLabel,
             status: result.status, score: result.score, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null,
             ai: result.ai ? { probability: result.ai.probability, model: result.ai.model,
                               reasons: this.cfg.storeAiQuotes ? (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] } : null,
             auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
             attachments: facts.attachments.slice(0, 10).map(a => ({ name: a.name.slice(0, 120), type: a.type })),
-            action: decision.action, trigger: decision.trigger, why: decision.why, braked: !!decision.braked, mode: this.cfg.mode,
+            action: decision.action, trigger: decision.trigger, why: decision.why, braked: held === 'brake', held, mode: this.cfg.mode,
+            // How sure: strong = the rules flagged it and something outside the email confirms it.
+            evidence: result.strong ? 'strong' : 'weak', confirmedBy: result.confirmedBy || [],
+            ownAddressUnverified: !!(result.ownAddress && !result.inside), userPlaced: userPlaced || undefined,
             state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null
         };
         await this.store.saveRecord(rec);
         await this.store.incStat(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
-        if (decision.action === 'move') await this.checkBrake(now);
+        if (decision.action === 'move') {
+            const moves = await this.store.campaignMoved(campaign.key, now);
+            if (moves === this.cfg.campaignAlertAfter) await this.alert('campaign', `A large campaign: ${moves} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Campaigns page lists who received it.`, { campaign: campaign.key });
+        }
+        if (userPlaced && result.status === 'flagged') {
+            await this.alert('user-inbox', `${user} moved an email from ${rec.sender.address} into their Inbox (it didn't arrive there), and the checks flag it (score ${rec.score}). Make sure it's safe, or confirm it as phishing and warn them.`, { user, key: rec.key });
+        }
         return rec;
     }
 
-    async brakeOn() { return !!(await this.store.getState('brake')); }
-    // More moves in the last hour than BRAKE_PER_HOUR: stop moving until an admin resumes. The count
-    // starts again at the resume (the moves before it already tripped the brake once).
-    async checkBrake(now) {
-        if (await this.brakeOn()) return;
-        const since = Math.max(now - HOUR, Number(await this.store.getState('brakeResumedAt')) || 0);
-        const n = await this.store.countActions(since, 'move');
-        if (n >= this.cfg.brakePerHour) {
-            await this.store.setState('brake', { at: now, moves: n });
-            await this.store.addEvent({ kind: 'brake', text: `${n} emails were moved in the last hour (limit ${this.cfg.brakePerHour}). Moving has stopped; suspicious mail is only recorded until an admin resumes in the dashboard.` });
+    // The brakes, for a move about to be made (enforce mode). In order:
+    //   - an admin's decision on the campaign: released (a false alarm) is never moved; confirmed is;
+    //   - the campaign hold: on weak evidence (nothing outside the email confirms it), copies of one
+    //     campaign beyond CAMPAIGN_HOLD_AFTER are held until an admin confirms or releases it. Strong
+    //     evidence is never held, so a clear phishing campaign reaches every mailbox;
+    //   - the domain-wide brake, a last resort against a misfire: more than brakeLimit() moves in the
+    //     clock hour (counted exactly, a slot reserved before each move) stops moving everywhere.
+    // Held copies are recorded as "would move" and can be moved later (moveHeld).
+    async brakes(decision, result, campaignKey, campaignLabel, now) {
+        const cs = await this.store.getCampaign(campaignKey);
+        const released = (d) => ({ decision: { action: 'flag', trigger: d.trigger, why: `${d.why}; an admin released this campaign (a false alarm), so its copies aren't moved` }, held: null });
+        if (cs && cs.decision === 'released') return released(decision);
+        if (!result.strong && !(cs && cs.decision === 'confirmed')) {
+            const h = await this.store.campaignHold(campaignKey, this.cfg.campaignHoldAfter, now, campaignLabel);
+            if (h.decision === 'released') return released(decision);
+            if (h.held) {
+                if (h.first) await this.alert('campaign-held', `Copies of "${campaignLabel}" are held: more than ${this.cfg.campaignHoldAfter} were moved on evidence nothing outside the email confirms. Confirm it as phishing (every copy is moved) or release it, on the dashboard's Messages page for the campaign.`, { campaign: campaignKey });
+                return { decision: { action: 'would-move', trigger: decision.trigger, why: `${decision.why} (held: over ${this.cfg.campaignHoldAfter} copies of this campaign on evidence nothing outside the email confirms; an admin confirms or releases it)` }, held: 'campaign' };
+            }
         }
+        const resumedAt = Number(await this.store.getState('brakeResumedAt')) || 0;
+        const limit = await this.brakeLimit();
+        const slot = await this.store.reserveMove(`${hourOf(now)}|${resumedAt}`, limit, now);
+        if (!slot.ok) {
+            await this.tripBrake(now, slot.count, limit);
+            return { decision: { action: 'would-move', trigger: decision.trigger, why: `${decision.why} (brake on: not moved)`, braked: true }, held: 'brake' };
+        }
+        return { decision, held: null };
     }
-    async resume(by) {
+    // The domain-wide limit: BRAKE_PER_HOUR, or half the watched mailboxes (at least 100).
+    async brakeLimit() {
+        if (this.cfg.brakePerHour > 0) return this.cfg.brakePerHour;
+        return Math.max(100, Math.ceil((Number(await this.store.getState('watchedCount')) || 0) / 2));
+    }
+    async tripBrake(now, count, limit) {
+        if (!(await this.store.setStateIfUnset('brake', { at: now, moves: count, limit }))) return;
+        await this.alert('brake', `${count} emails were moved within the hour (limit ${limit}). Moving has stopped in every mailbox: suspicious mail is held until an admin resumes on the dashboard, which can also move the held mail.`);
+    }
+
+    // An alert: in Recent activity, and a log line Cloud Monitoring emails to ALERT_EMAIL (install.sh).
+    async alert(kind, text, extra = {}) {
+        await this.store.addEvent(Object.assign({ kind, text, alert: true }, extra));
+        if (this.log.warn) this.log.warn(JSON.stringify({ severity: 'WARNING', spruceAlert: kind, message: text }));
+    }
+
+    async brakeOn() { return !!(await this.store.getState('brake')); }
+    // The admin resumes: the hour's count starts again (a new counter), and with moveHeld the copies the
+    // brake held since it came on are moved now (those still in the Inbox).
+    async resume(by, { moveHeld = false } = {}) {
+        const brake = await this.store.getState('brake');
         await this.store.setState('brakeResumedAt', this.now());
         await this.store.setState('brake', null);
-        await this.store.addEvent({ kind: 'resume', text: `Moving resumed by ${by}.` });
+        const out = moveHeld && brake ? await this.moveHeld(r => r.held === 'brake' && r.processedAt >= brake.at, by, 'resumed moving') : null;
+        await this.store.addEvent({ kind: 'resume', text: `Moving resumed by ${by}${out ? (out.monitor ? '' : `; ${out.moved} held emails moved to Spam${out.gone ? `, ${out.gone} no longer in the Inbox` : ''}`) : ''}.` });
+        return { ok: true, held: out };
+    }
+
+    // Moves held or recorded copies now, those still in the Inbox (an admin's resume or confirmation;
+    // not counted by the brake). Enforce mode only. { moved, gone, failed, left }.
+    async moveHeld(match, by, how, { budgetMs = 200000, max = 5000 } = {}) {
+        if (this.cfg.mode !== 'enforce') return { moved: 0, gone: 0, failed: 0, left: 0, monitor: true };
+        const recs = (await this.store.listRecords({ sinceMs: this.now() - 14 * DAY, limit: 20000 }))
+            .filter(r => r.state === 'inbox' && r.action !== 'move' && match(r)).slice(0, max);
+        const start = Date.now();
+        const out = { moved: 0, gone: 0, failed: 0, left: 0 };
+        await pool(recs, 10, async (r) => {
+            try {
+                let labels = null;
+                try { labels = await this.gmail.labels(r.user, r.messageId); } catch (e) { if (!(e instanceof GoogleApiError && e.status === 404)) throw e; }
+                if (!labels || !labels.includes('INBOX')) { out.gone++; return; }
+                await this.gmail.modify(r.user, r.messageId, ['SPAM', await this.gmail.labelId(r.user, this.cfg.movedLabel)], ['INBOX']);
+                const now = this.now();
+                await this.store.updateRecord(r.key, { action: 'move', state: 'moved', held: null, braked: false, why: `${r.why}; moved when ${by} ${how}`, heldMovedBy: by, heldMovedAt: now });
+                await this.store.incStat(dayOf(now), 'moved');
+                out.moved++;
+            } catch (e) { out.failed++; this.log.error(`move held ${r.key}:`, e); }
+        }, () => Date.now() - start > budgetMs);
+        out.left = recs.length - out.moved - out.gone - out.failed;
+        return out;
+    }
+
+    // --- Campaigns: an admin's decision for every copy -----------------------------------------
+    async campaignRecords(key) { return (await this.store.listRecords({ sinceMs: this.now() - 90 * DAY, limit: 20000 })).filter(r => r.campaign === key); }
+    // Confirmed as phishing: every recorded copy still in the Inbox is moved (enforce mode), every copy
+    // is marked phishing, later copies are moved without being held, and with search the watched
+    // mailboxes are searched for copies the service didn't record (findCopies).
+    async confirmCampaign(key, by, { search = false } = {}) {
+        const recs = await this.campaignRecords(key);
+        if (!recs.length) return { error: 'not found', status: 404 };
+        // Within the dashboard's request time (5 minutes): moving first, then searching with what is left.
+        const start = Date.now();
+        await this.store.setCampaign(key, { decision: 'confirmed', decidedBy: by, decidedAt: this.now(), label: recs[0].campaignLabel });
+        const moved = await this.moveHeld(r => r.campaign === key, by, 'confirmed the campaign as phishing', { budgetMs: 150000 });
+        for (const r of recs) if (r.falseAlarm !== false) await this.store.updateRecord(r.key, { falseAlarm: false, markedBy: by });
+        const found = search ? await this.findCopies(key, by, { budgetMs: Math.max(30000, 240000 - (Date.now() - start)) }) : null;
+        await this.store.addEvent({ kind: 'campaign', campaign: key, text: `${by} confirmed "${recs[0].campaignLabel}" as phishing${moved.monitor ? ' (monitor mode: nothing moved)' : `: ${moved.moved} copies moved to Spam`}${found ? `; a search of ${found.searched} mailboxes found ${found.found} more${found.moved ? `, ${found.moved} moved` : ''}` : ''}.` });
+        return { moved, found };
+    }
+    // A false alarm: every moved copy is released, every copy marked a false alarm, and later copies
+    // aren't moved.
+    async releaseCampaign(key, by) {
+        const recs = await this.campaignRecords(key);
+        if (!recs.length) return { error: 'not found', status: 404 };
+        await this.store.setCampaign(key, { decision: 'released', decidedBy: by, decidedAt: this.now(), label: recs[0].campaignLabel });
+        let released = 0, failed = 0;
+        await pool(recs, 10, async (r) => {
+            try {
+                if (r.state === 'moved') { const out = await this.release(r.key, by, { quiet: true }); if (out.record) released++; }
+                else if (r.falseAlarm !== true) await this.store.updateRecord(r.key, { falseAlarm: true, markedBy: by });
+            } catch (e) { failed++; this.log.error(`release ${r.key}:`, e); }
+        });
+        await this.store.addEvent({ kind: 'campaign', campaign: key, text: `${by} released "${recs[0].campaignLabel}" as a false alarm: ${released} copies back in the Inbox${failed ? `, ${failed} couldn't be released` : ''}. Later copies aren't moved.` });
+        return { released, failed };
+    }
+    // Copies of a campaign the service didn't record (judged clean when they came, or before the pilot):
+    // each watched mailbox's Inbox of the last 7 days is searched for mail from the campaign's senders,
+    // and a message counts when its sender's domain and subject make the same campaign. Confirmed
+    // campaigns' copies are moved (enforce mode); others are recorded as "would move".
+    async findCopies(key, by, { budgetMs = 200000 } = {}) {
+        const recs = await this.campaignRecords(key);
+        const senders = [...new Set(recs.map(r => r.sender && r.sender.address).filter(Boolean))].slice(0, 5);
+        const users = (await this.store.listUsers()).filter(u => u.watched).map(u => u.email);
+        const out = { searched: 0, of: users.length, found: 0, moved: 0, failed: 0 };
+        if (!senders.length) return out;
+        const cs = await this.store.getCampaign(key);
+        const moving = !!(cs && cs.decision === 'confirmed') && this.cfg.mode === 'enforce';
+        const known = new Set(recs.map(r => r.key));
+        const q = `in:inbox newer_than:7d from:(${senders.join(' OR ')})`;
+        const start = Date.now();
+        await pool(users, 20, async (user) => {
+            try {
+                const { ids } = await this.gmail.search(user, q, { max: 50 });
+                out.searched++;
+                for (const id of ids) {
+                    if (known.has(recordKey(user, id))) continue;
+                    const m = await this.gmail.headers(user, id);
+                    const address = addressOf(m.from), domain = address.split('@')[1] || '';
+                    if (campaignOf(domain, m.subject, user).key !== key || !m.labelIds.includes('INBOX')) continue;
+                    out.found++;
+                    if (moving) await this.gmail.modify(user, id, ['SPAM', await this.gmail.labelId(user, this.cfg.movedLabel)], ['INBOX']);
+                    const now = this.now();
+                    await this.store.saveRecord({
+                        key: recordKey(user, id), user, messageId: id, threadId: m.threadId || '', readHistoryId: null,
+                        receivedAt: m.internalDate || now, processedAt: now,
+                        sender: { name: '', address: address.slice(0, 320), domain }, subject: this.cfg.storeSubjects ? String(m.subject).slice(0, 300) : '',
+                        campaign: key, campaignLabel: recs[0].campaignLabel, status: 'flagged', score: null,
+                        signals: [{ weight: 0, kind: 'campaign-copy', text: `A copy of a campaign ${by} confirmed as phishing.` }], links: [], checks: null, ai: null, auth: null, attachments: [],
+                        action: moving ? 'move' : 'would-move', trigger: 'admin', why: `found by ${by}'s search for copies of the campaign${moving ? '' : this.cfg.mode === 'enforce' ? ' (not moved: the campaign isn\'t confirmed)' : ' (monitor mode: not moved)'}`,
+                        braked: false, held: null, mode: this.cfg.mode, evidence: 'admin', confirmedBy: [],
+                        state: moving ? 'moved' : 'inbox', releasedBy: null, releasedAt: null, falseAlarm: false, markedBy: by
+                    });
+                    await this.store.incStat(dayOf(now), moving ? 'moved' : 'wouldMove');
+                    if (moving) out.moved++;
+                }
+            } catch (e) { out.failed++; this.log.error(`find copies ${user}:`, e); }
+        }, () => Date.now() - start > budgetMs);
+        return out;
     }
 
     // Puts a moved email back in the Inbox (and records who did it).
-    async release(key, by) {
+    async release(key, by, { quiet = false } = {}) {
         const rec = await this.store.getRecord(key);
         if (!rec) return { error: 'not found' };
         if (rec.state !== 'moved') return { error: `it is ${rec.state === 'released' ? 'already released' : 'still in the Inbox'}` };
@@ -263,7 +473,7 @@ class Service {
         const now = this.now();
         const out = await this.store.updateRecord(key, { state: 'released', releasedBy: by, releasedByUser: false, releasedAt: now, falseAlarm: rec.falseAlarm === null ? true : rec.falseAlarm, markedBy: rec.markedBy || by });
         await this.store.incStat(dayOf(now), 'released');
-        await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} released an email from ${rec.sender.address} to ${rec.user}.` });
+        if (!quiet) await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} released an email from ${rec.sender.address} to ${rec.user}.` });
         return { record: out };
     }
     // The user moved an email the service had put in Spam back to the Inbox (or marked it "Not spam"). The
@@ -273,7 +483,8 @@ class Service {
     async userReleased(user, messageId, { at, listedAsNew = false } = {}) {
         const key = recordKey(user, messageId);
         const rec = await this.store.getRecord(key);
-        if (!rec || rec.state !== 'moved') return null;
+        if (!rec) return { noRecord: true };
+        if (rec.state !== 'moved') return null;
         // Only an Inbox label added after the service read the message can be the user's: the label it
         // arrived with can show in the same history. Where the order isn't known, a message the history
         // lists as new is taken to have arrived with it.
@@ -286,9 +497,10 @@ class Service {
         await this.store.incStat(dayOf(now), 'released');
         await this.store.incStat(dayOf(now), 'userReleased');
         const strong = rec.score >= 5 && rec.trigger !== 'ai';
-        await this.store.addEvent({ kind: 'user-release', user, key,
-            text: strong ? `${user} moved an email from ${rec.sender.address} back to the Inbox, though the checks flagged it (score ${rec.score}). Make sure it's safe, or mark it phishing and warn them.`
-                         : `${user} moved an email from ${rec.sender.address} back to the Inbox (counted as a false alarm).` });
+        const text = strong ? `${user} moved an email from ${rec.sender.address} back to the Inbox, though the checks flagged it (score ${rec.score}). Make sure it's safe, or mark it phishing and warn them.`
+                            : `${user} moved an email from ${rec.sender.address} back to the Inbox (counted as a false alarm).`;
+        if (strong) await this.alert('user-release', text, { user, key });
+        else await this.store.addEvent({ kind: 'user-release', user, key, text });
         return out;
     }
 
@@ -316,7 +528,7 @@ class Service {
             }
             if (this.cfg.pilotOu) for (const u of await this.gmail.usersInOu(this.cfg.directoryAdmin, this.cfg.pilotOu)) users.add(u);
         } catch (e) {
-            await this.store.addEvent({ kind: 'error', text: `Couldn't read who is in the pilot (${[...this.cfg.pilotGroups, this.cfg.pilotOu].filter(Boolean).join(', ')}) as ${this.cfg.directoryAdmin}: ${String(e.message).slice(0, 200)}. Check the admin's role and the domain-wide delegation scopes.` });
+            await this.alert('error', `Couldn't read who is in the pilot (${[...this.cfg.pilotGroups, this.cfg.pilotOu].filter(Boolean).join(', ')}) as ${this.cfg.directoryAdmin}: ${String(e.message).slice(0, 200)}. Check the admin's role and the domain-wide delegation scopes.`);
             throw e;
         }
         let ok = 0, failed = 0;
@@ -339,6 +551,7 @@ class Service {
                 stopped++;
             }
         }
+        await this.store.setState('watchedCount', ok);
         // What was found, for Recent activity (and the log, without addresses): so a count that looks
         // wrong says why.
         const text = watchSummary({ ok, failed, stopped, groups, extra: this.cfg.pilotUsers.length, ou: this.cfg.pilotOu, orgDomains: this.cfg.orgDomains });
@@ -364,10 +577,42 @@ class Service {
     // Cloud Scheduler, daily: records older than RETENTION_DAYS are deleted.
     purge() { return this.store.purge(this.now() - this.cfg.retentionDays * DAY); }
 
-    // Cloud Scheduler, daily: the phishing lists are downloaded once for everyone (src/intel/feeds.js).
+    // Cloud Scheduler, hourly (the spruce-sync-feeds job): the health check, then the phishing lists,
+    // downloaded once a day for everyone (src/intel/feeds.js; a failed download is tried again the next
+    // day, not every hour).
     async syncFeeds() {
-        if (!this.intel || !this.intel.feeds) return { skipped: 'phishing lists are off' };
-        return this.intel.feeds.sync();
+        let health;
+        try { health = await this.health(); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
+        if (!this.intel || !this.intel.feeds) return { health, skipped: 'phishing lists are off' };
+        const last = Number(await this.store.getState('feedsAttemptedAt')) || 0;
+        if (this.now() - last < 20 * HOUR) return { health, skipped: 'checked within the day' };
+        await this.store.setState('feedsAttemptedAt', this.now());
+        return Object.assign({ health }, await this.intel.feeds.sync());
+    }
+
+    // Whether the service is getting Gmail's notifications at all, and its watches are renewed. Each
+    // problem is alerted once a day: no notification for QUIET_HOURS for any watched mailbox (they may be
+    // refused before reaching the service), or watches ending within a day (the daily re-read failing).
+    async health() {
+        const now = this.now();
+        const users = (await this.store.listUsers()).filter(u => u.watched);
+        const out = { watched: users.length };
+        if (!users.length) return out;
+        const once = async (name, kind, text) => {
+            if (now - (Number(await this.store.getState(name)) || 0) < DAY) return;
+            await this.store.setState(name, now);
+            await this.alert(kind, text);
+        };
+        const last = Math.max(0, ...users.map(u => Number(u.lastNotification) || 0));
+        const since = last || Number(await this.store.getState('installedAt')) || now;
+        out.lastNotification = last || null;
+        if (now - since > this.cfg.quietHours * HOUR) {
+            out.quiet = true;
+            await once('quietAlertAt', 'quiet', `No notification from Gmail for ${Math.round((now - since) / HOUR)} hours, for any of the ${users.length} watched mailboxes. Gmail's notifications may be refused before they reach the service: docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".`);
+        }
+        out.expiring = users.filter(u => u.watchExpiration && u.watchExpiration < now + DAY).length;
+        if (out.expiring) await once('expiringAlertAt', 'watch-expiring', `${out.expiring} mailbox watches end within a day and weren't renewed: the daily re-read of the group (spruce-renew-watches) may be failing. Settings → Mailboxes watched says when it last reached the service.`);
+        return out;
     }
 }
 

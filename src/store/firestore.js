@@ -7,7 +7,9 @@
 //   records/{key}           see store/memory.js
 //   stats/{yyyy-mm-dd}      counters: scanned, moved, wouldMove, flagged, released, falseAlarms, errors
 //   senders/{hash}          firstSeen (sender addresses as a 64-bit hash only, as in the extension)
-//   state/{name}            brake, installedAt
+//   state/{name}            brake, installedAt, watchedCount, …
+//   moveCounts/{hour|resume} moves in a clock hour (the domain-wide brake; reserved before each move)
+//   campaigns/{key}         the campaign brake: weak moves, held, an admin's decision; moves (alerts)
 //   events/{auto}           alerts and errors for the dashboard
 //   blobs/{name}, ~{i}      the phishing lists (gzip, in chunks), shared by every instance
 //   cache/{kind|key}        remembered answers shared by every instance (registry dates)
@@ -82,6 +84,55 @@ class FirestoreStore {
             return now;
         });
     }
+    // The brakes' counters, each read and changed in one transaction, so instances moving at the same
+    // moment can't pass a limit together.
+    async reserveMove(bucket, limit, now = Date.now()) {
+        const ref = this.col('moveCounts').doc(safeId(bucket));
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const count = d.exists ? d.data().count || 0 : 0;
+            if (count >= limit) return { ok: false, count };
+            t.set(ref, { count: count + 1, at: now }, { merge: true });
+            return { ok: true, count: count + 1 };
+        });
+    }
+    async campaignHold(key, holdAfter, now = Date.now(), label = '') {
+        const ref = this.col('campaigns').doc(safeId(key));
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const c = Object.assign({ key, label, weakMoves: 0, heldAt: null, decision: null }, d.exists ? d.data() : {});
+            if (c.decision) return { decision: c.decision, held: false };
+            if (c.weakMoves >= holdAfter) {
+                const first = !c.heldAt;
+                if (first) t.set(ref, { key, label, heldAt: now, at: now }, { merge: true });
+                return { held: true, first };
+            }
+            t.set(ref, { key, label, weakMoves: c.weakMoves + 1, at: now }, { merge: true });
+            return { held: false, count: c.weakMoves + 1 };
+        });
+    }
+    async campaignMoved(key, now = Date.now()) {
+        const ref = this.col('campaigns').doc(safeId(key));
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const moves = (d.exists ? d.data().moves || 0 : 0) + 1;
+            t.set(ref, { key, moves, at: now }, { merge: true });
+            return moves;
+        });
+    }
+    async getCampaign(key) { const d = await this.col('campaigns').doc(safeId(key)).get(); return d.exists ? d.data() : null; }
+    async setCampaign(key, patch) { await this.col('campaigns').doc(safeId(key)).set(Object.assign({ key }, patch, { at: Date.now() }), { merge: true }); }
+    async listCampaignStates() { return (await this.col('campaigns').where('at', '>=', Date.now() - 90 * 24 * 3600 * 1000).limit(2000).get()).docs.map(d => d.data()); }
+    // Sets a state only when it isn't set yet (the brake: one alert when instances trip it together).
+    async setStateIfUnset(name, value) {
+        const ref = this.col('state').doc(name);
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            if (d.exists && d.data().value) return false;
+            t.set(ref, { value });
+            return true;
+        });
+    }
     async getState(name) { const d = await this.col('state').doc(name).get(); return d.exists ? (d.data().value ?? null) : null; }
     async setState(name, value) { await this.col('state').doc(name).set({ value }); }
     async addEvent(ev) { await this.col('events').add(Object.assign({ at: Date.now() }, ev)); }
@@ -115,7 +166,7 @@ class FirestoreStore {
     }
     async purge(beforeMs) {
         let n = 0;
-        for (const name of ['records', 'seen', 'events']) {
+        for (const name of ['records', 'seen', 'events', 'moveCounts', 'campaigns']) {
             const field = name === 'records' ? 'processedAt' : 'at';
             for (;;) {
                 const q = await this.col(name).where(field, '<', beforeMs).limit(400).get();

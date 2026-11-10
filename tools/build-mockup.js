@@ -34,6 +34,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     storeSubjects: true, storeAiQuotes: true, movedLabel: cfg.movedLabel, model: E.modelInfo, engine: E.vendor, watched: (await store.listUsers()).length, demo: true,
                     mailboxes: (await store.listUsers()).sort((a, b) => a.email.localeCompare(b.email)).map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                     renew: { available: true, last: { at: now - 15 * 60 * 60 * 1000, code: 0 } },
+                    brakePerHour: 0, brakeLimit: 100, campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: 'spruce-admins@maple-schools.example',
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.
@@ -66,6 +67,16 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
       case '/api/mark': { const r = recs.find(x => x.key === body.key); if (!r) throw new Error('not found'); Object.assign(r, { falseAlarm: body.falseAlarm === true, markedBy: ADMIN }); return Object.assign(base, { record: r }); }
       case '/api/resume': return Object.assign(base, { ok: true });
       case '/api/renew-watches': return Object.assign(base, { ok: true });
+      case '/api/activity': return Object.assign(base, { events: A.activity(D.events.filter(e => e.at >= since).sort((a, b) => b.at - a.at), q.get('kind') || '').slice(0, 500) });
+      case '/api/readiness': return Object.assign(base, { readiness: A.readiness(recs, { now, days: n, mode: D.settings.mode, installedAt: now - 60 * DAY, brakeLimit: D.settings.brakeLimit, holdAfter: D.settings.campaignHoldAfter,
+        watched: D.settings.watched, lastNotification: now - 4 * 60000, quietHours: 12, renew: D.settings.renew.last }) });
+      case '/api/campaign': { const c = recs.filter(r => r.campaign === q.get('key')); if (!c.length) throw new Error('not found');
+        const k = (f) => c.filter(f).length;
+        return Object.assign(base, { campaign: { key: q.get('key'), label: c[0].campaignLabel, decision: null, copies: c.length, moved: k(r => r.state === 'moved'), held: 0, recorded: k(r => r.state === 'inbox'),
+          released: k(r => r.state === 'released'), strong: k(r => r.evidence === 'strong'), holdAfter: D.settings.campaignHoldAfter } }); }
+      case '/api/campaign/confirm': return Object.assign(base, { moved: { moved: 0, gone: 0, failed: 0, left: 0 }, found: null });
+      case '/api/campaign/release': return Object.assign(base, { released: 0, failed: 0 });
+      case '/api/campaign/find': return Object.assign(base, { found: { searched: 0, of: 0, found: 0, moved: 0, failed: 0 } });
     }
     throw new Error('not found');
   };

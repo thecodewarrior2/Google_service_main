@@ -25,8 +25,8 @@ const SECURITY_HEADERS = {
     'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'cache-control': 'no-store'
 };
 
-function send(res, status, body, type = 'application/json') {
-    res.writeHead(status, Object.assign({ 'content-type': type }, SECURITY_HEADERS));
+function send(res, status, body, type = 'application/json', extra = {}) {
+    res.writeHead(status, Object.assign({ 'content-type': type }, SECURITY_HEADERS, extra));
     res.end(type === 'application/json' ? JSON.stringify(body) : body);
 }
 async function readBody(req, max = 1024 * 1024) {
@@ -62,13 +62,29 @@ function createApp({ cfg, store, service, scheduler = null }) {
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
     const load = async (q) => ({ records: await store.listRecords({ sinceMs: since(q) - A.DAY, limit: 20000 }), stats: await store.getStats(A.dayOf(since(q)), A.dayOf(Date.now())) });
 
+    // The brake, and how many emails it holds (still in the Inbox, recorded since it came on).
+    async function brakeInfo(records) {
+        const b = await store.getState('brake');
+        if (!b) return null;
+        return Object.assign({}, b, { held: records.filter(r => r.held === 'brake' && r.state === 'inbox' && r.processedAt >= b.at).length });
+    }
+    // Campaigns held on weak evidence, waiting for an admin's decision.
+    async function heldCampaigns(records) {
+        const held = (await store.listCampaignStates()).filter(c => c.heldAt && !c.decision);
+        return held.map(c => ({ campaign: c.key, label: c.label, heldAt: c.heldAt, held: records.filter(r => r.campaign === c.key && r.held === 'campaign' && r.state === 'inbox').length }))
+            .sort((a, b) => b.held - a.held).slice(0, 20);
+    }
+    const ACTIONS_GAP_MS = 5000;   // a campaign action at most every 5 s per campaign (no double clicks)
+    const lastAction = new Map();
+    const once = (key) => { const t = lastAction.get(key) || 0; if (Date.now() - t < ACTIONS_GAP_MS) return false; lastAction.set(key, Date.now()); return true; };
+
     const api = {
         'GET /api/overview': async (q) => {
             const { records, stats } = await load(q);
             const n = nDays(q), now = Date.now();
             return { summary: A.summary(records, stats, now, n), trend: A.trend(records, stats, now, n), topReasons: A.topReasons(records, now, n).slice(0, 8),
                      campaigns: A.campaigns(records, now, n).slice(0, 5), alerts: (await store.listEvents(now - 7 * A.DAY)).slice(0, 10),
-                     brake: await store.getState('brake'), mode: cfg.mode };
+                     brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode };
         },
         'GET /api/campaigns': async (q) => { const { records } = await load(q); return { campaigns: A.campaigns(records, Date.now(), nDays(q)) }; },
         'GET /api/users': async (q) => { const { records } = await load(q); return { users: A.users(records, Date.now(), nDays(q)) }; },
@@ -84,6 +100,7 @@ function createApp({ cfg, store, service, scheduler = null }) {
             const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
+                     brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
                      model: E.modelInfo, engine: E.vendor, watched: watchedUsers.length, demo: cfg.demo,
@@ -97,7 +114,52 @@ function createApp({ cfg, store, service, scheduler = null }) {
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email),
-        'POST /api/resume': async (q, body, admin) => { await service.resume(admin.email); return { ok: true }; },
+        // Resume moving; with moveHeld, the emails the brake held are moved now too.
+        'POST /api/resume': async (q, body, admin) => service.resume(admin.email, { moveHeld: body.moveHeld === true }),
+        // A campaign: what the brakes and admins decided, and how many copies are where.
+        'GET /api/campaign': async (q) => {
+            const key = String(q.get('key') || '');
+            const recs = await service.campaignRecords(key);
+            if (!recs.length) return { error: 'not found', status: 404 };
+            const st = (await store.getCampaign(key)) || {};
+            const count = (f) => recs.filter(f).length;
+            return { campaign: { key, label: recs[0].campaignLabel, decision: st.decision || null, decidedBy: st.decidedBy || null, decidedAt: st.decidedAt || null, heldAt: st.heldAt || null,
+                copies: recs.length, moved: count(r => r.state === 'moved'), held: count(r => r.held === 'campaign' && r.state === 'inbox'), recorded: count(r => r.state === 'inbox'),
+                released: count(r => r.state === 'released'), strong: count(r => r.evidence === 'strong'), holdAfter: cfg.campaignHoldAfter } };
+        },
+        'POST /api/campaign/confirm': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!once(`confirm|${key}`)) return { error: 'already under way', status: 429 };
+            return service.confirmCampaign(key, admin.email, { search: body.search === true });
+        },
+        'POST /api/campaign/release': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!once(`release|${key}`)) return { error: 'already under way', status: 429 };
+            return service.releaseCampaign(key, admin.email);
+        },
+        'POST /api/campaign/find': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!once(`find|${key}`)) return { error: 'already under way', status: 429 };
+            const found = await service.findCopies(key, admin.email);
+            await store.addEvent({ kind: 'campaign', campaign: key, text: `${admin.email} searched ${found.searched} mailboxes for copies of a campaign: ${found.found} found${found.moved ? `, ${found.moved} moved to Spam` : ''}.` });
+            return { found };
+        },
+        // The records shown on Messages (same filters), as a CSV file.
+        'GET /api/export.csv': async (q) => {
+            const { records } = await load(q);
+            const list = A.filterRecords(records, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since: since(q) });
+            return { csv: A.toCsv(list), filename: `spruce-messages-${A.dayOf(Date.now())}.csv` };
+        },
+        // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
+        'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500) }),
+        // "Ready for enforce mode?"
+        'GET /api/readiness': async (q) => {
+            const { records } = await load(q);
+            const users = (await store.listUsers()).filter(u => u.watched);
+            return { readiness: A.readiness(records, { now: Date.now(), days: nDays(q), mode: cfg.mode, installedAt: await store.getState('installedAt'),
+                brakeLimit: await service.brakeLimit(), holdAfter: cfg.campaignHoldAfter, watched: users.length,
+                lastNotification: Math.max(0, ...users.map(u => Number(u.lastNotification) || 0)) || null, quietHours: cfg.quietHours, renew: await lastRenew() }) };
+        },
         // "Update group membership now": runs the daily re-read job at once (it calls the worker; the
         // dashboard doesn't). Said in Recent activity, with who asked.
         'POST /api/renew-watches': async (q, body, admin) => {
@@ -149,6 +211,7 @@ function createApp({ cfg, store, service, scheduler = null }) {
                 if (req.method === 'POST' && req.headers['x-requested-with'] !== 'spruce-dashboard') return send(res, 403, { error: 'missing request header' });
                 const body = req.method === 'POST' ? await readBody(req, 64 * 1024) : {};
                 const out = await api[route](url.searchParams, body, admin);
+                if (out && typeof out.csv === 'string') return send(res, 200, out.csv, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${out.filename}"` });
                 return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo }, out));
             }
             if (req.method === 'GET') {
@@ -173,7 +236,7 @@ async function main() {
     if (cfg.demo) {
         const { buildDemo } = require('./demo/seed');
         ({ store, intel } = await buildDemo({ cfg, now: Date.now() }));
-        gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}) };
+        gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}), labels: async () => ['INBOX'], search: async () => ({ ids: [], next: null }), headers: async () => ({}) };
         console.log('DEMO mode: made-up data, no Google access.');
     } else {
         const { DelegatedAuth } = require('./gmail/auth');

@@ -90,6 +90,15 @@ async function analyze(facts, ctx = {}) {
     ];
     const base = { status: ctx.trusted ? 'trusted' : 'clean', reasons: [], move: false };
     const verdict = E.applyEmailSignals(base, signals) || base;
+    // What confirms it from outside the email's own text: a link a security service blocks or a
+    // phishing list has, a sender on a list or blocked, a brand-new look-alike sender domain, or Gmail's
+    // DMARC check failing. Rules plus one of these is "strong" evidence (the brakes never hold it).
+    const SENDER_CONFIRMS = new Set(['scam-sender-list', 'sender-domain-blocked', 'sender-domain-listed', 'young-lookalike-sender']);
+    const confirmedBy = [
+        judged.some(j => j.network && j.severity === 'danger') ? 'a link is blocked or on a phishing list' : '',
+        net.signals.some(s => SENDER_CONFIRMS.has(s.kind)) ? 'the sender is on a list, blocked, or a new look-alike' : '',
+        facts.auth && facts.auth.dmarc === 'fail' ? 'Gmail\'s DMARC check failed' : ''
+    ].filter(Boolean);
 
     // The model reads what the extension gives it for an opened email (modelInputParts in ai.js).
     const aiFacts = {
@@ -119,6 +128,8 @@ async function analyze(facts, ctx = {}) {
         inside,
         ownAddress,
         verified,
+        confirmedBy,
+        strong: verdict.status === 'flagged' && confirmedBy.length > 0,
         ai
     };
 }

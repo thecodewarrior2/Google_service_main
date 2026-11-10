@@ -33,9 +33,18 @@ function loadConfig(env = process.env) {
         // Never moved, whatever the checks say.
         allowDomains: list(env.ALLOW_DOMAINS),
         allowAddresses: list(env.ALLOW_ADDRESSES),
-        // The brake: more moves than this in an hour stops moving (back to recording only) until an
-        // admin resumes it in the dashboard.
-        brakePerHour: num(env.BRAKE_PER_HOUR, 100),
+        // The brakes (pipeline.js). The domain-wide one: more moves than this in an hour stops moving
+        // until an admin resumes; 0 or unset = half the watched mailboxes, at least 100 (a misfire on
+        // many unrelated emails, not one large campaign). The campaign one: copies of one campaign moved
+        // on weaker evidence (no outside confirmation) beyond this are held until an admin confirms or
+        // releases the campaign; strong evidence is never held.
+        brakePerHour: num(env.BRAKE_PER_HOUR, 0),
+        campaignHoldAfter: num(env.CAMPAIGN_HOLD_AFTER, 25),
+        // Alerts (logged for Cloud Monitoring to email; deploy/install.sh): a campaign moved this many
+        // times, and no notification from Gmail for this many hours.
+        campaignAlertAfter: num(env.CAMPAIGN_ALERT_AFTER, 50),
+        quietHours: num(env.QUIET_HOURS, 12),
+        alertEmail: env.ALERT_EMAIL || '',                // shown in Settings (deploy/install.sh sets up the alerts)
         movedLabel: env.MOVED_LABEL || 'SPRUCE/Moved',
         releasedLabel: env.RELEASED_LABEL || 'SPRUCE/Released',
         monitorLabel: env.MONITOR_LABEL || '',            // '' = monitor mode leaves mailboxes untouched

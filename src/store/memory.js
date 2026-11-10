@@ -11,6 +11,7 @@ class MemoryStore {
     constructor() {
         this.users = new Map(); this.seenIds = new Map(); this.records = new Map(); this.stats = new Map();
         this.senders = new Map(); this.state = new Map(); this.events = [];
+        this.moveCounts = new Map(); this.campaignState = new Map();
     }
     async getUser(email) { return this.users.get(email) || null; }
     async putUser(email, patch) { this.users.set(email, Object.assign({}, this.users.get(email) || { email }, patch)); }
@@ -65,6 +66,34 @@ class MemoryStore {
     async senderFirstSeen(hash, now) {
         if (!this.senders.has(hash)) this.senders.set(hash, now);
         return this.senders.get(hash);
+    }
+    // The brakes' counters (see store/firestore.js; here each call is atomic by itself).
+    async reserveMove(bucket, limit, now = Date.now()) {
+        const c = this.moveCounts.get(bucket) || { count: 0, at: now };
+        if (c.count >= limit) return { ok: false, count: c.count };
+        c.count++; c.at = now; this.moveCounts.set(bucket, c);
+        return { ok: true, count: c.count };
+    }
+    async campaignHold(key, holdAfter, now = Date.now(), label = '') {
+        const c = Object.assign({ key, label, weakMoves: 0, heldAt: null, decision: null }, this.campaignState.get(key));
+        if (c.decision) return { decision: c.decision, held: false };
+        if (c.weakMoves >= holdAfter) { const first = !c.heldAt; if (first) c.heldAt = now; c.at = now; this.campaignState.set(key, c); return { held: true, first }; }
+        c.weakMoves++; c.at = now; this.campaignState.set(key, c);
+        return { held: false, count: c.weakMoves };
+    }
+    async campaignMoved(key, now = Date.now()) {
+        const c = Object.assign({ key, weakMoves: 0, moves: 0, alertedAt: null }, this.campaignState.get(key));
+        c.moves = (c.moves || 0) + 1; c.at = now; this.campaignState.set(key, c);
+        return c.moves;
+    }
+    async getCampaign(key) { const c = this.campaignState.get(key); return c ? JSON.parse(JSON.stringify(c)) : null; }
+    async setCampaign(key, patch) { this.campaignState.set(key, Object.assign({ key }, this.campaignState.get(key) || {}, patch, { at: Date.now() })); }
+    async listCampaignStates() { return [...this.campaignState.values()].map(c => JSON.parse(JSON.stringify(c))); }
+    // Sets a state only when it isn't set yet (the brake: one alert when instances trip it together).
+    async setStateIfUnset(name, value) {
+        if (this.state.get(name)) return false;
+        this.state.set(name, JSON.parse(JSON.stringify(value)));
+        return true;
     }
     async getState(name) { return this.state.has(name) ? JSON.parse(JSON.stringify(this.state.get(name))) : null; }
     async setState(name, value) { this.state.set(name, value === null ? null : JSON.parse(JSON.stringify(value))); }

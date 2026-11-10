@@ -56,6 +56,22 @@ class GmailClient {
         const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'raw' } });
         return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], historyId: r.historyId ? String(r.historyId) : null, internalDate: Number(r.internalDate) || null, raw: Buffer.from(String(r.raw || ''), 'base64url') };
     }
+    // A message's labels now (to check a held email is still in the Inbox before moving it).
+    async labels(user, id) {
+        const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'minimal' } });
+        return r.labelIds || [];
+    }
+    // Message ids matching a Gmail search (q), a page at a time: { ids, next }.
+    async search(user, q, { max = 100, pageToken = null } = {}) {
+        const r = await this.call(user, 'GET', '/messages', { query: Object.assign({ q, maxResults: String(max) }, pageToken ? { pageToken } : {}) });
+        return { ids: (r.messages || []).map(m => m.id), next: r.nextPageToken || null };
+    }
+    // From, Subject and labels of a message, without its body.
+    async headers(user, id) {
+        const r = await this.call(user, 'GET', `/messages/${encodeURIComponent(id)}`, { query: { format: 'metadata', metadataHeaders: ['From', 'Subject'] } });
+        const get = (n) => ((r.payload && r.payload.headers) || []).find(x => String(x.name).toLowerCase() === n.toLowerCase());
+        return { id: r.id, threadId: r.threadId, labelIds: r.labelIds || [], internalDate: Number(r.internalDate) || null, from: get('From') ? get('From').value : '', subject: get('Subject') ? get('Subject').value : '' };
+    }
     modify(user, id, add = [], remove = []) { return this.call(user, 'POST', `/messages/${encodeURIComponent(id)}/modify`, { body: { addLabelIds: add, removeLabelIds: remove } }); }
     // The id of a label of ours ("SPRUCE/Moved"), made if the mailbox doesn't have it yet.
     async labelId(user, name) {
