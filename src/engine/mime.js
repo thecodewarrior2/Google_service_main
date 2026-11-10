@@ -41,6 +41,10 @@ async function readMessage(raw) {
     // Plain-text part as well: some phishing puts different text there than in the HTML.
     if (mail.html && mail.text && !read.visibleText.trim()) read.visibleText = String(mail.text).slice(0, 20000);
     const to = [].concat(mail.to || []).flatMap(t => (t && t.value) || []).map(v => String(v.address || '').toLowerCase()).filter(Boolean);
+    // The people the email names in its headers (display names and addresses), for the retraining
+    // export's removal of names (src/training.js); never stored.
+    const named = (field) => [].concat(field || []).flatMap(t => (t && t.value) || []).map(v => ({ name: String(v.name || ''), address: String(v.address || '').toLowerCase() })).filter(p => p.name || p.address);
+    const people = { to: named(mail.to), cc: named(mail.cc), replyTo: named(mail.replyTo) };
     return {
         rawForHeaders: text,                                   // for headerAnomalies (headers + the start of the body)
         rawHead,
@@ -51,6 +55,7 @@ async function readMessage(raw) {
         senderAddress: String(from.address || '').toLowerCase(),
         replyTo: ((mail.replyTo && mail.replyTo.value) || []).map(v => String(v.address || '').toLowerCase()).filter(Boolean),
         to,
+        people,
         auth: receiverAuth(rawHead),
         visibleText: read.visibleText,
         hiddenText: read.hiddenText,

@@ -55,7 +55,8 @@ function senderVerified(facts) {
 }
 
 // facts: from mime.readMessage. ctx: { mailbox (the recipient's address), orgDomains: [..], trusted: bool,
-// firstTime: bool (first email from this address anywhere in the organization, after the learning period) }
+// firstTime: bool (first email from this address anywhere in the organization, after the learning period),
+// keepAiFacts: bool (the answer also has what the model read, for the retraining export) }
 async function analyze(facts, ctx = {}) {
     const E = spruce.load();
     const mailbox = String(ctx.mailbox || '').toLowerCase();
@@ -130,7 +131,9 @@ async function analyze(facts, ctx = {}) {
         verified,
         confirmedBy,
         strong: verdict.status === 'flagged' && confirmedBy.length > 0,
-        ai
+        ai,
+        // Only for the retraining export (src/training.js), which takes the people out: never stored.
+        aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
 }
 

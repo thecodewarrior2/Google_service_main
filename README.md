@@ -111,6 +111,10 @@ The dashboard has these pages:
 - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
   often by users themselves). This is
   the number to tune the threshold with.
+  - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings, off by
+    default) gives the emails admins marked, read from Gmail at that moment with the people taken out,
+    as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says how to
+    check the file and train the model with it.
 - **Readiness:** whether monitor mode has shown enough to switch to enforce mode, as checks: time,
   emails reviewed, false alarms, staff mail failing DMARC, the busiest hour against the brake,
   notifications arriving, the group re-read reaching the service.
@@ -124,7 +128,8 @@ The dashboard has these pages:
   - **Update group membership now** re-reads the pilot group at once, instead of waiting for the daily
     run.
   - It also says when the group was last read and whether that reached the service.
-  - **Weekly summary email** (off by default; the only setting changed here): every Monday from 7 AM
+  - **Retraining export** (off by default): allows **Download for retraining** on Model health.
+  - **Weekly summary email** (off by default; changed here, like the retraining export): every Monday from 7 AM
     (`TIME_ZONE`), the week's numbers, what waits, and the largest campaigns go into each dashboard admin's
     Inbox. **Preview** and **Send one now** are next to it.
 - **The browser tab's title** counts what needs you: the brake, held campaigns, users who took flagged
@@ -196,7 +201,8 @@ Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` aga
 built from the same files, so it only redeploys, in about a minute.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
-`docs/ARCHITECTURE.md` explains the pieces.
+`docs/ARCHITECTURE.md` explains the pieces. `docs/RETRAINING.md` turns the emails admins marked into
+training examples, and a better AI model.
 
 ## Layout
 
@@ -210,6 +216,7 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `src/store/` | Firestore (production) and memory (demo, tests) |
 | `src/auth/verify.js` | OIDC for Pub/Sub and Scheduler; Identity-Aware Proxy and ADMIN_EMAILS / ADMIN_GROUP for the dashboard |
 | `src/scheduler.js` | Cloud Scheduler, for the dashboard's "Update group membership now" (runs the daily re-read job) |
+| `src/training.js`, `src/names.js` | The retraining export: an email → a training example, with the people taken out |
 | `src/digest.js` | The weekly summary email (put in admins' Inboxes; never judged by the service) |
 | `src/cloudrun.js` | Cloud Run, read-only, for the Status page |
 | `src/dashboard/cache.js` | The dashboard's copy of the records: one full read, then only what changed |
@@ -218,5 +225,5 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh` and `doctor.sh` (Cloud Shell), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
-| `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip) |
+| `tools/` | `sync-engine.js` (copy the extension's engine), `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
 | `vendor/spruce/` | The extension's checks and model (copied; `VENDOR.json` says from which commit) |

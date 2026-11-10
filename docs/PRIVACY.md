@@ -71,6 +71,22 @@ And:
   email into their Inbox, their address and the sender's.
 - **The CSV export** (Messages → Download CSV) holds what the Messages page shows: keep the file as you
   would the dashboard.
+- **The retraining export** (Model health → Download for retraining) is off until an admin allows it in
+  Settings, and Activity notes who allowed it and every download.
+  - It reads the emails admins marked from Gmail at the moment of the download: confirmed phishing, and
+    false alarms only when asked.
+  - The download holds what the AI model reads: the subject, the sender's name and domain, the DMARC
+    result, up to 8 links, and the first 1,200 characters of the text.
+  - The people are taken out first: the recipient becomes "your name"; the other people in the headers,
+    and names after titles, greetings and sign-offs, become [NAME]; the sender of genuine or inside mail
+    becomes [SENDER]; your domains become [OUR-DOMAIN]; addresses, phone numbers and long numbers are
+    replaced.
+  - Other words that may be names are marked for a person to decide. The removal can miss things, so
+    the file is read by a person before it goes anywhere (`docs/RETRAINING.md`).
+  - Nothing of these emails is stored by the service: the file is the only copy. Keep it on one computer
+    and delete it when done.
+  - The examples are used for training only in the extension's `tools/ai/data/extra/`, which is never
+    committed. Whether they may go to an outside AI service to be reworded is your district's decision.
 
 ## What is sent elsewhere
 

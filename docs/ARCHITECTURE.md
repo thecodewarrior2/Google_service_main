@@ -79,6 +79,20 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   it on Monday from 7 AM in `TIME_ZONE`, once a week whichever instance runs. The service never judges its
   own summary: it is marked as seen, and has the `X-SPRUCE-Summary` header with no `Received:` header,
   which mail from outside always has.
+- **The retraining export** (`src/training.js`; off until an admin allows it in Settings). The emails an
+  admin marked are read from Gmail when an admin downloads them: one per campaign, the newest copy still
+  in a mailbox. Each is judged again as on arrival, with `analyze(..., { keepAiFacts: true })`, to get
+  what the model read. It is then written in the extension's training format (`{ name, label, note, facts }`,
+  as in `tools/ai/data/extra/`), with the people taken out:
+  - the headers' names (`mime.readMessage`'s `people`);
+  - titles, greetings and sign-offs;
+  - the organization's domains;
+  - the model's own redaction (`redactForAi`, `maskRecipient` from `vendor/spruce/ai.js`).
+
+  Other possible names are marked ⟦like this⟧: common names (`src/names.js`) and words the model's
+  vocabulary doesn't have, when they start a sentence; most capitalized words in the middle of one.
+  Nothing is stored or counted. `tools/check-training-file.js` refuses a file with leftovers, and
+  `docs/RETRAINING.md` covers the rest.
 - **The dashboard reads little.** It keeps a copy of the records (`src/dashboard/cache.js`). After one full
   read, it asks only for records changed since (each record has `updatedAt`), at most every 15 s, however
   many dashboards are open.

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.3.2: The retraining export, and how to retrain the AI model
+
+Marking an email doesn't train the AI model: phish-tiny is a fixed file that comes with each version.
+This version makes the marks usable for training.
+
+- **Download for retraining** (Model health; **off until an admin allows it** in Settings → Retraining
+  export; Activity notes who allowed it and every download):
+  - The emails an admin confirmed as phishing, and with a tick the false alarms, from the chosen period.
+  - One per campaign: the newest copy still in a mailbox. A campaign marked both ways is left out.
+  - At most 100, newest first.
+  - Each is read from Gmail at the moment of the download and judged again as on arrival, for what the
+    model read. Nothing is stored or counted: the file is the only copy.
+  - The file is JSON Lines in the extension's own training format (`tools/ai/data/extra/*.jsonl`:
+    `name`, `label`, `note`, `facts`).
+- **The people are taken out** (`src/training.js`), on top of the model's own redaction:
+  - the recipient becomes "your name", as the model sees them;
+  - the other people in To, Cc and Reply-To, and names after Mr./Ms./Dr., greetings and sign-offs,
+    become [NAME];
+  - the sender of genuine or inside mail becomes [SENDER];
+  - your domains become [OUR-DOMAIN];
+  - the text is cut to what the model reads.
+
+  Other words that may be names are marked ⟦like this⟧ for a person to decide: common names
+  (`src/names.js`), unusual words, and capitalized words in the middle of a sentence.
+- **`docs/RETRAINING.md`:** how to read the file and train the model with it. In order: review every
+  example, replace the placeholders with made-up names (by hand, or with claude.ai if your district
+  allows it), keep a third aside, train in the extension, compare, release.
+- **Tools** (Node only, no install):
+  - `tools/check-training-file.js` refuses leftovers (marks, addresses, phone and long numbers, a `text`
+    field), and with `--final`, placeholders;
+  - `tools/split-examples.js` keeps every third email of each kind aside, with its variants;
+  - `tools/score-examples.js` scores a file with the model the service runs, at its move threshold.
+- **Engine:** `analyze()` can return what the model read (`keepAiFacts`, for the export only), and
+  `readMessage()` the headers' names (`people`). Neither is stored.
+- **Tests:** 83 (from 77). `test/training.test.js` covers:
+  - the removal, and that everyday words in the demo's emails aren't marked;
+  - the check, the split and the scorer;
+  - the export: off by default, phishing only unless asked, one per campaign, a deleted copy replaced,
+    nothing stored;
+  - the dashboard's routes.
+- **Docs:** `docs/RETRAINING.md` (new), `README.md`, `docs/PRIVACY.md`, `docs/ARCHITECTURE.md`,
+  `docs/ROADMAP.md`.
+
 ## 0.3.1: Quality of life: review, bulk actions, Status, Check an email, the weekly summary
 
 - **Review** (a new tab): the moved or "would move" emails nobody has reviewed, one at a time, oldest

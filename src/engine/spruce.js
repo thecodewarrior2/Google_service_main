@@ -77,6 +77,10 @@ function load() {
         SENDER_DOMAIN_RE: get('SENDER_DOMAIN_RE'),
         SIGNIN_INTENT_RE: get('SIGNIN_INTENT_RE'),
         modelInputText: fn('modelInputText'),
+        // For the retraining export (src/training.js): the model's own redaction, as in training.
+        redactForAi: fn('redactForAi'),
+        maskRecipient: fn('maskRecipient'),
+        isSharedMailbox: fn('isSharedMailbox'),
         gmailReceiver: get(`(WEBMAIL_SITES.find(w => w.id === 'gmail') || { mail: { headers: {} } }).mail.headers.receiver || {}`),
         builtinTrackers: get('typeof BUILTIN_TRACKER_SET !== "undefined" ? BUILTIN_TRACKER_SET : new Set()'),
         SIGNAL_CAUTION_SCORE: get('SIGNAL_CAUTION_SCORE'),

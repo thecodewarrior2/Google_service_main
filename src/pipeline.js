@@ -18,6 +18,7 @@ const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds } = require('./store/history');
 const { buildDigest, mime, isSummary, localParts } = require('./digest');
 const A = require('./dashboard/aggregate');
+const training = require('./training');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -679,6 +680,55 @@ class Service {
         const st = (await this.store.getState('digest')) || {};
         await this.store.setState('digest', Object.assign({}, st, { enabled: !!enabled, updatedBy: by, updatedAt: this.now() }));
         await this.store.addEvent({ kind: 'settings', text: `${by} turned the weekly summary email ${enabled ? 'on' : 'off'}.` });
+        return { enabled: !!enabled };
+    }
+
+    // --- The retraining export (Model health; off until an admin allows it in Settings) ---------------
+    // The emails an admin marked (confirmed phishing; with falseAlarms, false alarms too), one per
+    // campaign, newest first, read from Gmail now and turned into the extension's training format with
+    // the people taken out (src/training.js). Nothing of them is stored: the rows are only returned.
+    // Judged again as on arrival (same lookups) for the facts the model read; nothing is counted.
+    async trainingExport({ days = 90, falseAlarms = false, by = '', max = 100, budgetMs = 150000 } = {}) {
+        const st = (await this.store.getState('trainingExport')) || {};
+        if (!st.enabled) return { error: 'off' };
+        const records = await this.store.listRecords({ sinceMs: this.now() - days * DAY, limit: 20000 });
+        const { groups, conflicting } = training.pickRecords(records, { falseAlarms });
+        const rows = [], counts = { phishing: 0, genuine: 0, gone: 0, failed: 0, notReached: 0, conflicting, candidates: groups.length };
+        const started = Date.now();
+        let reached = 0;
+        // The newest copy still in a mailbox (up to 3 tried): a copy deleted since doesn't lose the campaign.
+        const readOne = async (copies) => {
+            for (const rec of copies.slice(0, 3)) {
+                let msg;
+                try { msg = await this.gmail.raw(rec.user, rec.messageId); }
+                catch (e) { if (e && e.status === 404) continue; throw e; }
+                if (msg && msg.raw && msg.raw.length && !isSummary(msg.raw)) return { rec, msg };
+            }
+            return null;
+        };
+        await pool(groups, 4, async (copies) => {
+            reached++;
+            try {
+                const got = await readOne(copies);
+                if (!got) { counts.gone++; return; }
+                const { rec, msg } = got;
+                const facts = await readMessage(msg.raw);
+                const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+                const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, keepAiFacts: true });
+                const label = rec.falseAlarm === false ? 1 : 0;
+                rows.push({ at: rec.processedAt, row: training.example(rec, label, result.aiFacts, facts.people, this.cfg.orgDomains) });
+            } catch (e) { counts.failed++; this.log.error(`retraining export ${copies[0].key}:`, e); }
+        }, () => rows.length >= max || Date.now() - started > budgetMs);
+        counts.notReached = groups.length - reached;
+        const out = rows.sort((a, b) => b.at - a.at).slice(0, max).map(x => x.row);
+        counts.phishing = out.filter(r => r.label === 1).length; counts.genuine = out.length - counts.phishing;
+        await this.store.addEvent({ kind: 'training', text: `${by} downloaded the retraining export: ${out.length} example${out.length === 1 ? '' : 's'} (${counts.phishing} phishing${falseAlarms ? `, ${counts.genuine} false alarm${counts.genuine === 1 ? '' : 's'}` : ''}) from the last ${days} days${counts.gone ? `; ${counts.gone} no longer in a mailbox` : ''}. Nothing of them was stored.` });
+        return { rows: out, counts, days, falseAlarms };
+    }
+    async setTrainingExport(enabled, by) {
+        const st = (await this.store.getState('trainingExport')) || {};
+        await this.store.setState('trainingExport', Object.assign({}, st, { enabled: !!enabled, updatedBy: by, updatedAt: this.now() }));
+        await this.store.addEvent({ kind: 'settings', text: `${by} ${enabled ? 'allowed' : 'turned off'} the retraining export (Model health: Download for retraining).` });
         return { enabled: !!enabled };
     }
 

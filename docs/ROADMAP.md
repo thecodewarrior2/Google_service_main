@@ -9,8 +9,9 @@ What the service doesn't do yet, roughly in the order it would help.
    - **Other DNS threat resolvers** (Quad9, Control D).
    - **Brand ownership checks.**
    - **Safe Browsing's Update API:** local hash prefixes, so link addresses are not sent at all.
-2. **Retraining from real mail.** False alarms marked in the dashboard, de-identified and reviewed,
-   become training examples for phish-tiny (the extension's `tools/ai/data/extra/`).
+2. **Retraining from real mail.** In since 0.3.2: the retraining export (Model health) and
+   `docs/RETRAINING.md`. Still to do: a first round of training with the district's examples, and a
+   held-out set that grows with each round.
 3. **Campaign actions** are in (0.3.0). Still out: a campaign search over more than the last 7 days.
 4. **Notifications.** Email alerts to IT are in (0.3.0: brakes, held campaigns, large campaigns, Gmail
    gone quiet, failed jobs). Still out: chat alerts, and an optional daily digest to users of what was

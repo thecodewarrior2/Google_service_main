@@ -19,6 +19,7 @@ const { RecordCache } = require('./dashboard/cache');
 const VERSION = require('../package.json').version;
 const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
+const training = require('./training');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
@@ -135,6 +136,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
     }
     const ACTIONS_GAP_MS = 5000;   // a campaign action at most every 5 s per campaign (no double clicks)
     const lastAction = new Map();
+    let exporting = false;   // one retraining export at a time (it reads up to 100 emails from Gmail)
     const once = (key) => { const t = lastAction.get(key) || 0; if (Date.now() - t < ACTIONS_GAP_MS) return false; lastAction.set(key, Date.now()); return true; };
 
     const api = {
@@ -153,11 +155,16 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             return { total: list.length, messages: list.slice(0, 500).map(brief) };
         },
         'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: r } : { error: 'not found', status: 404 }; },
-        'GET /api/health': async (q) => { const { records } = await load(q); return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold }); },
+        'GET /api/health': async (q) => {
+            const { records } = await load(q);
+            const tx = (await store.getState('trainingExport')) || {};
+            return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
+        },
         'GET /api/settings': async () => {
             const E = spruce.load();
             const renew = { available: canRenew() || cfg.demo, last: await lastRenew() };
             const digest = Object.assign({ enabled: false }, await store.getState('digest'));
+            const trainingExport = Object.assign({ enabled: false }, await store.getState('trainingExport'));
             const watchedUsers = (await store.listUsers()).filter(u => u.watched);
             return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
@@ -168,7 +175,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
                      // started means no notifications arrive for it.
                      mailboxes: watchedUsers.sort((a, b) => String(a.email).localeCompare(String(b.email))).slice(0, 500)
                          .map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
-                     renew, digest, timeZone: cfg.timeZone, version: VERSION,
+                     renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
@@ -251,6 +258,25 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
             if (cfg.demo) return { sent: 0, to: [], failed: [], demo: true };
             try { return await service.sendDigest({ by: admin.email }); } catch (e) { return { error: `Couldn't send it: ${String(e.message).slice(0, 200)}`, status: 502 }; }
         },
+        // The retraining export: allowed or not (off by default), and the download (docs/RETRAINING.md).
+        'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
+        'POST /api/training-export': async (q, body, admin) => {
+            if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings.', status: 403 };
+            if (exporting) return { error: 'A download is already being made. Try again in a minute.', status: 429 };
+            exporting = true;
+            try {
+                const days = Math.min(Math.max(Math.round(Number(body.days) || 90), 1), cfg.retentionDays || 365);
+                const out = await service.trainingExport({ days, falseAlarms: body.falseAlarms === true, by: admin.email });
+                const c = out.counts;
+                if (!out.rows.length) {
+                    return { error: c.candidates ? `None of the ${c.candidates} marked emails could be read (${c.gone} no longer in a mailbox${c.failed ? `, ${c.failed} failed` : ''}).`
+                        : `No emails an admin marked in the last ${days} days${body.falseAlarms === true ? '' : ' as phishing (tick "Include false alarms" for those)'}.`, status: 404 };
+                }
+                return { download: { body: training.toJsonl(out.rows), type: 'application/x-ndjson; charset=utf-8', filename: `spruce-retraining-${A.dayOf(Date.now())}.jsonl`,
+                    headers: { 'x-spruce-examples': String(out.rows.length), 'x-spruce-phishing': String(c.phishing), 'x-spruce-genuine': String(c.genuine),
+                        'x-spruce-gone': String(c.gone), 'x-spruce-failed': String(c.failed), 'x-spruce-not-reached': String(c.notReached), 'x-spruce-conflicting': String(c.conflicting) } } };
+            } finally { exporting = false; }
+        },
         // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
         'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500) }),
         // "Ready for enforce mode?"
@@ -315,6 +341,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null }) {
                 const out = await api[route](url.searchParams, body, admin);
                 if (req.method === 'POST') cache.stale();
                 if (out && typeof out.csv === 'string') return send(res, 200, out.csv, 'text/csv; charset=utf-8', { 'content-disposition': `attachment; filename="${out.filename}"` });
+                if (out && out.download) return send(res, 200, out.download.body, out.download.type, Object.assign({ 'content-disposition': `attachment; filename="${out.download.filename}"` }, out.download.headers));
                 return send(res, out && out.status ? out.status : (out && out.error ? 400 : 200), Object.assign({ admin: admin.email, demo: cfg.demo }, out));
             }
             if (req.method === 'GET') {
@@ -338,8 +365,11 @@ async function main() {
     let store, gmail, intel = null;
     if (cfg.demo) {
         const { buildDemo } = require('./demo/seed');
-        ({ store, intel } = await buildDemo({ cfg, now: Date.now() }));
-        gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}), labels: async () => ['INBOX'], search: async () => ({ ids: [], next: null }), headers: async () => ({}) };
+        let raws;
+        ({ store, intel, raws } = await buildDemo({ cfg, now: Date.now() }));
+        gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}), labels: async () => ['INBOX'], search: async () => ({ ids: [], next: null }), headers: async () => ({}),
+            // the made-up emails themselves, for the retraining export
+            raw: async (u, id) => { const b = raws.get(id); if (!b) throw Object.assign(new Error('not found'), { status: 404 }); return { id, threadId: `t-${id}`, labelIds: ['INBOX'], historyId: null, internalDate: Date.now(), raw: b }; } };
         console.log('DEMO mode: made-up data, no Google access.');
     } else {
         const { DelegatedAuth } = require('./gmail/auth');

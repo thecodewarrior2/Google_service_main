@@ -91,12 +91,14 @@ async function buildDemo({ now = Date.now(), cfg }) {
     const monitorUntil = now - 10 * DAY;              // monitor mode before, enforce after
     const templates = campaignTemplates();
     const intel = createFakeIntel();                   // made-up lookup answers (no network in demo mode)
+    const raws = new Map();                            // each made-up email, by its Gmail id (the retraining export reads them)
     for (const t of templates) {
         const when0 = now - t.daysAgo * DAY + r.int(8, 15) * 3600 * 1000 - DAY / 2;
         const mode = when0 < monitorUntil ? 'monitor' : 'enforce';
         const svc = new Service({ cfg: Object.assign({}, cfg, { mode, orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14 }), store, gmail: fakeGmail, intel, now: () => when0, log: { error() {} } });
         const recips = r.int(0, 1) ? staff.slice(0, t.recipients) : staff.slice(-t.recipients);
-        const facts = await readMessage(Buffer.from(t.make(recips[0])));
+        recips.forEach((u, i) => raws.set(`demo-${t.id}-${i}`, Buffer.from(t.make(u))));
+        const facts = await readMessage(raws.get(`demo-${t.id}-0`));
         const first = await svc.judge(recips[0], { id: `demo-${t.id}-0`, threadId: `t-${t.id}-0`, internalDate: when0 }, facts);
         if (!first || first.action === 'none') continue;
         for (let i = 1; i < recips.length; i++) {
@@ -137,7 +139,7 @@ async function buildDemo({ now = Date.now(), cfg }) {
         { at: now - 10 * DAY, kind: 'mode', text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }
     ];
-    return { store, staff, intel };
+    return { store, staff, intel, raws };
 }
 
 module.exports = { buildDemo, campaignTemplates, ORG };

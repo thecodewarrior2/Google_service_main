@@ -19,6 +19,17 @@
         return data;
     }
     const api = (path, opts) => (window.SPRUCE_API || realApi)(path, opts);
+    // A POST whose answer is a file (the retraining export): saved by the browser; its headers returned.
+    async function downloadPost(path, body) {
+        const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'x-requested-with': 'spruce-dashboard', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `HTTP ${res.status}`); }
+        const blob = await res.blob();
+        const name = (/filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '') || [])[1] || 'download';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        return res.headers;
+    }
 
     // --- Building the page safely ----------------------------------------------------------------
     function h(tag, props, ...kids) {
@@ -493,15 +504,48 @@
                 h('section', { class: 'card' }, h('h2', { text: 'Recorded emails by AI score' }), h('div', { class: 'sub', text: 'Each column is a 10-point range of the model\'s score; hover for how many were released.' }), h('div', { class: 'chart' }, histogram(d.buckets, d.threshold))),
                 h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Released ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
                     dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Released', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
-                    h('p', { class: 'small muted', text: `Model: ${d.model || 'unknown'}.` })))];
+                    h('p', { class: 'small muted', text: `Model: ${d.model || 'unknown'}.` }))),
+            trainingCard(d)];
+    }
+
+    // --- Model health: examples for retraining the model (off until an admin allows it in Settings) ----
+    function trainingCard(d) {
+        const title = h('h2', { text: 'Examples for retraining the model' });
+        const intro = h('div', { class: 'sub', text: `The emails an admin confirmed as phishing in the last ${days} days (and, if you tick it, the false alarms), one per campaign, newest first, up to 100, as training examples for the AI model. Each is read from Gmail when you download, with the people in it taken out. The file is the only copy: nothing is stored, and Activity notes who downloaded it.` });
+        const guide = h('p', { class: 'small muted', text: 'Before the file goes anywhere, follow docs/RETRAINING.md: check every example (words marked ⟦like this⟧ may be names), run tools/check-training-file.js, then train.' });
+        if (!d.trainingExport) return h('section', { class: 'card spaced' }, title, intro, h('p', { class: 'small muted', text: 'Off. A dashboard admin can allow it in Settings.' }));
+        if (MEMORY) return h('section', { class: 'card spaced' }, title, intro, h('p', { class: 'small muted', text: 'The clickable mockup has no emails to read: in the real dashboard, the download is here.' }), guide);
+        const fa = h('input', { type: 'checkbox', 'aria-label': 'Include false alarms' });
+        const warn = h('div', { class: 'alert warning', hidden: true }, h('div', { text: 'False alarms are real people\'s mail: parents, staff, companies. Check each one with care, and leave out any you can\'t make anonymous (anything about a student, health, grades or discipline).' }));
+        fa.addEventListener('change', () => { warn.hidden = !fa.checked; });
+        const result = h('p', { class: 'small muted', role: 'status' });
+        const btn = h('button', { class: 'btn', type: 'button' }, 'Download for retraining');
+        btn.addEventListener('click', async () => {
+            btn.disabled = true; btn.textContent = 'Reading the emails (up to a minute)…'; acting++;
+            try {
+                const hd = await downloadPost('/api/training-export', { days, falseAlarms: fa.checked });
+                const n = (k) => Number(hd.get(`x-spruce-${k}`) || 0);
+                const pl = (k, one, many) => `${num(n(k))} ${n(k) === 1 ? one : many}`;
+                result.textContent = [`${pl('examples', 'example', 'examples')} in the file: ${num(n('phishing'))} phishing${fa.checked ? `, ${pl('genuine', 'false alarm', 'false alarms')}` : ''}.`,
+                    n('gone') ? `${num(n('gone'))} no longer in a mailbox.` : '', n('failed') ? `${num(n('failed'))} couldn't be read.` : '',
+                    n('conflicting') ? `${num(n('conflicting'))} campaigns marked both ways left out.` : '',
+                    n('not-reached') ? `${num(n('not-reached'))} more not reached: choose a shorter period for the older ones.` : ''].filter(Boolean).join(' ');
+                toast('Downloaded. Check it before it goes anywhere.');
+            } catch (e) { result.textContent = `Couldn't make the file: ${e.message}`; }
+            finally { btn.disabled = false; btn.textContent = 'Download for retraining'; acting--; }
+        });
+        return h('section', { class: 'card spaced' }, title, intro,
+            h('label', { class: 'switch' }, fa, h('span', { text: 'Include false alarms' })), warn,
+            h('div', { class: 'actions' }, btn), result, guide);
     }
 
     async function settings() {
         const d = await api('/api/settings');
         const yes = (b) => (b ? 'Yes' : 'No');
         const row = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
-        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Read-only here, apart from the weekly summary email: the rest are set when the service is deployed (deploy/settings.env, docs/DEPLOY.md), so every change is reviewed.' }),
+        return [h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Read-only here, apart from the weekly summary email and the retraining export: the rest are set when the service is deployed (deploy/settings.env, docs/DEPLOY.md), so every change is reviewed.' }),
             digestCard(d),
+            trainingSettingCard(d),
             h('div', { class: 'grid two' },
                 h('section', { class: 'card' }, h('h2', { text: 'Policy' }), h('dl', { class: 'kv' },
                     row('Mode', d.mode === 'enforce' ? 'Enforce: moves to Spam' : 'Monitor: records only'),
@@ -678,6 +722,22 @@
                 MEMORY ? null : h('button', { class: 'btn', type: 'button', onclick: postButton('/api/digest/send', () => ({}), (o) => (o.demo ? 'Demo mode: nothing sent.' : `Put in ${num(o.sent)} admin Inbox${o.sent === 1 ? '' : 'es'}${o.failed && o.failed.length ? `; ${o.failed.length} couldn't be reached` : ''}.`),
                     'Put this week\'s summary in every dashboard admin\'s Inbox now?') }, 'Send one now')),
             preview);
+    }
+
+    // --- Settings: the retraining export (off by default) -----------------------------------------------
+    function trainingSettingCard(d) {
+        const g = d.trainingExport || { enabled: false };
+        const toggle = h('input', { type: 'checkbox', role: 'switch', checked: !!g.enabled, 'aria-label': 'Allow the retraining export' });
+        toggle.addEventListener('change', async () => {
+            acting++;
+            try { await api('/api/training-export/allow', { method: 'POST', body: { enabled: toggle.checked } }); toast(toggle.checked ? 'The retraining export is allowed (Model health).' : 'The retraining export is off.'); render(); }
+            catch (e) { toggle.checked = !toggle.checked; toast(`Couldn't change it: ${e.message}`); } finally { acting--; }
+        });
+        const facts = g.updatedBy ? `${g.enabled ? 'Allowed' : 'Turned off'} by ${g.updatedBy}, ${when(g.updatedAt)}.` : 'Off: nobody has allowed it.';
+        return h('section', { class: 'card spaced' }, h('h2', { text: 'Retraining export' }),
+            h('div', { class: 'sub', text: 'Lets dashboard admins download the emails an admin marked, with the people in them taken out, to retrain the AI model (Model health → Download for retraining; docs/RETRAINING.md). Each download reads those emails from Gmail at that moment: the file is the only copy, and Activity notes who downloaded it. Turn it on only while someone is preparing training examples.' }),
+            h('label', { class: 'switch' }, toggle, h('span', { text: 'Allow the retraining export' })),
+            h('div', { class: 'small muted', text: facts }));
     }
 
     // The tab's title shows how many things need you (the brake, held campaigns, users who took flagged
