@@ -21,6 +21,10 @@
 
   Then it builds that commit, deploys both services with it (their settings as they are), and notes in
   Activity how it ended (a failure as an alert). It takes about 10 minutes; mail keeps being checked.
+  If the build can't read the request at all (permissions, say), it fails visibly in Cloud Build's
+  history instead of doing nothing quietly.
+- **No button when there's nothing to install:** the newest approved version is the one installed, or
+  older than it (a version not yet approved, installed from a zip), and the page says which.
 - **`installLevel`** (new in `package.json`, now 1) goes up with each version that changes the
   installation itself (roles, jobs, settings). Those versions aren't offered on the dashboard: the page
   says to run `bash deploy/update.sh` in Cloud Shell. Both services are labelled with the level
@@ -36,7 +40,8 @@
 - **Fixed:** the README still named the Messages button "Release to Inbox".
 - **Tests:** 100 (from 93): reading the releases and the changelog; the button's checks and lock; the
   reasons no button is offered; the demo routes; the job, build and roles install.sh sets up;
-  `cloud-update.sh` with a real git repository (nothing asked, the approved commit built and deployed,
+  `cloud-update.sh` with a real git repository (nothing asked, Firestore refusing, the approved commit
+  built and deployed,
   a commit not on main, too old, not newer, a higher installLevel, a deploy that fails); and its state
   and Activity line in the Firestore emulator.
 - **Docs:** `README.md`, `docs/INSTALL.md`, `docs/DEPLOY.md`, `docs/ARCHITECTURE.md`, `docs/PRIVACY.md`,

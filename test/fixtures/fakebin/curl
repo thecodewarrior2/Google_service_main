@@ -36,6 +36,7 @@ case "$method $url" in
     esac
     echo "{\"fields\":{\"value\":{\"mapValue\":{\"fields\":{\"value\":$vj,\"env\":$ej,\"by\":{\"stringValue\":\"it.head@district-test.example\"},\"at\":{\"integerValue\":\"1794300000000\"}}}}}}" ;;
   "GET "*/state/updateRequest)   # FAKE_REQUEST: the document's JSON (deploy/cloud-update.sh check)
+    [ "${FAKE_REQUEST:-}" != denied ] || { echo '{"error":{"code":403,"status":"PERMISSION_DENIED"}}'; exit 22; }
     [ -n "${FAKE_REQUEST:-}" ] || { echo '{"error":{"code":404,"status":"NOT_FOUND"}}'; exit 22; }
     printf '%s' "$FAKE_REQUEST" ;;
   "PATCH "*/state/update) n="$(ls "$FAKE_DIR" | grep -c '^update-state-' || true)"; printf '%s' "$body" > "$FAKE_DIR/update-state-$n.json"; echo '{}' ;;

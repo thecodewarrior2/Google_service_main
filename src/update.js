@@ -26,7 +26,8 @@ async function updateInfo({ cfg, store, releases }) {
     try { newest = await releases.newest(); } catch (e) { error = `Couldn't read the approved versions from GitHub: ${String(e.message).slice(0, 200)}`; }
     let why = null;
     if (!newest) why = error;
-    else if (compareVersions(newest.version, installed.version) <= 0) why = `${installed.version} is the newest approved version.`;
+    else if (compareVersions(newest.version, installed.version) === 0) why = `${installed.version} is the newest approved version.`;
+    else if (compareVersions(newest.version, installed.version) < 0) why = `The version installed, ${installed.version}, is newer than the newest approved one (${newest.version}): there is nothing to update to. (A version not yet approved was installed from a zip.)`;
     else if (newest.installLevel > installed.installLevel) why = `${newest.version} changes the installation itself (new permissions, jobs or settings), so it is installed from Cloud Shell: bash deploy/update.sh, from the folder you installed or last upgraded from.`;
     else if (!cfg.updateJob && !cfg.demo) why = 'Updating from the dashboard isn\'t set up yet: run bash deploy/update.sh in Cloud Shell once (it sets it up), then the next versions can be installed from here.';
     else if (running) why = `An update to ${status.version} is under way (started by ${status.by}).`;

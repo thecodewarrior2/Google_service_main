@@ -103,6 +103,9 @@ test('no button when: already the newest, the version changes the installation i
     let s = setup({ version: PKG.version });
     let info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases });
     assert.equal(info.canUpdate, false); assert.match(info.why, /is the newest approved version/);
+    s = setup({ version: '0.0.1' });   // (a version not yet approved, installed from a zip)
+    info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases });
+    assert.equal(info.canUpdate, false); assert.match(info.why, new RegExp(`installed, ${PKG.version.replace(/[.]/g, '\\.')}, is newer than the newest approved one \\(0\\.0\\.1\\): there is nothing to update to`));
     s = setup({ installLevel: (PKG.installLevel || 0) + 1 });
     info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases });
     assert.equal(info.canUpdate, false); assert.match(info.why, /changes the installation itself .*bash deploy\/update\.sh/);
@@ -222,6 +225,10 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
         let r = run({});
         assert.ok(Object.entries(r.codes).filter(([k]) => !k.includes('.')).every(([, c]) => c === 0), JSON.stringify(r.codes));
         assert.doesNotMatch(r.calls, /run deploy|docker build|-X (PATCH|POST|DELETE)/);
+        // Firestore refusing (not a missing request): the build fails at check, so its history shows why.
+        r = run({ FAKE_REQUEST: 'denied' });
+        assert.equal(r.codes.check, 1); assert.match(r.codes['check.out'], /Couldn't read the update request from Firestore.*PERMISSION_DENIED/);
+        assert.doesNotMatch(r.calls, /run deploy|docker build/);
         // Asked for 9.9.9 (approved), running 0.3.8: built from that commit and deployed, both services.
         r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1' });
         assert.equal(r.codes.finish, 0, r.codes['finish.out']);

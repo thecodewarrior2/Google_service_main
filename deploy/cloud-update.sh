@@ -40,7 +40,12 @@ set_state() { local name="$1"; shift; fs -X PATCH "$FS/state/$name" -d "$(state_
 case "$phase" in
 check)
     rm -f "$W/skip" "$W/request.env" "$W/failed" "$W/picked" "$W/built" "$W/deployed"; rm -rf "$B"
-    doc="$(fs "$FS/state/updateRequest" 2>/dev/null)" || { echo "No update was asked for: nothing to do."; touch "$W/skip"; exit 0; }
+    # No request (404) is the usual case: nothing to do. Any other answer (permissions, say) fails the
+    # build, so Cloud Build's history shows it, and the dashboard shows the update as not finished.
+    if ! doc="$(fs "$FS/state/updateRequest" 2>/dev/null)"; then
+        if printf '%s' "$doc" | grep -q 'NOT_FOUND'; then echo "No update was asked for: nothing to do."; touch "$W/skip"; exit 0; fi
+        echo "Couldn't read the update request from Firestore (state/updateRequest): ${doc:-no answer}" >&2; touch "$W/skip"; exit 1
+    fi
     req="$(printf '%s' "$doc" | python3 -c '
 import json, sys
 v = (json.load(sys.stdin).get("fields", {}).get("value") or {}).get("mapValue", {}).get("fields", {})

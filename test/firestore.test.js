@@ -237,5 +237,8 @@ test('deploy/cloud-update.sh against Firestore: reads the dashboard\'s request, 
         assert.equal(await s.getState('updateRequest'), null, 'the request is removed');
         const e = (await s.listEvents(Date.now() - 60000)).find(x => x.kind === 'update');
         assert.ok(e && e.alert === false && /^The update from 0\.3\.8 to 9\.9\.9 finished/.test(e.text), JSON.stringify(e));
+        // No request now (Firestore's own "not found"): the next run does nothing, and doesn't fail.
+        r = run('check');
+        assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /No update was asked for: nothing to do/);
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
