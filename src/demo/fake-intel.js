@@ -3,7 +3,8 @@
 // domains Cloudflare "blocks", Safe Browsing "lists", the phishing lists "have", and how old each is.
 // Same shapes as src/intel, so the demo shows what the real checks would add.
 const DAYS = { 'micros0ft-support.example': 4, 'docs-review-center.example': 12, 'maple-schools-payroll.example': 6, 'harbor-supply-invoices.example': 20,
-    'greenpath-mail.example': 9, 'pw-offers-mailer.example': 45, 'gadgetdeals-shop.example': 2900, 'brightpath-learning.example': 1600, 'cedar-library.example': 4200 };
+    'greenpath-mail.example': 9, 'pw-offers-mailer.example': 45, 'gadgetdeals-shop.example': 2900, 'brightpath-learning.example': 1600, 'cedar-library.example': 4200,
+    'staff-perks-portal.example': 25, 'summit-registration.example': 18 };
 const CF_BLOCKS = new Set(['docs-review-center.example', 'micros0ft-support.example']);
 const SB_LISTS = [/storage\.googleapis\.com\/bucket-77\//];
 const LIST_DOMAINS = { 'maple-schools-payroll.example': 'Phishing Army (extended)' };

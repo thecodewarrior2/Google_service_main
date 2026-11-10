@@ -60,6 +60,8 @@ const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
 
 // Recorded emails nobody has reviewed yet (the review queue): moved or "would move", not by an admin.
 const unreviewed = (r) => (r.action === 'move' || r.action === 'would-move') && r.trigger !== 'admin' && !r.markedBy;
+// Review's other queue: suspicious emails (below what moves) still in the Inbox, nobody has reviewed.
+const suspiciousUnreviewed = (r) => r.action === 'flag' && r.state === 'inbox' && !r.markedBy;
 // A user took back an email the checks flagged, and no admin has looked yet.
 const rescueToCheck = (r) => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai';
 
@@ -180,7 +182,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const list = A.filterRecords(records, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since: since(q) });
             return { total: list.length, messages: list.slice(0, 500).map(brief) };
         },
-        'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: r } : { error: 'not found', status: 404 }; },
+        // An email's record, with the mode now (whether confirming it as phishing also moves it).
+        'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: r, mode: cfg.mode } : { error: 'not found', status: 404 }; },
         'GET /api/health': async (q) => {
             const { records } = await load(q);
             const tx = (await store.getState('trainingExport')) || {};
@@ -208,7 +211,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
-        'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email),
+        // move: phishing still in the Inbox is moved to Spam too (enforce mode).
+        'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email, { move: body.move === true }),
         // Resume moving; with moveHeld, the emails the brake held are moved now too.
         'POST /api/resume': async (q, body, admin) => service.resume(admin.email, { moveHeld: body.moveHeld === true }),
         // A campaign: what the brakes and admins decided, and how many copies are where.
@@ -255,10 +259,16 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             await store.addEvent({ kind: 'check', text: `${admin.email} checked a pasted email from ${result.sender.domain || 'an unknown sender'}.` });
             return { result };
         },
-        // The review queue: emails moved or "would move" nobody has reviewed, oldest first.
+        // The review queues: emails moved or "would move" nobody has reviewed, oldest first; or, with
+        // queue=suspicious, suspicious emails not moved, newest first (still in the Inbox: the newest can
+        // still be moved before they are opened). counts: both queues.
         'GET /api/review': async (q) => {
-            const list = (await cache.list(since(q))).filter(unreviewed).sort((a, b) => a.processedAt - b.processedAt);
-            return { total: list.length, keys: list.slice(0, 1000).map(r => r.key) };
+            const records = await cache.list(since(q));
+            const queue = q.get('queue') === 'suspicious' ? 'suspicious' : 'moved';
+            const list = queue === 'suspicious' ? records.filter(suspiciousUnreviewed).sort((a, b) => b.processedAt - a.processedAt)
+                : records.filter(unreviewed).sort((a, b) => a.processedAt - b.processedAt);
+            return { queue, total: list.length, keys: list.slice(0, 1000).map(r => r.key), mode: cfg.mode,
+                counts: { moved: queue === 'moved' ? list.length : records.filter(unreviewed).length, suspicious: queue === 'suspicious' ? list.length : records.filter(suspiciousUnreviewed).length } };
         },
         // Several emails at once: release, false-alarm or phishing (at most 500).
         'POST /api/bulk': async (q, body, admin) => {

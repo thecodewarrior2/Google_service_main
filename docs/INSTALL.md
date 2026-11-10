@@ -65,15 +65,15 @@ can only read groups. It never uses that account's password.
 ## 4. Upload and configure (Cloud Shell)
 
 1. In the Cloud console, select the project, then open **Cloud Shell** (the `>_` button, top right).
-2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.10.zip`.
+2. In Cloud Shell, click **⋮ → Upload** and upload `spruce-mail-protection-0.3.11.zip`.
 3. Unzip it and go into its folder:
 
    ```bash
-   unzip spruce-mail-protection-0.3.10.zip
+   unzip spruce-mail-protection-0.3.11.zip
    ```
 
    ```bash
-   cd spruce-mail-protection-0.3.10
+   cd spruce-mail-protection-0.3.11
    ```
 
 4. Make your settings file:
@@ -192,8 +192,10 @@ When it finishes, it prints the **dashboard address**.
 
   Removed members stop being watched.
 - **Monitor for two to three weeks.**
-  - Open the *Would be moved* emails.
-  - Use **Mark false alarm** or **Confirm phishing**.
+  - Open the *Would be moved* emails: **Email → Review**.
+  - Use **Mark false alarm** or **Confirm phishing** (keys **F** and **P**).
+  - Also go through **Review → Suspicious, not moved** now and then: phishing among them is what the
+    move rules miss. In enforce mode, **P** there moves the email to Spam.
   - Watch **Status → Model health**.
   - **Status → Readiness** turns these into checks; switch when they are all green.
 - **To move mail for real**, either:

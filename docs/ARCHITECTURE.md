@@ -72,7 +72,10 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 
   Copies not moved meanwhile stay in the Inbox like any other email, recorded as "would move" (`held` on
   the record), and can be moved later: on **Resume, and move those to Spam**, or when the campaign is
-  confirmed (`moveHeld`). Nothing is ever withheld from a mailbox. The counters are spread so one busy
+  confirmed (`moveHeld`). A single recorded email an admin confirms as phishing on Review (or its own
+  page) is moved the same way (`moveRecord`), in enforce mode only and only while it is still in the
+  Inbox: the service's rules never move a suspicious email, an admin's decision can. Nothing is ever
+  withheld from a mailbox. The counters are spread so one busy
   campaign doesn't make every move wait for one Firestore document; the daily stats are spread too.
 - **Alerts.** The service logs each alert as a structured line (`spruceAlert`, `message`) and adds it to
   Recent activity. Cloud Monitoring emails them, and any failed Cloud Scheduler job, to `ALERT_EMAIL`

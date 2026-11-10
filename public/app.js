@@ -408,8 +408,8 @@
 
     async function message(params) {
         const key = params.get('key') || '';
-        const { message: m } = await api(`/api/message?${q({ key })}`);
-        return emailView(m);
+        const { message: m, mode } = await api(`/api/message?${q({ key })}`);
+        return emailView(m, { mode });
     }
     // A Copy button: the text goes to the clipboard (or, where the browser doesn't allow it, by a hidden
     // field), and a message says so.
@@ -439,14 +439,18 @@
         // A user took back an email the checks flagged, and no admin has looked yet: worth a look.
         const rescueToCheck = !pasted && m.state === 'released' && m.releasedByUser && !m.markedBy && m.score >= 5 && m.trigger !== 'ai';
         const decisionClass = rescueToCheck ? 'would' : m.state === 'released' ? 'released' : m.action === 'move' ? 'move' : m.action === 'would-move' ? 'would' : m.action === 'none' ? 'released' : 'flag';
-        const act = async (path, body, done) => { acting++; try { await api(path, { method: 'POST', body }); toast(done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; } };
+        const act = async (path, body, done) => { acting++; try { const out = await api(path, { method: 'POST', body }); toast(typeof done === 'function' ? done(out) : done); render(); } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; } };
+        // Suspicious emails weren't moved, so "not phishing" says it better than "false alarm"; in enforce
+        // mode, phishing still in the Inbox is moved to Spam when confirmed.
+        const notMoved = m.action === 'flag';
+        const moves = opts.mode === 'enforce' && m.state === 'inbox' && m.action !== 'move';
         const actions = quiet ? null : h('div', { class: 'actions' },
             m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Moved back to the Inbox.') }, 'Move back to Inbox') : null,
-            m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, 'Marked as a false alarm.') }, 'Mark false alarm') : null,
-            m.falseAlarm !== false ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false }, 'Confirmed as phishing or spam.') }, 'Confirm phishing') : null);
+            m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, notMoved ? 'Marked as not phishing.' : 'Marked as a false alarm.') }, notMoved ? 'Mark not phishing' : 'Mark false alarm') : null,
+            m.falseAlarm !== false || moves ? h('button', { class: `btn${moves ? ' primary' : ''}`, type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false, move: moves }, (out) => phishedText(out.moved)) }, moves ? 'Confirm phishing: move to Spam' : 'Confirm phishing') : null);
         const verdictText = pasted ? 'Checked from a pasted copy: nothing was stored, moved or counted.'
             : m.falseAlarm === true && m.releasedByUser && !m.markedBy ? 'Counted as a false alarm because the user moved it back. No admin has reviewed it yet.'
-            : m.falseAlarm === true ? 'An admin marked this a false alarm.' : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
+            : m.falseAlarm === true ? (notMoved ? 'An admin marked this as not phishing.' : 'An admin marked this a false alarm.') : m.falseAlarm === false ? 'An admin confirmed this as phishing or spam.' : 'Not reviewed yet.';
         return [quiet ? null : h('button', { class: 'linkbtn back', type: 'button', onclick: back }, '← Back'),
             h(quiet ? 'h2' : 'h1', { class: quiet ? 'pasted-title' : null, text: m.subject || (pasted ? '(no subject)' : '(subject not stored)') }),
             h('p', { class: 'sub', text: `From ${m.sender.name ? `${m.sender.name} <${m.sender.address}>` : m.sender.address || 'an unknown sender'} to ${m.user || '–'}${m.receivedAt ? `, ${when(m.receivedAt)}` : ''}` }),
@@ -456,7 +460,8 @@
                         h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Moved back to the Inbox by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
-                        m.evidence ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. Moving its campaign is never paused for it.`
+                        // (about moving, so not for an email the service didn't move: suspicious, or moved by an admin's decision)
+                        m.evidence && !notMoved && !(m.heldMovedBy && !m.trigger) ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. Moving its campaign is never paused for it.`
                             : m.evidence === 'admin' ? 'A copy found by an admin\'s search for a campaign.' : 'Weaker evidence: nothing outside the email confirms it, so moving its campaign\'s copies can pause for your decision (they stay in the Inbox meanwhile).' }) : null,
                         actions),
                     h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The extension's checks: score ${m.score === null || m.score === undefined ? '–' : m.score} (amber at 3, flagged at 5).` }),
@@ -470,7 +475,7 @@
                             m.ai.reasons && m.ai.reasons.length ? [h('div', { class: 'small muted', text: 'What weighed most:' }), m.ai.reasons.map(r => h('div', { class: 'quote', text: r.facts ? 'Who sent it, the sender check and where its links go' : `“${r.sentence}”` }))] : null]),
                     h('section', { class: 'card' }, h('h2', { text: 'Details' }), h('dl', { class: 'kv' },
                         h('dt', { text: 'Sender check' }), h('dd', { text: m.auth ? `DMARC ${m.auth.dmarc || '–'}, SPF ${m.auth.spf || '–'}, DKIM ${m.auth.dkim || '–'}` : 'not recorded' }),
-                        h('dt', { text: 'Trigger' }), h('dd', { text: m.trigger ? ({ rules: 'Rules', ai: 'AI score', 'rules+ai': 'Rules and AI' })[m.trigger] : 'none' }),
+                        h('dt', { text: 'Trigger' }), h('dd', { text: m.trigger ? ({ rules: 'Rules', ai: 'AI score', 'rules+ai': 'Rules and AI', admin: 'An admin\'s search for a campaign' })[m.trigger] || m.trigger : m.state === 'moved' && m.heldMovedBy ? `none: ${m.heldMovedBy} confirmed it as phishing` : 'none' }),
                         h('dt', { text: 'Mode' }), h('dd', { text: m.mode }),
                         h('dt', { text: 'Looked up' }), h('dd', { text: m.checks ? [m.checks.cloudflare ? `Cloudflare: ${m.checks.cloudflare} site${m.checks.cloudflare === 1 ? '' : 's'}` : '', m.checks.safeBrowsing ? `Safe Browsing: ${m.checks.safeBrowsing} link${m.checks.safeBrowsing === 1 ? '' : 's'}` : '', m.checks.lists ? 'phishing lists' : '', m.checks.ages ? `site age: ${m.checks.ages}` : '', m.checks.notChecked ? `${m.checks.notChecked} not checked` : ''].filter(Boolean).join(' · ') || 'nothing to look up' : 'offline checks only' }),
                         h('dt', { text: 'Attachments' }), h('dd', { text: m.attachments && m.attachments.length ? m.attachments.map(a => a.name || a.type).join(', ') : 'none' }),
@@ -690,38 +695,60 @@
     }
 
     // --- Review: the emails nobody has reviewed, one at a time (F, P, N) ----------------------------------
-    let reviewState = null, reviewKeys = null;
+    // Two queues, each worked through one email at a time: moved or "would move" (oldest first), and
+    // suspicious emails that weren't moved (newest first: still in the Inbox). In enforce mode, Phishing
+    // also moves an email that is still in the Inbox to Spam.
+    let reviewStates = {}, reviewKeys = null;
+    const QUEUES = {
+        moved: { label: 'Moved or would move', what: 'moved or "would move" emails', order: 'oldest first', no: 'False alarm', noDone: 'Marked as a false alarm.' },
+        suspicious: { label: 'Suspicious, not moved', what: 'suspicious emails not moved', order: 'newest first', no: 'Not phishing', noDone: 'Marked as not phishing.' }
+    };
+    const phishedText = (moved) => moved === 'moved' ? 'Confirmed as phishing, and moved to Spam.'
+        : moved === 'gone' ? 'Confirmed as phishing. It isn\'t in the Inbox any more, so nothing was moved.' : 'Confirmed as phishing.';
     async function review(params) {
-        if (!reviewState || params.get('restart') || reviewState.days !== days) {
-            const d = await api(`/api/review?days=${days}`);
-            reviewState = { keys: d.keys, i: 0, done: 0, days };
+        const queue = params.get('queue') === 'suspicious' ? 'suspicious' : 'moved', Q = QUEUES[queue];
+        let st = reviewStates[queue];
+        if (!st || params.get('restart') || st.days !== days) {
+            const d = await api(`/api/review?${q({ days: String(days), queue })}`);
+            st = reviewStates[queue] = { keys: d.keys, i: 0, done: 0, days, counts: d.counts || {} };
+            for (const [k, other] of Object.entries(reviewStates)) if (k !== queue && other.days === days && d.counts) other.counts = d.counts;
         }
-        const st = reviewState;
         reviewKeys = null;
-        const head = [h('h1', { text: 'Review' })];
+        const left = (k) => { const o = reviewStates[k]; return o && o.days === days && o.keys ? Math.max(0, o.keys.length - o.i) : (st.counts[k] || 0); };
+        const head = [h('h1', { text: 'Review' }),
+            h('div', { class: 'queue-switch', role: 'group', 'aria-label': 'Which emails to review' }, Object.entries(QUEUES).map(([k, x]) =>
+                h('a', { class: `btn${k === queue ? ' primary' : ''}`, href: k === 'moved' ? '#/review' : `#/review?queue=${k}`, 'aria-current': k === queue ? 'page' : null }, `${x.label} (${num(left(k))})`))),
+            queue === 'suspicious' ? h('p', { class: 'sub', text: `Suspicious: the checks found signs (a rules score of 3 or more) or the AI scored it at least the suspicious line, but not enough to move it, so it is still in the Inbox. Marking them is the best way to see what the move rules miss, and what retraining needs (Status → Model health).` }) : null];
         if (st.i >= st.keys.length) {
             return [...head, h('div', { class: 'alert good', role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '✅' }),
-                h('div', { class: 'grow' }, h('b', { text: 'Nothing left to review.' }), ` ${num(st.done)} reviewed now; every moved or "would move" email of the last ${days} days has been looked at.`)),
-                h('div', { class: 'actions' }, h('a', { class: 'btn', href: '#/readiness' }, 'See Readiness'), h('a', { class: 'btn', href: '#/review?restart=1' }, 'Look again'))];
+                h('div', { class: 'grow' }, h('b', { text: 'Nothing left to review.' }), ` ${num(st.done)} reviewed now; every ${Q.what} of the last ${days} days has been looked at.`)),
+                h('div', { class: 'actions' }, queue === 'moved' ? h('a', { class: 'btn', href: '#/readiness' }, 'See Readiness') : h('a', { class: 'btn', href: '#/health' }, 'See Model health'),
+                    h('a', { class: 'btn', href: `#/review?${q(queue === 'moved' ? { restart: '1' } : { queue, restart: '1' })}` }, 'Look again'))];
         }
         const key = st.keys[st.i];
-        let m;
-        try { ({ message: m } = await api(`/api/message?${q({ key })}`)); } catch (e) { st.i++; return review(new URLSearchParams()); }
-        if (m.markedBy) { st.i++; return review(new URLSearchParams()); }   // (someone reviewed it meanwhile)
+        let m, mode;
+        const same = new URLSearchParams(queue === 'moved' ? {} : { queue });   // (the same queue, not restarted)
+        try { ({ message: m, mode } = await api(`/api/message?${q({ key })}`)); } catch (e) { st.i++; return review(same); }
+        if (m.markedBy) { st.i++; return review(same); }   // (someone reviewed it meanwhile)
+        const moves = mode === 'enforce' && m.state === 'inbox' && m.action !== 'move';
         const decide = async (falseAlarm) => {
             acting++;
-            try { await api('/api/mark', { method: 'POST', body: { key, falseAlarm } }); st.done++; st.i++; toast(falseAlarm ? 'Marked as a false alarm.' : 'Confirmed as phishing.'); render(); }
-            catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; }
+            try {
+                // Moved only when the button said so (the mode can change meanwhile, on another admin's screen).
+                const out = await api('/api/mark', { method: 'POST', body: { key, falseAlarm, move: !falseAlarm && moves } });
+                st.done++; st.i++; toast(falseAlarm ? Q.noDone : phishedText(out.moved)); render();
+            } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; }
         };
         const next = () => { st.i++; render(); };
         reviewKeys = { f: () => decide(true), p: () => decide(false), n: next };
         return [...head,
-            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} moved or "would move" emails nobody has reviewed (last ${days} days, oldest first). Keys: F false alarm, P phishing, N next.` }),
+            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} ${Q.what} nobody has reviewed (last ${days} days, ${Q.order}). Keys: F ${Q.no.toLowerCase()}, P phishing${moves ? ' (moves it to Spam)' : ''}, N next.` }),
             h('div', { class: 'review-bar card' },
-                h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ' False alarm'),
-                h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), ' Phishing'),
-                h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided')),
-            ...[].concat(emailView(m, { inReview: true }))];
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ` ${Q.no}`),
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), moves ? ' Phishing: move to Spam' : ' Phishing'),
+                h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided'),
+                !moves && m.state === 'inbox' && mode !== 'enforce' ? h('span', { class: 'muted small', text: 'Monitor mode: nothing is moved.' }) : null),
+            ...[].concat(emailView(m, { inReview: true, mode }))];
     }
 
     // --- Status: the service end to end, as checks with what to do ---------------------------------------

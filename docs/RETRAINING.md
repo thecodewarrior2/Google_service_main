@@ -35,8 +35,11 @@ model, without any person's details reaching a repository or an outside service.
   you installed from, or a copy of `google_service_main`). Training also needs Python 3 with `torch` (the
   CPU build is enough) and `transformers`, and the extension's repository (step 6).
 - **Only admins' marks count.** The export takes the emails an admin marked: **Confirm phishing**, and
-  **Mark false alarm** or an admin's **Move back to Inbox**. A user moving an email out of Spam is not a label: people
+  **Mark false alarm** (**Mark not phishing**) or an admin's **Move back to Inbox**. A user moving an email out of Spam is not a label: people
   rescue phishing too.
+- **The best examples come from Review → Suspicious, not moved.** Phishing there is what the model
+  scored too low, and "not phishing" there is what it found suspicious for nothing. Mark some of those,
+  not only moved emails, before you export.
 
 ## 1. Allow the export, then download
 

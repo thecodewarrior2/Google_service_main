@@ -65,13 +65,17 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
       case '/api/users': return Object.assign(base, { users: A.users(recs, now, n) });
       case '/api/messages': { const l = A.filterRecords(recs, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since });
         return Object.assign(base, { total: l.length, messages: l.slice(0, 500).map(brief) }); }
-      case '/api/message': { const r = recs.find(x => x.key === q.get('key')); if (!r) throw new Error('not found'); return Object.assign(base, { message: r }); }
+      case '/api/message': { const r = recs.find(x => x.key === q.get('key')); if (!r) throw new Error('not found'); return Object.assign(base, { message: r, mode: D.settings.mode }); }
       case '/api/health': return Object.assign(base, A.modelHealth(recs, now, n), { threshold: D.settings.aiThreshold, trainingExport: !!D.settings.trainingExport.enabled });
       case '/api/settings': return Object.assign(base, D.settings);
       case '/api/release': { const r = recs.find(x => x.key === body.key); if (!r || r.state !== 'moved') throw new Error('it is not in Spam');
         Object.assign(r, { state: 'released', releasedBy: ADMIN, releasedAt: Date.now(), falseAlarm: r.falseAlarm === null ? true : r.falseAlarm, markedBy: r.markedBy || ADMIN });
-        D.events.push({ at: Date.now(), kind: 'release', text: ADMIN + ' released an email from ' + r.sender.address + ' to ' + r.user + '.' }); return Object.assign(base, { record: r }); }
-      case '/api/mark': { const r = recs.find(x => x.key === body.key); if (!r) throw new Error('not found'); Object.assign(r, { falseAlarm: body.falseAlarm === true, markedBy: ADMIN }); return Object.assign(base, { record: r }); }
+        D.events.push({ at: Date.now(), kind: 'release', text: ADMIN + ' moved an email from ' + r.sender.address + ' to ' + r.user + ' back to the Inbox.' }); return Object.assign(base, { record: r }); }
+      case '/api/mark': { const r = recs.find(x => x.key === body.key); if (!r) throw new Error('not found'); Object.assign(r, { falseAlarm: body.falseAlarm === true, markedBy: ADMIN });
+        let moved = null;
+        if (body.move === true && body.falseAlarm !== true) moved = D.settings.mode !== 'enforce' ? 'monitor' : r.state !== 'inbox' || r.action === 'move' ? 'not-in-inbox' : 'moved';
+        if (moved === 'moved') Object.assign(r, { action: 'move', state: 'moved', why: r.why + '; moved when ' + ADMIN + ' confirmed it as phishing', heldMovedBy: ADMIN, heldMovedAt: Date.now() });
+        return Object.assign(base, { record: r, moved }); }
       case '/api/resume': return Object.assign(base, { ok: true });
       case '/api/renew-watches': return Object.assign(base, { ok: true });
       case '/api/activity': return Object.assign(base, { events: A.activity(D.events.filter(e => e.at >= since).sort((a, b) => b.at - a.at), q.get('kind') || '').slice(0, 500) });
@@ -83,8 +87,10 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
           released: k(r => r.state === 'released'), strong: k(r => r.evidence === 'strong'), holdAfter: D.settings.campaignHoldAfter } }); }
       case '/api/pending': return Object.assign(base, { brake: false, held: 0, rescues: recs.filter(r => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai').length,
         unreviewed: recs.filter(r => (r.action === 'move' || r.action === 'would-move') && !r.markedBy).length, total: 0 });
-      case '/api/review': { const l = recs.filter(r => r.processedAt >= since && (r.action === 'move' || r.action === 'would-move') && !r.markedBy).sort((a, b) => a.processedAt - b.processedAt);
-        return Object.assign(base, { total: l.length, keys: l.map(r => r.key) }); }
+      case '/api/review': { const moved = recs.filter(r => r.processedAt >= since && (r.action === 'move' || r.action === 'would-move') && r.trigger !== 'admin' && !r.markedBy).sort((a, b) => a.processedAt - b.processedAt);
+        const sus = recs.filter(r => r.processedAt >= since && r.action === 'flag' && r.state === 'inbox' && !r.markedBy).sort((a, b) => b.processedAt - a.processedAt);
+        const queue = q.get('queue') === 'suspicious' ? 'suspicious' : 'moved', l = queue === 'suspicious' ? sus : moved;
+        return Object.assign(base, { queue, total: l.length, keys: l.map(r => r.key), mode: D.settings.mode, counts: { moved: moved.length, suspicious: sus.length } }); }
       case '/api/status': return Object.assign(base, { checks: [{ id: 'mockup', ok: null, text: 'The clickable mockup has no service to check: the real dashboard checks it here.', fix: null }] });
       case '/api/digest/preview': return Object.assign(base, { preview: { subject: 'S.P.R.U.C.E+ weekly summary (mockup)', text: 'The real dashboard shows the summary of the last 7 days here.' } });
       case '/api/digest': return Object.assign(base, { enabled: body.enabled === true });

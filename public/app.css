@@ -138,6 +138,8 @@ textarea.paste { width: 100%; box-sizing: border-box; min-height: 180px; font: 1
 .select-all { display: inline-flex; gap: 6px; align-items: center; color: var(--text-2); }
 /* Review. */
 .review-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; position: sticky; top: 0; z-index: 5; }
+.queue-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+.queue-switch .btn { text-decoration: none; }
 kbd { font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface-2); color: var(--text); }
 /* Status: a check that couldn't be made. */
 .checks .unknown .mark { background: var(--surface-2); color: var(--text-2); }

@@ -71,10 +71,18 @@ function campaignTemplates() {
         { id: 'deals', recipients: 3, daysAgo: 3, spread: 0.1, falseAlarm: true, make: (to) => eml({ fromName: 'Gadget Deals', from: 'deals@e.gadgetdeals-shop.example', to, dmarc: 'pass',
             subject: 'Last chance! 90% off ends tonight — claim your reward',
             html: '<p>Congratulations! You have been selected for our biggest reward of the year.</p><p>Claim your $500 gift card today. Offer expires in 24 hours.</p><p>Confirm your account details to receive your reward.</p><p><a href="https://e.gadgetdeals-shop.example/claim">Claim now</a></p>' }) },
-        // Suspicious but below the move rules: recorded only.
+        // A new vendor asking to update bank details: the rules see little, the AI scores it high.
         { id: 'newvendor', recipients: 6, daysAgo: 9, spread: 0.4, make: (to) => eml({ fromName: 'Pat Delgado', from: 'pat@brightpath-learning.example', to, dmarc: 'pass',
             subject: 'Quote for the reading program',
-            html: '<p>Hi,</p><p>Following up on the conference. Could you send me the purchase order number and update our bank details on file for the invoice?</p><p>Thanks, Pat Delgado, Account Executive</p>' }) }
+            html: '<p>Hi,</p><p>Following up on the conference. Could you send me the purchase order number and update our bank details on file for the invoice?</p><p>Thanks, Pat Delgado, Account Executive</p>' }) },
+        // Suspicious but below the move rules (a young sender or link domain, a rules score of 4.5, a low AI score):
+        // recorded only, left in the Inbox, for Review's "Suspicious, not moved".
+        { id: 'survey', recipients: 7, daysAgo: 3, spread: 0.3, make: (to) => eml({ fromName: 'Staff Benefits Team', from: 'benefits@staff-perks-portal.example', to, dmarc: 'pass',
+            subject: 'Complete the benefits survey and receive a $25 gift card',
+            html: '<p>Dear Staff Member,</p><p>Tell us about your benefits this year. Everyone who completes the survey receives a $25 gift card.</p><p><a href="https://forms.survey-host.example/s/benefits-2026">Start the survey</a></p>' }) },
+        { id: 'webinar', recipients: 5, daysAgo: 1, spread: 0.4, make: (to) => eml({ fromName: 'EdTech Summit', from: 'events@edtech-summit.example', to, dmarc: 'pass',
+            subject: 'Last seats: free webinar on classroom AI tools',
+            html: '<p>Join 2,000 educators for a free webinar on AI tools in the classroom.</p><p>Thursday, 4 PM. Seats are limited.</p><p><a href="https://summit-registration.example/edtech/register">Register now</a></p><p><a href="https://edtech-summit.example/unsubscribe">Unsubscribe</a></p>' }) }
     ];
 }
 

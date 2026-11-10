@@ -527,19 +527,23 @@ class Service {
         const start = Date.now();
         const out = { moved: 0, gone: 0, failed: 0, left: 0 };
         await pool(recs, 10, async (r) => {
-            try {
-                let labels = null;
-                try { labels = await this.gmail.labels(r.user, r.messageId); } catch (e) { if (!(e instanceof GoogleApiError && e.status === 404)) throw e; }
-                if (!labels || !labels.includes('INBOX')) { out.gone++; return; }
-                await this.gmail.modify(r.user, r.messageId, ['SPAM', await this.gmail.labelId(r.user, this.cfg.movedLabel)], ['INBOX']);
-                const now = this.now();
-                await this.store.updateRecord(r.key, { action: 'move', state: 'moved', held: null, braked: false, why: `${r.why}; moved when ${by} ${how}`, heldMovedBy: by, heldMovedAt: now });
-                await this.store.incStat(dayOf(now), 'moved');
-                out.moved++;
-            } catch (e) { out.failed++; this.log.error(`move held ${r.key}:`, e); }
+            try { out[await this.moveRecord(r, by, how)]++; } catch (e) { out.failed++; this.log.error(`move held ${r.key}:`, e); }
         }, () => Date.now() - start > budgetMs);
         out.left = recs.length - out.moved - out.gone - out.failed;
         return out;
+    }
+    // One recorded email still in the Inbox, moved to Spam because an admin decided so (the caller checks
+    // enforce mode). 'moved', or 'gone' when it isn't in the Inbox any more (deleted, archived, moved by
+    // the user), and then it is left where it is.
+    async moveRecord(r, by, how) {
+        let labels = null;
+        try { labels = await this.gmail.labels(r.user, r.messageId); } catch (e) { if (!(e instanceof GoogleApiError && e.status === 404)) throw e; }
+        if (!labels || !labels.includes('INBOX')) return 'gone';
+        await this.gmail.modify(r.user, r.messageId, ['SPAM', await this.gmail.labelId(r.user, this.cfg.movedLabel)], ['INBOX']);
+        const now = this.now();
+        await this.store.updateRecord(r.key, { action: 'move', state: 'moved', held: null, braked: false, why: `${r.why}; moved when ${by} ${how}`, heldMovedBy: by, heldMovedAt: now });
+        await this.store.incStat(dayOf(now), 'moved');
+        return 'moved';
     }
 
     // --- Campaigns: an admin's decision for every copy -----------------------------------------
@@ -665,12 +669,25 @@ class Service {
     }
 
     // An admin's judgment of a record: a false alarm (genuine) or right (phishing or spam).
-    async mark(key, falseAlarm, by) {
+    // An admin's verdict on one email: a false alarm (not phishing), or phishing. With move, phishing that
+    // is still in the Inbox is also moved to Spam, in enforce mode only (Review's "Phishing: move to
+    // Spam"). moved: 'moved'; 'gone' (no longer in the Inbox); 'monitor' (nothing is moved in monitor
+    // mode); 'not-in-inbox' (already in Spam, or moved back by an admin, whose decision stands); or null.
+    async mark(key, falseAlarm, by, { move = false, quiet = false } = {}) {
         const rec = await this.store.getRecord(key);
         if (!rec) return { error: 'not found' };
-        const out = await this.store.updateRecord(key, { falseAlarm: !!falseAlarm, markedBy: by });
+        let out = await this.store.updateRecord(key, { falseAlarm: !!falseAlarm, markedBy: by });
         if (falseAlarm && rec.falseAlarm !== true) await this.store.incStat(dayOf(this.now()), 'falseAlarms');
-        return { record: out };
+        let moved = null;
+        if (!falseAlarm && move) {
+            await this.refreshPolicy();
+            moved = this.cfg.mode !== 'enforce' ? 'monitor' : rec.state !== 'inbox' || rec.action === 'move' ? 'not-in-inbox' : await this.moveRecord(out, by, 'confirmed it as phishing');
+            if (moved === 'moved') {
+                out = await this.store.getRecord(key);
+                if (!quiet) await this.store.addEvent({ kind: 'mark', user: rec.user, text: `${by} confirmed an email from ${rec.sender.address} to ${rec.user} as phishing and moved it to Spam.` });
+            }
+        }
+        return { record: out, moved };
     }
 
     // Cloud Scheduler, daily: watch every pilot mailbox again (a watch lasts 7 days) and forget
@@ -861,16 +878,20 @@ class Service {
 
     // --- Several emails at once (Messages, and the review queue) -------------------------------------
     // action: release | false-alarm | phishing. { done, skipped, failed }.
+    // Several at once. Phishing works as for one email: those still in the Inbox are moved to Spam too
+    // (enforce mode); moved says how many.
     async bulk(keys, action, by) {
         const out = { done: 0, skipped: 0, failed: 0 };
+        if (action === 'phishing') out.moved = 0;
         await pool(keys, 10, async (key) => {
             try {
-                const r = action === 'release' ? await this.release(key, by, { quiet: true }) : await this.mark(key, action === 'false-alarm', by);
+                const r = action === 'release' ? await this.release(key, by, { quiet: true }) : await this.mark(key, action === 'false-alarm', by, { move: action === 'phishing', quiet: true });
                 if (r && r.record) out.done++; else out.skipped++;
+                if (r && r.moved === 'moved') out.moved++;
             } catch (e) { out.failed++; this.log.error(`bulk ${action} ${key}:`, e); }
         });
         const what = { release: 'moved back to the Inbox', 'false-alarm': 'marked as false alarms', phishing: 'confirmed as phishing' }[action];
-        if (out.done) await this.store.addEvent({ kind: action === 'release' ? 'release' : 'mark', text: `${by} ${what} ${out.done} email${out.done === 1 ? '' : 's'} at once.` });
+        if (out.done) await this.store.addEvent({ kind: action === 'release' ? 'release' : 'mark', text: `${by} ${what} ${out.done} email${out.done === 1 ? '' : 's'} at once${out.moved ? ` (${out.moved} moved to Spam)` : ''}.` });
         return out;
     }
 

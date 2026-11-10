@@ -153,3 +153,83 @@ test('the dashboard\'s record cache: one full read, then only what changed', asy
     assert.equal((await cache.list(0)).find(r => r.key === 'a').action, 'move', 'changed records too');
     assert.equal(full, 1, 'read in full once'); assert.ok(changed >= 2);
 });
+
+test('review, suspicious queue: Phishing moves a suspicious email still in the Inbox to Spam in enforce mode only; not phishing, gone or monitor mode: nothing moved', async () => {
+    const make = (mode) => {
+        const store = new MemoryStore();
+        const modified = [];
+        const inInbox = new Set([`m0`, `m2`, `m3`]);
+        const gmail = { labelId: async (u, n) => `L_${n}`, labels: async (u, id) => (inInbox.has(id) ? ['INBOX', 'UNREAD'] : ['CATEGORY_UPDATES']), modify: async (u, id, add, remove) => { modified.push({ id, add, remove }); return {}; } };
+        const cfg = loadConfig({ STORE: 'memory', ORG_DOMAINS: ORG, PILOT_USERS: `r@${ORG}`, MODE: mode });
+        const svc = new Service({ cfg, store, gmail, log: { error() {} } });
+        return { store, svc, modified };
+    };
+    const rec = (i, extra) => Object.assign({ key: `r@${ORG}|m${i}`, user: `r@${ORG}`, messageId: `m${i}`, processedAt: Date.now() - i * 1000, action: 'flag', state: 'inbox', trigger: null, falseAlarm: null, why: 'suspicious, below the move rules', sender: { address: 'billing@harbor-supply-invoices.example' } }, extra);
+    let { store, svc, modified } = make('enforce');
+    for (let i = 0; i < 4; i++) await store.saveRecord(rec(i));
+    // Phishing, with move: moved to Spam with the service's label, the record says who and why, counted, in Activity.
+    let out = await svc.mark(`r@${ORG}|m0`, false, `it.head@${ORG}`, { move: true });
+    assert.equal(out.moved, 'moved');
+    assert.deepEqual(modified, [{ id: 'm0', add: ['SPAM', 'L_SPRUCE/Moved'], remove: ['INBOX'] }]);
+    assert.deepEqual([out.record.action, out.record.state, out.record.falseAlarm, out.record.markedBy, out.record.heldMovedBy], ['move', 'moved', false, `it.head@${ORG}`, `it.head@${ORG}`]);
+    assert.match(out.record.why, /^suspicious, below the move rules; moved when it\.head@maple-schools\.example confirmed it as phishing$/);
+    assert.equal(out.record.trigger, null, 'the AI and the rules didn\'t move it: an admin did');
+    assert.ok((await store.listEvents()).some(e => e.kind === 'mark' && e.text === `it.head@${ORG} confirmed an email from billing@harbor-supply-invoices.example to r@${ORG} as phishing and moved it to Spam.`));
+    assert.equal((await store.getStats('2000-01-01', '2999-12-31')).reduce((n, d) => n + (d.moved || 0), 0), 1);
+    // Not in the Inbox any more (archived, deleted, moved by the user): marked, left where it is.
+    out = await svc.mark(`r@${ORG}|m1`, false, `it.head@${ORG}`, { move: true });
+    assert.equal(out.moved, 'gone'); assert.equal(out.record.state, 'inbox'); assert.equal(out.record.falseAlarm, false);
+    // Not phishing: never moved, whatever move says.
+    out = await svc.mark(`r@${ORG}|m2`, true, `it.head@${ORG}`, { move: true });
+    assert.equal(out.moved, null); assert.equal(out.record.state, 'inbox');
+    // Without move (as before): marked only.
+    out = await svc.mark(`r@${ORG}|m3`, false, `it.head@${ORG}`);
+    assert.equal(out.moved, null); assert.equal(out.record.state, 'inbox');
+    assert.equal(modified.length, 1);
+    // Already in Spam, or moved back by an admin (their decision stands): nothing moved.
+    await store.saveRecord(rec(5, { state: 'released', action: 'move', releasedBy: `it.head@${ORG}` }));
+    assert.equal((await svc.mark(`r@${ORG}|m5`, false, `it.head@${ORG}`, { move: true })).moved, 'not-in-inbox');
+    // Monitor mode: nothing is moved, even by an admin's decision.
+    ({ store, svc, modified } = make('monitor'));
+    await store.saveRecord(rec(0));
+    out = await svc.mark(`r@${ORG}|m0`, false, `it.head@${ORG}`, { move: true });
+    assert.equal(out.moved, 'monitor'); assert.equal(out.record.state, 'inbox'); assert.equal(out.record.falseAlarm, false);
+    assert.equal(modified.length, 0);
+    // Several at once, in enforce mode: those still in the Inbox are moved, one entry in Activity.
+    ({ store, svc, modified } = make('enforce'));
+    for (let i = 0; i < 4; i++) await store.saveRecord(rec(i));
+    const b = await svc.bulk([0, 1, 2].map(i => `r@${ORG}|m${i}`), 'phishing', `it.head@${ORG}`);
+    assert.deepEqual(b, { done: 3, skipped: 0, failed: 0, moved: 2 });
+    const ev = (await store.listEvents()).filter(e => e.kind === 'mark');
+    assert.deepEqual(ev.map(e => e.text), [`it.head@${ORG} confirmed as phishing 3 emails at once (2 moved to Spam).`]);
+});
+
+test('dashboard: Review\'s suspicious queue (not moved, still in the Inbox, unreviewed, newest first), both counts, and the mode with an email', async () => {
+    const cfg = loadConfig({ DEMO: '1', MODE: 'monitor', ORG_DOMAINS: ORG });
+    const { store } = await buildDemo({ cfg, now: Date.now() });
+    const gmail = { labelId: async (u, n) => `L_${n}`, modify: async () => ({}) };
+    const service = new Service({ cfg, store, gmail });
+    const { base, close } = await serve(createApp({ cfg, store, service }));
+    const get = async (p) => (await fetch(base + p)).json();
+    const post = async (p, body) => (await fetch(base + p, { method: 'POST', headers: H, body: JSON.stringify(body) })).json();
+    try {
+        const moved = await get('/api/review?days=90');
+        const sus = await get('/api/review?days=90&queue=suspicious');
+        assert.equal(moved.queue, 'moved'); assert.equal(sus.queue, 'suspicious');
+        assert.ok(sus.total > 0, 'the demo has suspicious emails');
+        assert.deepEqual(sus.counts, { moved: moved.total, suspicious: sus.total }); assert.deepEqual(moved.counts, sus.counts);
+        assert.equal(sus.mode, 'monitor');
+        const msgs = [];
+        for (const k of sus.keys) msgs.push(await get(`/api/message?key=${encodeURIComponent(k)}`));
+        assert.ok(msgs.every(x => x.message.action === 'flag' && x.message.state === 'inbox' && !x.message.markedBy && x.mode === 'monitor'));
+        assert.ok(msgs.every((x, i) => !i || msgs[i - 1].message.processedAt >= x.message.processedAt), 'newest first');
+        assert.ok(!sus.keys.some(k => moved.keys.includes(k)), 'the two queues don\'t overlap');
+        // Marked (monitor mode: not moved): out of the queue at once; the other queue is unchanged.
+        const r = await post('/api/mark', { key: sus.keys[0], falseAlarm: false, move: true });
+        assert.equal(r.moved, 'monitor'); assert.equal(r.record.state, 'inbox');
+        const after = await get('/api/review?days=90&queue=suspicious');
+        assert.equal(after.total, sus.total - 1); assert.equal(after.counts.moved, moved.total);
+        await post('/api/mark', { key: sus.keys[1], falseAlarm: true });
+        assert.equal((await get('/api/review?days=90&queue=suspicious')).total, sus.total - 2);
+    } finally { await close(); }
+});

@@ -100,17 +100,27 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per
   day by trigger; top reasons; largest campaigns; alerts.
 - **Email**, with the number of emails waiting for review on the tab:
-  - **Review:** the moved or "would move" emails nobody has reviewed, one at a time, oldest first: **F**
-    false alarm, **P** phishing, **N** next. The menu shows how many are left.
+  - **Review:** emails nobody has reviewed, one at a time, in two queues (the menu shows how many are
+    left in the first):
+    - **Moved or would move**, oldest first: **F** false alarm, **P** phishing, **N** next.
+    - **Suspicious, not moved**, newest first: emails the checks found suspicious (a rules score of 3 or
+      more, or an AI score from the suspicious line) but not enough to move, still in the Inbox. **F**
+      not phishing, **P** phishing, **N** next. Marking them shows what the move rules miss, and gives
+      the retraining export its best examples.
+    - **In enforce mode, P moves an email still in the Inbox to Spam** (the button then reads
+      **Phishing: move to Spam**), with the service's `SPRUCE/Moved` label; Activity notes who. In monitor
+      mode nothing is moved. An email no longer in the Inbox (archived, deleted) is left where it is.
   - **Campaigns:** each opens the list of emails behind it, with **Confirm phishing: move every copy**
     (optionally searching every watched mailbox for copies the service didn't record), **False alarm:
     move every copy back**, and **Find other copies**.
   - **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download
     CSV** gives the same list.
-    - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once.
+    - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once
+      (in enforce mode, confirming also moves those still in the Inbox to Spam).
     - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
       most, the sender check, and how strong the evidence was. Buttons: **Move back to Inbox**, **Mark
-      false alarm**, **Confirm phishing**.
+      false alarm** (**Mark not phishing** for a suspicious email), **Confirm phishing** (**Confirm
+      phishing: move to Spam** for one still in the Inbox, in enforce mode).
     - Each email also shows its **Message-ID** and Gmail ID, each with a **Copy** button. The Message-ID
       is what Google Workspace's Email log search and the security investigation tool look an email
       up by.

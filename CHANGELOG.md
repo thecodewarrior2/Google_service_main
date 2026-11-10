@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.3.11: Review suspicious emails that weren't moved
+
+- **Email → Review has two queues**, chosen at the top, each with how many are left:
+  - **Moved or would move** (as before, oldest first);
+  - **Suspicious, not moved** (new, newest first): emails the checks found suspicious (a rules score of 3
+    or more, or an AI score from the suspicious line) but not enough to move, still in the Inbox, that
+    nobody has reviewed. **F** not phishing, **P** phishing, **N** next.
+- **In enforce mode, P moves an email still in the Inbox to Spam**, with the service's `SPRUCE/Moved`
+  label. The button then reads **Phishing: move to Spam**, and only a button that says so moves
+  anything (if another admin switches the mode meanwhile, it only marks). Activity notes who moved
+  what; the email's page says "moved when … confirmed it as phishing"; **Move back to Inbox** undoes it.
+  - **In monitor mode nothing is moved**, by the service or by an admin's decision, as before.
+  - An email no longer in the Inbox (archived, deleted, moved by the user) is marked, and left where it is.
+  - The service's own rules still never move a suspicious email: only an admin's decision does.
+- **The same on an email's own page and for several at once:** **Confirm phishing: move to Spam** for an
+  email still in the Inbox in enforce mode, and **Confirm phishing** on Messages moves those still in the
+  Inbox (Activity says how many). **Mark not phishing** replaces "Mark false alarm" for a suspicious email.
+- **Why it matters:** phishing among the suspicious emails is what the move rules miss, and marking them
+  gives the retraining export its best examples (docs/RETRAINING.md). The export already takes every
+  email an admin marked.
+- **Fixed:** an email's Details showed "undefined" as the trigger of a copy found by an admin's search
+  for a campaign. The note about pausing a campaign is no longer shown for emails the service didn't move.
+- **Demo:** two made-up campaigns that are suspicious but not moved (a benefits survey, a webinar), so
+  the new queue has emails to try. (The demo's earlier suspicious example now scores 100% with the AI
+  model of 0.3.3, and is moved.)
+- **Tests:** 103 (from 101): moving on P in enforce mode only, an email no longer in the Inbox, not
+  phishing, monitor mode, an admin's earlier decision kept, several at once; and the queue through the
+  dashboard (only suspicious emails still in the Inbox, newest first, both counts, out of the queue once
+  marked).
+- **Docs:** `README.md`, `docs/INSTALL.md`, `docs/RETRAINING.md`, `docs/ARCHITECTURE.md`.
+
 ## 0.3.10: Long links and addresses stay inside their cards
 
 - **On an email's page** (Email → Review, and an email opened from Messages), text with no place to
