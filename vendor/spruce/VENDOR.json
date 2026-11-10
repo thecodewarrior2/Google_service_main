@@ -1,8 +1,8 @@
 {
-  "extensionVersion": "5.94.6",
-  "commit": "402cdd1",
+  "extensionVersion": "5.94.13",
+  "commit": "9292388",
   "branch": "llm_testing",
-  "model": "0.4.0",
+  "model": "0.11.0",
   "files": [
     "shared.js",
     "decoders.js",
@@ -12,5 +12,5 @@
     "models/phish-tiny/vocab.txt",
     "models/phish-tiny/MODEL_CARD.md"
   ],
-  "synced": "2026-11-06"
+  "synced": "2026-11-10"
 }

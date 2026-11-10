@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.3: The AI model phish-tiny 0.11.0
+
+- **phish-tiny 0.11.0** replaces 0.4.0, copied unchanged from the S.P.R.U.C.E+ extension (5.94.13,
+  `llm_testing` 9292388) with `tools/sync-engine.js`. Only the model changed: the extension's checks
+  (`shared.js`, `decoders.js`, `ai.js`) are the same files as before.
+- **Trained on twice as much** (17,024 emails, 3 runs averaged). The extra emails are published phishing
+  and scams, including spear phishing and business email compromise, and published genuine emails that
+  look like scams.
+- **Scored on emails neither model was trained on**, at the service's move threshold (0.85):
+
+  | | 0.4.0 | 0.11.0 |
+  |---|---|---|
+  | Published genuine emails called phishing | 276 of 624 (44%) | 17 of 624 (2.7%) |
+  | Published phishing missed | 48 of 603 (8%) | 20 of 603 (3.3%) |
+  | Hand-written genuine look-alikes called phishing | 9 of 24 | 3 of 24 |
+  | Hand-written emails (both kinds) wrong | 0 of 33 | 0 of 33 |
+
+  0.4.0 had never seen published genuine emails; 0.11.0 was trained on two thirds of them, and the third
+  above is the one held out. The model card is `vendor/spruce/models/phish-tiny/MODEL_CARD.md`.
+- **What it means here:** fewer emails moved on the AI score alone, and more phishing reaching it. The
+  rules, the brakes and `AI_MOVE_THRESHOLD` are unchanged, and by default (`AI_MOVES_INSIDE`) the AI
+  score alone still never moves mail from inside the organization.
+- **Upgrading shows it:** `upgrade.sh` prints `AI model (phish-tiny): 0.4.0 -> 0.11.0`. In monitor mode,
+  watch Model health and Readiness for a week: the undo rate of "AI score" moves should fall.
+- **Tests:** the `update.sh` test now takes the installed model from `vendor/spruce/VENDOR.json` instead
+  of assuming 0.4.0.
+
 ## 0.3.2: The retraining export, and how to retrain the AI model
 
 Marking an email doesn't train the AI model: phish-tiny is a fixed file that comes with each version.

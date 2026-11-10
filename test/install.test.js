@@ -185,13 +185,15 @@ test('update.sh: fetches the newest approved version, unpacks it next to this fo
         const git = (...a) => { const x = spawnSync('git', a, { cwd: rel, encoding: 'utf8', env: Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x.example', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x.example' }) }); assert.equal(x.status, 0, x.stderr); return x; };
         git('init', '-q', '-b', 'main'); git('add', '-A'); git('commit', '-q', '-m', 'release 9.9.0');
         assert.equal(spawnSync('git', ['clone', '-q', '--bare', rel, bare]).status, 0);
-        const r = w.run('update.sh', { SPRUCE_RELEASES: `file://${bare}` });
+        // (the installed services carry the vendored model's label: the same model)
+        const model = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'spruce', 'VENDOR.json'), 'utf8')).model;
+        const r = w.run('update.sh', { SPRUCE_RELEASES: `file://${bare}`, FAKE_MODEL: model.replace(/\./g, '-') });
         assert.equal(r.code, 0, r.out);
         const dest = path.join(w.home, 'spruce-mail-protection-9.9.0');
         assert.match(r.out, /Unpacked 9\.9\.0 in .*spruce-mail-protection-9\.9\.0/);
         assert.ok(fs.existsSync(path.join(dest, 'deploy', 'settings.env')), 'the settings were copied over');
         assert.match(r.out, /Upgrade S\.P\.R\.U\.C\.E\+ Mail Protection in test-proj \(us-east1\): 0\.2\.14 -> 9\.9\.0/);
-        assert.match(r.out, /AI model \(phish-tiny\): \d+\.\d+\.\d+ -> \d+\.\d+\.\d+ \(the same\)/);
+        assert.match(r.out, new RegExp(`AI model \\(phish-tiny\\): ${model.replace(/\./g, '\\.')} -> ${model.replace(/\./g, '\\.')} \\(the same\\)`));
         assert.ok(has(r.calls, /run deploy spruce-worker/));
         // From the new folder: already the newest.
         const again = spawnSync('bash', [path.join(dest, 'deploy', 'update.sh')], { cwd: dest, encoding: 'utf8', env: Object.assign({}, process.env, { SPRUCE_RELEASES: `file://${bare}` }) });
