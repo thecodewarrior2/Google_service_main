@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.1: The AI model trained with the district's own mail (phish-tiny 0.12.0)
+
+phish-tiny 0.12.0 is trained with 78 examples from a district's own mail, made anonymous first, and makes
+far fewer false alarms on mail like the district's, while catching published phishing about as well as
+0.11.0. Everything in 0.5.0 is included; install it the same way.
+
+- **What it learned from:**
+  - 48 genuine emails the district's admins marked as false alarms: staff notes, vendor threads, service
+    notices.
+  - 10 phishing and spam emails from the district: retirement and pension outreach posing as the
+    district's, "AI data licensing" broker scams, a pay-on-results PR pitch, a fake invoice. Each comes
+    with two variants that use other made-up names and domains.
+  - A third of each kind was kept aside and never trained on: 23 genuine, 3 phishing.
+- **How they were made anonymous** (`docs/RETRAINING.md`):
+  - every person, the district, its schools and town, other districts, account and tracking identifiers,
+    and bank details replaced with made-up ones or removed;
+  - a list of students' names left out entirely, and a fake invoice whose trick was only in its
+    attachment (which the model never sees);
+  - every line read. The examples are in no repository.
+- **Measured with the service's own engine, at the 90% line, on emails no model was trained on**
+  (0.11.0 → 0.12.0):
+  - the district's genuine mail called phishing: 15 → 5 of 23;
+  - published genuine emails called phishing: 17 → 9 of 624;
+  - published phishing missed: 20 → 21 of 603 (15 → 15 at the 50% line);
+  - the district's held-out phishing caught: 1 → 1 of 3 (kinds it wasn't trained on);
+  - hand-written emails: all right, as before.
+- **The phishing it trained on** scores 100% where 0.11.0 gave it 0–6%, except the fake invoice (8%):
+  invoices that look like real vendors' are still for the rule checks. This is a training score, not a
+  test, but these campaigns come back in new copies.
+- **`vendor/spruce/models/phish-tiny/MODEL_CARD.md`** has the details, including a run on the same data
+  without the district's examples.
+- **The engine's test** now holds ONNX Runtime to `tools/export-onnx.py`'s own computation of the new model
+  (numpy, from `model.bin`), over the same 400 made-up inputs.
+- **Install:** from Cloud Shell with the zip, as 0.5.0 (`installLevel` 3).
+- **Tests:** 119, as in 0.5.0.
+
 ## 0.5.0: The native engine, records kept 35 days, the dashboard on when it's large
 
 The AI model now runs in ONNX Runtime instead of JavaScript, each worker checks 32 emails at a time, how

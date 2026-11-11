@@ -95,10 +95,11 @@ test('the model (0.4.0): a pass\'s answer is remembered by a hash of its input, 
     } finally { session.run = run; }
 });
 
-// The reference: 400 made-up inputs, their token ids, and phish-tiny 0.11.0's answers as the JavaScript
-// engine of 0.4.1 computed them (tools/export-onnx.py's numpy computation agrees to 1.2e-6). A new model
-// gets new answers from tools/export-onnx.py --reference (docs/RETRAINING.md, step 7).
-test('the native engine (0.5.0): the same answers as the JavaScript engine it replaced, on 400 made-up inputs; one at a time or in a batch', async () => {
+// The reference: 400 made-up inputs, their token ids, and the model's answers as tools/export-onnx.py
+// computes them from model.bin in numpy, without ONNX (for phish-tiny 0.11.0 they agreed with the
+// JavaScript engine of 0.4.1 to 1.2e-6). A new model gets new answers from tools/export-onnx.py
+// --reference (docs/RETRAINING.md, step 7).
+test('the native engine (0.5.0): the same answers as an independent computation of the model, on 400 made-up inputs; one at a time or in a batch', async () => {
     const E = require('../src/engine/spruce').load();
     const ref = require('./fixtures/model-reference.json');
     assert.equal(ref.model, E.modelInfo.version, 'the reference is for this model (a new model: python3 tools/export-onnx.py <folder> --reference test/fixtures/model-reference.json)');
