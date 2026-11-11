@@ -74,6 +74,21 @@ test('a link that runs code counts as dangerous; a look-alike domain too', async
     assert.ok(r.links.some(l => /runs code/.test(l.reason)));
 });
 
+test('look-alike domains (0.5.6): a brand\'s own top-level domain and the word "cloud" aren\'t look-alikes; real ones still are', () => {
+    const E = require('../src/engine/spruce').load();
+    const finding = (host) => { const r = E.detectLinkProblem('Open', `https://${host}/x`, `https://${host}/x`, [], {}); return r && /look-alike/.test(String(r)) ? String(r) : null; };
+    // Microsoft 365 under .microsoft (only Microsoft registers there), other brands' own TLDs, and the plain word.
+    for (const h of ['bookings.cloud.microsoft', 'forms.cloud.microsoft', 'teams.cloud.microsoft', 'outlook.cloud.microsoft', 'blog.google', 'cloud.com', 'www.cloud.com', 'soundcloud.com', 'mycloud.com']) {
+        assert.equal(finding(h), null, h);
+    }
+    // Still found: look-alike characters, one letter (other than the plain word), the brand's name with sign-in words, "brand.com." in front.
+    for (const [h, re] of [['icl0ud.com', /imitates icloud\.com with look-alike characters/], ['lcloud.com', /one letter away from icloud\.com/], ['iclouds.com', /one letter away from icloud\.com/],
+        ['icloud-login.com', /uses the name "icloud"/], ['icloud.com.verify-id.com', /starts with "icloud\.com"/], ['micros0ft.com', /imitates microsoft\.com/],
+        ['rnicrosoft.com', /imitates microsoft\.com/], ['paypa1.com', /imitates paypal\.com/], ['microsoft-login.com', /uses the name "microsoft"/]]) {
+        assert.match(finding(h) || '', re, h);
+    }
+});
+
 test('allowlisted senders are "trusted": never escalated, whatever the checks find', async () => {
     const r = await analyze(await readMessage(fixture('phish-storage.eml')), Object.assign({ trusted: true }, CTX));
     assert.equal(r.status, 'trusted');

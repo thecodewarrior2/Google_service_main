@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.6: Microsoft 365 links are no longer "look-alike domains"
+
+- **Links to Microsoft 365 no longer get a false look-alike finding.** That covers
+  `bookings.cloud.microsoft`, `forms.cloud.microsoft`, `teams.cloud.microsoft`, `outlook.cloud.microsoft`
+  and every other name under `.microsoft`, which read as "one letter away from icloud.com". The finding
+  marked the link dangerous (5 points), and the AI model reads it too. A made-up vendor reply with a
+  Bookings link was flagged with a rules score of 6 and AI 100%, enough to move it to Spam in enforce
+  mode. Now it is clean: rules score 1, AI 1%.
+- **A brand's own top-level domain is never a look-alike.** Only the brand registers names under it. The
+  list holds the 19 closed brand top-level domains whose operator IANA's root zone database names as the
+  brand, checked November 2026:
+  - Microsoft: `.microsoft`, `.azure`, `.bing`, `.office`, `.windows`, `.xbox`, `.skype`, `.hotmail`;
+  - Google: `.google`, `.goog`, `.gmail`, `.youtube`, `.android`, `.chrome`;
+  - `.apple`, `.amazon`, `.aws`, `.dell`, `.ibm`.
+
+  Open top-level domains stay off the list, even ones a brand runs: `.live`, `.cloud`, `.play`, `.new`.
+- **The ordinary word "cloud"** (`cloud.com`, say) isn't counted as a one-letter typo of iCloud. Real
+  look-alikes are still found: look-alike characters (`icl0ud.com`), one letter off (`lcloud.com`,
+  `iclouds.com`), the name with sign-in words (`icloud-login.com`), and the name in front of another domain
+  (`icloud.com.verify-id.com`).
+- **Re-scan** (Review) gives emails flagged this way their new scores.
+- **Install:** Settings → Update, once approved (`installLevel` 3, as 0.5.5).
+- **Tests:** 124 (from 123): the brand top-level domains and the word "cloud" aren't look-alikes, and nine
+  real look-alikes still are.
+
 ## 0.5.5: Clearer wording on what moves an email
 
 Nothing in how emails are judged changes. The words do, where they could be read as "the AI also needs

@@ -1161,6 +1161,15 @@ const PROTECTED_BRANDS = ['paypal.com', 'microsoft.com', 'office.com', 'office36
     'comcast.com', 'zoom.us', 'slack.com', 'salesforce.com', 'intuit.com', 'quickbooks.com', 'venmo.com', 'zellepay.com', 'cash.app',
     'stripe.com', 'shopify.com', 'github.com', 'twitter.com', 'telegram.org', 'discord.com', 'booking.com', 'airbnb.com', 'norton.com',
     'mcafee.com', 'geeksquad.com', 'dhl.com', 'ups.com', 'irs.gov', 'att.com'];
+// Closed ".brand" top-level domains, each run by the brand itself (IANA's root zone database, checked
+// November 2026): only the brand registers names under them, so nothing there imitates anyone. Microsoft
+// 365 uses cloud.microsoft for Forms, Bookings, Teams and Outlook, which read as "cloud" one letter from
+// icloud. (Open ones, even run by a brand, are not here: .live, .cloud, .play, .new.)
+const BRAND_TLDS = new Set(['microsoft', 'azure', 'bing', 'office', 'windows', 'xbox', 'skype', 'hotmail',
+    'google', 'goog', 'gmail', 'youtube', 'android', 'chrome', 'apple', 'amazon', 'aws', 'dell', 'ibm']);
+// Ordinary words one letter from a protected brand's name, not counted as that brand's look-alike by the
+// one-letter rule (look-alike characters, "brand.", and brand plus sign-in words still count).
+const NOT_BRAND_TYPOS = { icloud: new Set(['cloud']) };
 const CREDENTIAL_WORDS = new Set(['login', 'log', 'signin', 'sign', 'secure', 'security', 'verify', 'verification', 'account', 'accounts',
     'update', 'support', 'billing', 'wallet', 'auth', 'confirm', 'recovery', 'unlock', 'service', 'services', 'help', 'refund', 'payment']);
 const CONFUSABLE_MAP = { 'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd',
@@ -1234,6 +1243,7 @@ function lookalikeOf(host) {
     const reg = registrableDomain(host);
     if (!reg) return null;
     for (const brand of PROTECTED_BRANDS) if (hostMatches(host, brand)) return null;   // the real thing
+    if (BRAND_TLDS.has(host.split('.').pop())) return null;                           // a brand's own top-level domain
     const label = reg.split('.')[0];
     const uLabel = unicodeLabel(label);
     const skeleton = confusableSkeleton(uLabel);
@@ -1245,7 +1255,7 @@ function lookalikeOf(host) {
         if (host.startsWith(brand + '.')) return `starts with "${brand}" but is really ${reg}`;
         if (bl.length < 4) continue;
         if (uLabel !== bl && skeleton === bl) return `imitates ${brand} with look-alike characters`;
-        if (bl.length >= 6 && label !== bl && editDistanceAtMost1(label, bl)) return `is one letter away from ${brand}`;
+        if (bl.length >= 6 && label !== bl && !(NOT_BRAND_TYPOS[bl] && NOT_BRAND_TYPOS[bl].has(label)) && editDistanceAtMost1(label, bl)) return `is one letter away from ${brand}`;
         if (tokens.length > 1 && tokenSkeletons.some((k, i) => k === bl && tokens[i] !== bl)) return `imitates ${brand} with look-alike characters`;
         if (tokens.length > 1 && tokens.includes(bl) && tokens.some(t => CREDENTIAL_WORDS.has(t))) return `uses the name "${bl}" but isn't ${brand}`;
     }
