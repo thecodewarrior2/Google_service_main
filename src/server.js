@@ -223,7 +223,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         'GET /api/health': async (q) => {
             const { records } = await load(q);
             const tx = (await store.getState('trainingExport')) || {};
-            return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
+            const E = spruce.load();
+            return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { current: `${E.modelInfo.name} ${E.modelInfo.version}`, threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
         },
         'GET /api/settings': async (q) => {
             const E = spruce.load();

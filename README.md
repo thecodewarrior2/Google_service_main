@@ -139,7 +139,8 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
 
     `deploy/doctor.sh` checks the rest from Cloud Shell.
   - **Model health:** recorded emails by AI score, and how often each kind of move was undone (and how
-    often by users themselves). This is the number to tune the threshold with.
+    often by users themselves). This is the number to tune the threshold with. It names the model in use,
+    and, after an upgrade, which models scored the period's emails (each keeps the score it got on arrival).
     - Marking emails doesn't train the AI model. **Download for retraining** (allowed in Settings → Retraining, off by
       default) gives the emails admins marked, read from Gmail at that moment with the people taken
       out, as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says

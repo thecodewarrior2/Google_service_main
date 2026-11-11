@@ -212,6 +212,10 @@ test('demo dashboard API: numbers agree with the records; release and marks work
         assert.equal((await fetch(`${base}/api/message?key=nope`)).status, 404);
         const health = await get('/api/health?days=30');
         assert.equal(health.buckets.length, 10); assert.equal(health.threshold, 0.9);
+        // (0.5.3) The model in use, and which models scored the period's emails.
+        const PKG_MODEL = require('../vendor/spruce/models/phish-tiny/model.json');
+        assert.equal(health.current, `phish-tiny ${PKG_MODEL.version}`);
+        assert.ok(health.models.length >= 1 && health.models.every(m => m.model && m.count > 0));
         const st = await get('/api/settings');
         assert.equal(st.demo, true);
         // (0.4.1) The list comes only for Settings → Mailboxes, which asks for it; the other pages get the count.
@@ -239,6 +243,10 @@ test('aggregates: campaigns, users and model health from records', () => {
     assert.deepEqual(h.byTrigger.find(t => t.trigger === 'ai'), { trigger: 'ai', label: 'AI score', moved: 1, released: 1, byUser: 0, rate: 1 });
     assert.equal(h.userReleased, 0); assert.equal(s.userReleased, 0);
     assert.equal(h.buckets[9].count, 2); assert.equal(h.buckets[6].count, 1);
+    // (0.5.3) Which models scored them, most first: after an upgrade, the old one and the new one.
+    const mixed = [Object.assign(rec('d', 'c3', 'flag', 'inbox', null, 0.7), { ai: { probability: 0.7, model: 'phish-tiny 0.13.0' } }),
+        ...['e', 'f'].map(u => Object.assign(rec(u, 'c4', 'flag', 'inbox', null, 0.8), { ai: { probability: 0.8, model: 'phish-tiny 0.11.0' } }))];
+    assert.deepEqual(A.modelHealth(mixed, now, 7).models, [{ model: 'phish-tiny 0.11.0', count: 2 }, { model: 'phish-tiny 0.13.0', count: 1 }]);
     assert.deepEqual(A.users(rs, now, 7).map(u => u.user), ['a', 'b', 'c']);
     assert.equal(A.filterRecords(rs, { q: 'C2' }).length, 1);
 });

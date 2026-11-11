@@ -517,6 +517,14 @@
             out];
     }
 
+    // The model in use, and, when others scored some of the period's emails (before an upgrade), which.
+    function modelLine(d) {
+        const now = d.current || d.model || 'unknown';
+        const models = d.models || [];
+        if (!models.length || (models.length === 1 && models[0].model === now)) return `Model in use: ${now}.`;
+        const total = models.reduce((n, m) => n + m.count, 0);
+        return `Model in use: ${now}. The scores above for these ${num(total)} emails came from ${models.map(m => `${m.model} (${num(m.count)})`).join(', ')}: emails are scored on arrival, and keep the score the model in use then gave them.`;
+    }
     async function health() {
         const d = await api(`/api/health?days=${days}`);
         const reviewedRate = d.reviewed ? d.falseAlarms / d.reviewed : 0;
@@ -526,7 +534,7 @@
                 h('section', { class: 'card' }, h('h2', { text: 'Recorded emails by AI score' }), h('div', { class: 'sub', text: 'Each column is a 10-point range of the model\'s score; hover for how many were moved back.' }), h('div', { class: 'chart' }, histogram(d.buckets, d.threshold))),
                 h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Moved back ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
                     dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Moved back', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
-                    h('p', { class: 'small muted', text: `Model: ${d.model || 'unknown'}.` }))),
+                    h('p', { class: 'small muted', text: modelLine(d) }))),
             trainingCard(d)];
     }
 

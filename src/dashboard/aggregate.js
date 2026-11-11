@@ -137,8 +137,13 @@
         });
         const reviewed = records.filter(r => r.processedAt >= since && r.falseAlarm !== null && r.falseAlarm !== undefined);
         const userReleased = records.filter(r => r.processedAt >= since && r.releasedByUser).length;
+        // Which models scored the period's emails, most first (after an upgrade, the old and the new); model:
+        // the newest email's (the page shows the model in use, from the server).
+        const counts = new Map();
+        for (const r of rs) { const m = r.ai.model || 'unknown'; counts.set(m, (counts.get(m) || 0) + 1); }
+        const models = [...counts].map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
         return { buckets, byTrigger, userReleased, reviewed: reviewed.length, confirmed: reviewed.filter(r => r.falseAlarm === false).length, falseAlarms: reviewed.filter(r => r.falseAlarm === true).length,
-                 model: (rs[0] && rs[0].ai.model) || '' };
+                 model: (rs[0] && rs[0].ai.model) || '', models };
     }
 
     // "Ready for enforce mode?": what monitor mode has shown, as checks. ctx: { now, days, mode,

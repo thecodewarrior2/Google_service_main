@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3: Model health says which model is in use
+
+- **Status → Model health** said "Model: phish-tiny 0.11.0" after upgrading to 0.5.2, which runs 0.13.0.
+  The line named the model that had scored the newest recorded email, and no flagged email had arrived
+  since the upgrade. Now it says the model in use. When other models scored some of the period's emails,
+  it also says which, and how many: emails keep the score they got on arrival, so the chart above mixes
+  both until the old ones age out.
+- **Install:** from 0.5.2, Settings → Update can install it once it is approved (`installLevel` 3, as
+  0.5.2); otherwise from Cloud Shell with the zip.
+- **Tests:** 119 (two more checks in existing tests: the model in use, and the models that scored a period).
+
 ## 0.5.2: The AI model trained with more of the district's phishing (phish-tiny 0.13.0)
 
 phish-tiny 0.13.0 adds 6 more of the district's phishing emails to 0.5.1's examples. On emails it never
