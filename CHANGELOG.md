@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.4: A re-scan updates the email's scores and model
+
+- **After a re-scan, the email's page shows the re-scan's results.** In 0.5.3 the AI opinion still named
+  the model of the email's arrival scan (phish-tiny 0.11.0, say) and its score, with the re-scan only in
+  the box under "What happened". Now these all become the re-scan's:
+  - the AI score, the model and what weighed most;
+  - the rules score and the signs found;
+  - the flagged links and the lookups.
+- **The arrival values stay beside them.** They are kept once, from the first re-scan on, and shown in the
+  re-scan box and under the AI opinion ("On arrival: 99%, phish-tiny 0.11.0").
+- **What happened doesn't change:** moved, would move or flagged, and why. Nothing is moved by a re-scan.
+  An email stays in its review queue until you decide.
+- **The sender counts as new on a re-scan if it was new on arrival.** In 0.5.3 a re-scan treated every
+  sender as known, which lowered the rules score twice:
+  - "first email from this sender" no longer counted;
+  - neither did a brand-new link site, which counts only with a new or unverified sender.
+
+  Now the same checks give the same rules score as on arrival (all 140 demo emails do). A re-scan differs
+  from arrival only where the model or the checks changed.
+- **Model health counts a re-scanned email under the model that re-scanned it.**
+- **Demo mode uses its made-up district's domain** (`maple-schools.example`) when `ORG_DOMAINS` isn't set,
+  as its emails were judged with. Re-scan and Check an email there now see "your organization" the way the
+  records do.
+- **An email re-scanned with 0.5.3** takes its arrival values from the scores it still has, the next time
+  it is re-scanned.
+- **Install:** Settings → Update, once approved (`installLevel` 3, as 0.5.3).
+- **Tests:** 123 (from 122): after a re-scan, the email's model and scores are the new ones and the
+  arrival values are kept, also over a second re-scan and for a record re-scanned by 0.5.3; a sender new on
+  arrival keeps its rules score.
+
 ## 0.5.3: Re-scan an email; Status shows the AI engine; Model health names the model in use
 
 - **Re-scan** (Email → Review, and each email's page):

@@ -451,13 +451,15 @@
     function rescanBox(m) {
         const r = m.rescan;
         if (!r) return null;
-        const was = m.ai && typeof m.ai.probability === 'number' ? m.ai.probability : null;
-        const other = m.ai && m.ai.model && r.model && m.ai.model !== r.model ? `, ${m.ai.model}` : '';
+        // On arrival: kept apart since 0.5.4 (arrival); a record re-scanned by 0.5.3 still has it in ai and score.
+        const arr = m.arrival || { ai: m.ai, score: m.score };
+        const was = arr.ai && typeof arr.ai.probability === 'number' ? arr.ai.probability : null;
+        const other = arr.ai && arr.ai.model && r.model && arr.ai.model !== r.model ? `, ${arr.ai.model}` : '';
         return h('div', { class: 'rescan' },
             h('b', { text: `Re-scanned ${when(r.at)}${r.by ? ` by ${r.by}` : ''}` }),
-            h('div', { text: `With ${r.model || 'no AI model'}: AI ${pctOr(r.ai)} (on arrival ${pctOr(was)}${other}); rules score ${r.score} (on arrival ${m.score === null || m.score === undefined ? '–' : m.score}).` }),
+            h('div', { text: `With ${r.model || 'no AI model'}: AI ${pctOr(r.ai)} (on arrival ${pctOr(was)}${other}); rules score ${r.score} (on arrival ${arr.score === null || arr.score === undefined ? '–' : arr.score}).` }),
             h('div', { text: `With today's checks and model: ${PASTED[r.action] || r.action}.` }),
-            h('div', { class: 'small muted', text: 'Nothing was moved by the re-scan. Decide with the buttons; the record keeps what happened on arrival. A re-scan doesn\'t count "first email from this sender" (by now it isn\'t), so its rules score can be lower.' }));
+            h('div', { class: 'small muted', text: 'The scores, the AI opinion and the signs on this page are the re-scan\'s; what happened to the email stays, and nothing was moved by the re-scan: decide with the buttons. The sender counts as new if it was new on arrival.' }));
     }
 
     // One email's decision: a record (Messages), or a pasted email's answer (Check an email: m.pasted).
@@ -502,6 +504,7 @@
                     h('section', { class: 'card' }, h('h2', { text: 'AI opinion' }),
                         ai === null ? h('div', { class: 'empty', text: 'The model gave no score.' }) : [
                             h('div', { class: 'kpi' }, h('div', { class: 'value', text: pct(ai) }), h('div', { class: 'note', text: `${m.ai.model}: how likely it is phishing` })),
+                            m.rescan && m.arrival ? h('div', { class: 'small muted', text: `Re-scanned ${when(m.rescan.at)}. On arrival: ${m.arrival.ai ? `${pct(m.arrival.ai.probability)}, ${m.arrival.ai.model || 'an unknown model'}` : 'no AI score'}.` }) : null,
                             (() => { const mt = h('div', { class: `meter ${ai >= aiThreshold ? 'hot' : ''}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(ai * 100), 'aria-label': 'AI score' }, h('div')); mt.firstChild.style.width = pct(ai); return mt; })(),
                             m.ai.reasons && m.ai.reasons.length ? [h('div', { class: 'small muted', text: 'What weighed most:' }), m.ai.reasons.map(r => h('div', { class: 'quote', text: r.facts ? 'Who sent it, the sender check and where its links go' : `“${r.sentence}”` }))] : null]),
                     h('section', { class: 'card' }, h('h2', { text: 'Details' }), h('dl', { class: 'kv' },

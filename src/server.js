@@ -494,7 +494,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
 }
 
 async function main() {
-    const cfg = loadConfig();
+    // Demo mode: the made-up district's domain when ORG_DOMAINS isn't set, as its emails were judged with
+    // (Check an email and Re-scan then see "your organization" as the records do).
+    const cfg = loadConfig(/^(1|true|yes|on)$/i.test(String(process.env.DEMO || '')) && !process.env.ORG_DOMAINS ? Object.assign({}, process.env, { ORG_DOMAINS: require('./demo/seed').ORG }) : process.env);
     const problems = configProblems(cfg);
     if (problems.length) { console.error('Not started; fix the configuration:\n - ' + problems.join('\n - ')); process.exit(1); }
     let store, gmail, intel = null;

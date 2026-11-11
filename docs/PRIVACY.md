@@ -53,9 +53,10 @@ And:
   (`state/updateRequest`, deleted when the build ends; `state/update`, the latest one);
 - **sender history:** a hash of each sender address, to tell "first email from this sender";
 - **mailbox state:** each watched mailbox's sync position;
-- **a re-scan** (Review, Messages: Re-scan): what an admin's re-scan found, on the email's record beside
-  what happened on arrival: when, by whom, the model, the scores, and the rule findings' descriptions. The
-  email is read again from Gmail for it, like on arrival, and its body isn't kept;
+- **a re-scan** (Review, Messages: Re-scan): the email's record takes what an admin's re-scan found (the
+  scores, the AI opinion and model, the rule findings' descriptions), with when and by whom, and keeps its
+  scores from arrival beside them. The email is read again from Gmail for it, like on arrival, and its
+  body isn't kept;
 - **the worker's AI engine:** the model, engine version and self-check of the newest worker instance
   (`state/engine-worker`), for Status. Nothing about any email.
 

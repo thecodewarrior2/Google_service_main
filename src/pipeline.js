@@ -421,9 +421,10 @@ class Service {
     }
 
     // An email re-scanned (Review, Messages: Re-scan): read again from its mailbox and judged as it would be
-    // now, with today's checks and model, exactly as "Check an email" does. Nothing is moved and the
-    // on-arrival result stays: the new one is kept beside it (rescan), and the admin decides with the usual
-    // buttons. Noted in Activity.
+    // now, with today's checks and model, exactly as "Check an email" does. Its scores, AI opinion and signs
+    // become the new ones (the email's page shows the newest scan); what they were on arrival is kept once
+    // (arrival), and what happened to it (moved, flagged...) stays: nothing is moved, and the admin decides
+    // with the usual buttons. Noted in Activity.
     async rescan(key, by) {
         const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
         const rec = await this.store.getRecord(key);
@@ -434,21 +435,29 @@ class Service {
         if (!msg || !msg.raw || !msg.raw.length) fail(404, 'The email is no longer in the mailbox: it can\'t be re-scanned.');
         const facts = await readMessage(msg.raw);
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel });
+        // The sender counts as new if it was on arrival (by now it isn't, and that would change the rules'
+        // score, not the model or the checks): from the arrival's signs, kept with them after a re-scan.
+        const firstTime = rec.arrival ? !!rec.arrival.firstTime : (rec.signals || []).some(x => x && x.kind === 'first-time');
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
+        const ai = result.ai ? { probability: result.ai.probability, model: result.ai.model,
+            reasons: this.cfg.storeAiQuotes ? (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] } : null;
+        // What it was on arrival: kept from the first re-scan on (a record re-scanned by 0.5.3 still has it in ai).
+        const arrival = rec.arrival || { at: rec.processedAt, score: rec.score, status: rec.status, firstTime,
+            ai: rec.ai && typeof rec.ai.probability === 'number' ? { probability: rec.ai.probability, model: rec.ai.model || null } : null };
         const rescan = {
             at: this.now(), by, mode: this.cfg.mode,
-            model: result.ai ? result.ai.model : null, ai: result.ai && typeof result.ai.probability === 'number' ? result.ai.probability : null,
-            score: result.score, status: result.status, action: decision.action, trigger: decision.trigger, why: decision.why,
-            signals: result.signals.filter(x => x && x.weight >= 2).slice(0, 8).map(x => ({ kind: x.kind, text: String(x.text || '').slice(0, 300), weight: x.weight }))
+            model: ai ? ai.model : null, ai: ai && typeof ai.probability === 'number' ? ai.probability : null,
+            score: result.score, status: result.status, action: decision.action, trigger: decision.trigger, why: decision.why
         };
-        const record = await this.store.updateRecord(key, { rescan });
+        const patch = { rescan, arrival, ai, score: result.score, status: result.status, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null };
+        const record = await this.store.updateRecord(key, patch);
         const pc = (x) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : 'none');
-        const was = rec.ai && typeof rec.ai.probability === 'number' ? rec.ai.probability : null;
+        const was = arrival.ai ? arrival.ai.probability : null;
         const now = { move: 'it would be moved to Spam', 'would-move': 'it would be recorded as "would move"', flag: 'it would be recorded as suspicious', none: 'nothing would happen' }[decision.action] || decision.action;
         await this.store.addEvent({ kind: 'check', user: rec.user,
-            text: `${by} re-scanned an email to ${rec.user} from ${(rec.sender && rec.sender.domain) || 'an unknown sender'}: AI ${pc(rescan.ai)} with ${rescan.model || 'no model'} (${pc(was)} on arrival), rules score ${rescan.score} (${rec.score} on arrival); now ${now}. Nothing was moved.` });
+            text: `${by} re-scanned an email to ${rec.user} from ${(rec.sender && rec.sender.domain) || 'an unknown sender'}: AI ${pc(rescan.ai)} with ${rescan.model || 'no model'} (${pc(was)} on arrival${arrival.ai && arrival.ai.model && arrival.ai.model !== rescan.model ? ` with ${arrival.ai.model}` : ''}), rules score ${rescan.score} (${arrival.score} on arrival); now ${now}. Nothing was moved.` });
         return { record, rescan };
     }
 

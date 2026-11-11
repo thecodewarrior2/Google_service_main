@@ -110,8 +110,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
       not phishing, **P** phishing, **N** next. Marking them shows what the move rules miss, and gives
       the retraining export its best examples.
     - **R re-scans** the email: it is read again from the mailbox and judged with today's checks and AI
-      model (after a model update, say), and the result is shown beside what happened on arrival, which
-      stays. A re-scan never moves anything: you decide with F or P. Activity notes who re-scanned what.
+      model (after a model update, say). Its scores, AI opinion, model and signs become the re-scan's,
+      beside what they were on arrival; what happened to it (moved, flagged) stays. A re-scan never moves
+      anything: you decide with F or P. Activity notes who re-scanned what.
     - **In enforce mode, P moves an email still in the Inbox to Spam** (the button then reads
       **Phishing: move to Spam**), with the service's `SPRUCE/Moved` label; Activity notes who. In monitor
       mode nothing is moved. An email no longer in the Inbox (archived, deleted) is left where it is.

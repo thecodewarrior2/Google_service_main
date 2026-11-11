@@ -274,7 +274,7 @@ test('Status (0.5.3): the AI model in the dashboard and in the worker: its versi
     } finally { await close(); }
 });
 
-test('re-scan (0.5.3): one email read again and judged now; kept beside the on-arrival result, nothing moved, noted; a deleted email says so', async () => {
+test('re-scan (0.5.3, 0.5.4): one email read again and judged now; its scores and model become the new ones, the arrival values kept, nothing moved, noted; a deleted email says so', async () => {
     const PKG_MODEL = require('../vendor/spruce/models/phish-tiny/model.json');
     const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
     const { store, raws } = await buildDemo({ cfg, now: Date.now() });
@@ -287,6 +287,8 @@ test('re-scan (0.5.3): one email read again and judged now; kept beside the on-a
     const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: JSON.stringify(body) });
     try {
         const key = (await get('/api/review?days=30')).keys[0];
+        // As if scored on arrival by an older model.
+        await store.updateRecord(key, { ai: { probability: 0.42, model: 'phish-tiny 0.11.0', reasons: [] }, score: 9.5 });
         const before = (await get(`/api/message?key=${encodeURIComponent(key)}`)).message;
         const res = await post('/api/rescan', { key });
         assert.equal(res.status, 200);
@@ -295,11 +297,15 @@ test('re-scan (0.5.3): one email read again and judged now; kept beside the on-a
         assert.equal(typeof out.rescan.ai, 'number'); assert.equal(typeof out.rescan.score, 'number');
         assert.ok(['move', 'would-move', 'flag', 'none'].includes(out.rescan.action)); assert.match(out.rescan.by, /^demo-admin/);
         const after = (await get(`/api/message?key=${encodeURIComponent(key)}`)).message;
-        assert.deepEqual([after.ai, after.score, after.action, after.state, after.markedBy], [before.ai, before.score, before.action, before.state, before.markedBy], 'what happened on arrival stays');
-        assert.equal(after.rescan.at, out.rescan.at);
+        // The page shows the newest scan: its model, scores and signs; the arrival values are kept.
+        assert.equal(after.ai.model, `phish-tiny ${PKG_MODEL.version}`); assert.equal(after.ai.probability, out.rescan.ai); assert.equal(after.score, out.rescan.score);
+        assert.deepEqual(after.arrival.ai, { probability: 0.42, model: 'phish-tiny 0.11.0' }); assert.equal(after.arrival.score, 9.5); assert.equal(after.arrival.at, before.processedAt);
+        assert.ok(Array.isArray(after.signals));
+        // What happened stays; nothing moved.
+        assert.deepEqual([after.action, after.state, after.markedBy, after.trigger, after.processedAt], [before.action, before.state, before.markedBy, before.trigger, before.processedAt]);
         assert.equal(modified.length, 0, 'nothing moved');
         const ev = (await store.listEvents(0)).find(e => /re-scanned an email/.test(e.text));
-        assert.match(ev.text, /^demo-admin@example\.org re-scanned an email to .+ from .+: AI \d+% with phish-tiny [\d.]+ \(\d+% on arrival\), rules score [\d.]+ \([\d.]+ on arrival\); now .+\. Nothing was moved\.$/);
+        assert.match(ev.text, /^demo-admin@example\.org re-scanned an email to .+ from .+: AI \d+% with phish-tiny [\d.]+ \(42% on arrival with phish-tiny 0\.11\.0\), rules score [\d.]+ \(9\.5 on arrival\); now .+\. Nothing was moved\.$/);
         assert.equal((await post('/api/rescan', { key })).status, 429, 'not twice within 5 seconds');
         // Deleted from the mailbox since: says so; an unknown key too.
         const other = (await get('/api/review?days=30')).keys[1];
@@ -309,6 +315,35 @@ test('re-scan (0.5.3): one email read again and judged now; kept beside the on-a
         assert.equal((await post('/api/rescan', { key: 'nope' })).status, 404);
         assert.equal((await post('/api/rescan', {})).status, 400);
     } finally { await close(); }
+});
+
+test('re-scan (0.5.4): a second re-scan keeps the first arrival values; a record re-scanned by 0.5.3 takes them from its scores; a new sender stays new', async () => {
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: 'maple-schools.example' });
+    const { store, raws } = await buildDemo({ cfg, now: Date.now() });
+    const gm = Object.assign({}, gmail, { raw: async (u, id) => ({ id, raw: raws.get(id) }) });
+    const service = new Service({ cfg, store, gmail: gm });
+    const key = (await store.listRecords({ sinceMs: 0, limit: 1000 })).find(r => r.ai && raws.has(r.messageId)).key;
+    // As 0.5.3 left it: a rescan, the scores still the arrival's.
+    await store.updateRecord(key, { ai: { probability: 0.3, model: 'phish-tiny 0.11.0', reasons: [] }, score: 4, rescan: { at: 1, model: 'phish-tiny 0.13.0', ai: 0.01, score: 4 } });
+    await service.rescan(key, 'a@maple-schools.example');
+    await service.rescan(key, 'b@maple-schools.example');
+    const r = await store.getRecord(key);
+    assert.deepEqual(r.arrival.ai, { probability: 0.3, model: 'phish-tiny 0.11.0' }); assert.equal(r.arrival.score, 4);
+    assert.equal(r.rescan.by, 'b@maple-schools.example');
+    assert.notEqual(r.ai.model, 'phish-tiny 0.11.0');
+    // A sender new on arrival counts as new on a re-scan (and again after it): the same checks give the same
+    // rules score, the young link site included (it counts only with a new or unverified sender).
+    const { intel } = await buildDemo({ cfg, now: Date.now() });
+    const svc = new Service({ cfg, store, gmail: gm, intel });
+    const fresh = (await store.listRecords({ sinceMs: 0, limit: 1000 })).find(x => !x.rescan && raws.has(x.messageId) && (x.signals || []).some(sg => sg.kind === 'first-time') && (x.signals || []).some(sg => sg.kind === 'young-link-domain'));
+    assert.ok(fresh, 'a demo email from a new sender, with a young link site');
+    await svc.rescan(fresh.key, 'a@maple-schools.example');
+    let f = await store.getRecord(fresh.key);
+    assert.equal(f.arrival.firstTime, true); assert.equal(f.score, fresh.score);
+    assert.ok(f.signals.some(sg => sg.kind === 'first-time') && f.signals.some(sg => sg.kind === 'young-link-domain'));
+    await svc.rescan(fresh.key, 'b@maple-schools.example');
+    f = await store.getRecord(fresh.key);
+    assert.equal(f.score, fresh.score, 'and on a second re-scan, from the arrival values');
 });
 
 test('the AI engine: not loaded, then ready with a self-check; one that fails to load says why', async () => {
