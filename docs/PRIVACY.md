@@ -52,7 +52,12 @@ And:
 - **an update from the dashboard:** who asked for which version and when, and how it went
   (`state/updateRequest`, deleted when the build ends; `state/update`, the latest one);
 - **sender history:** a hash of each sender address, to tell "first email from this sender";
-- **mailbox state:** each watched mailbox's sync position.
+- **mailbox state:** each watched mailbox's sync position;
+- **a re-scan** (Review, Messages: Re-scan): what an admin's re-scan found, on the email's record beside
+  what happened on arrival: when, by whom, the model, the scores, and the rule findings' descriptions. The
+  email is read again from Gmail for it, like on arrival, and its body isn't kept;
+- **the worker's AI engine:** the model, engine version and self-check of the newest worker instance
+  (`state/engine-worker`), for Status. Nothing about any email.
 
 **Retention:** records, message IDs and Activity entries are deleted after `RETENTION_DAYS` (35 by
 default, 14 to 365; also changed on the dashboard, Settings → Policy). Each is deleted on its own date,

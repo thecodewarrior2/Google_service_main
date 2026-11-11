@@ -145,9 +145,33 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     }
     let digestSentAt = 0;
     // The Status page's checks: { id, ok (true, false, or null: couldn't check), text, fix }.
+    // The worker's AI engine, as its newest instance reported it when it started (state/engine-worker), kept
+    // a minute like the mailboxes.
+    let workerEngine = null;
+    const workerEngineInfo = async () => {
+        if (!workerEngine || Date.now() - workerEngine.at > MAILBOXES_KEPT_MS) workerEngine = { at: Date.now(), v: await store.getState('engine-worker') };
+        return workerEngine.v;
+    };
+    const pc = (x) => `${Math.round(x * 1000) / 10}%`;
+    const ago = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return m < 120 ? `${m} minute${m === 1 ? '' : 's'} ago` : m < 48 * 60 ? `${Math.round(m / 60)} hours ago` : `${Math.round(m / 1440)} days ago`; };
+    const checkWords = (c) => (c && typeof c.phishing === 'number' ? `self-check: a made-up phishing email ${pc(c.phishing)}, a made-up genuine one ${pc(c.genuine)}` : 'no self-check');
     async function statusChecks() {
         const now = Date.now(), out = [];
         const add = (id, ok, text, fix) => out.push({ id, ok, text, fix: ok === true ? null : fix || null });
+        // The AI model: loaded here (the dashboard: Check an email), and in the worker (every email).
+        const ms = spruce.load().model.status();
+        const loadFix = 'Until it loads, emails are judged by the rule checks alone. Look in the service\'s logs (Cloud Run → Logs) for "the AI model could not be loaded", then run bash deploy/install.sh again.';
+        if (ms.state === 'ready' && ms.check) add('model', ms.check.ok, ms.check.ok ? `The AI model ${ms.model} is loaded in the dashboard, in the native engine (${ms.runtime}, ${ms.optimization} optimization, ${ms.threads} thread), in ${ms.loadMs} ms; ${checkWords(ms.check)}.`
+            : `The AI model ${ms.model} is loaded in the dashboard, but its self-check failed (${ms.check.error || checkWords(ms.check)}).`, loadFix);
+        else if (ms.state === 'failed') add('model', false, `The AI model ${ms.model} couldn't be loaded in the dashboard: ${ms.error}`, loadFix);
+        else add('model', null, `The AI model ${ms.model} is still loading in the dashboard (${ms.state}).`, 'Reload this page in a few seconds.');
+        const we = await workerEngineInfo().catch(() => null);
+        const newest = (await cache.list(now - 7 * A.DAY).catch(() => [])).find(r => r.ai && typeof r.ai.probability === 'number');
+        const scored = newest ? ` The newest email it scored (${ago(now - newest.processedAt)}) was scored by ${newest.ai.model || 'an unknown model'}.` : '';
+        if (!we) add('model-worker', null, `The worker hasn't reported its AI engine yet: each worker instance does when it starts (after this version is deployed, at its first email or job).${scored}`, 'Send a test email to a watched mailbox, then reload this page.');
+        else if (!we.ok) add('model-worker', false, `The worker couldn't load the AI model ${we.model} (${new Date(we.at).toISOString().slice(0, 16).replace('T', ' ')} UTC): ${we.error || (we.check && we.check.error) || checkWords(we.check)}.${scored}`, loadFix);
+        else if (we.model !== ms.model) add('model-worker', false, `The worker runs the AI model ${we.model}, the dashboard ${ms.model}.${scored}`, 'Run bash deploy/install.sh (or upgrade.sh), so both run the same build.');
+        else add('model-worker', true, `The worker loaded ${we.model} in the native engine (${we.runtime}) ${ago(now - we.at)} (version ${we.version}${we.revision ? `, ${we.revision}` : ''}), in ${we.loadMs} ms; ${checkWords(we.check)}.${scored}`);
         const project = cfg.project || (cfg.demo ? 'demo' : ''), region = cfg.region || (cfg.demo ? 'demo' : '');
         if (cloudrun && project && region) {
             try {
@@ -251,6 +275,15 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         // move: phishing still in the Inbox is moved to Spam too (enforce mode).
         'POST /api/mark': async (q, body, admin) => service.mark(String(body.key || ''), body.falseAlarm === true, admin.email, { move: body.move === true }),
+        // Re-scan one email (Review, Messages): judged again now, recorded beside the on-arrival result, never
+        // moved. At most every 5 s per email (a double click, or two admins).
+        'POST /api/rescan': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!key) return { error: 'Choose an email.', status: 400 };
+            if (!once(`rescan:${key}`)) return { error: 'Re-scanned a moment ago.', status: 429 };
+            try { return await service.rescan(key, admin.email); }
+            catch (e) { if (e.status) return { error: e.message, status: e.status }; throw e; }
+        },
         // Resume moving; with moveHeld, the emails the brake held are moved now too.
         'POST /api/resume': async (q, body, admin) => service.resume(admin.email, { moveHeld: body.moveHeld === true }),
         // A campaign: what the brakes and admins decided, and how many copies are where.
@@ -484,8 +517,8 @@ async function main() {
     spruce.load();
     // (the day's counters added up and written every few seconds; written when the instance stops, below)
     const service = new Service({ cfg, store, gmail, intel, statFlushMs: cfg.demo ? 0 : STAT_FLUSH_MS });
-    // The AI engine started now (about 100 ms), not on the first email.
-    spruce.load().model.ready().catch((e) => console.error('the AI model could not be loaded:', e));
+    // The AI engine started now (about 100 ms), not on the first email; the worker notes how it went.
+    reportEngine({ cfg, store }).catch((e) => console.error('noting the AI engine\'s status:', e));
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
     const scheduler = !cfg.demo && cfg.role !== 'worker' && (cfg.renewJob || cfg.updateJob) ? require('./scheduler').createScheduler() : null;
     // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
@@ -499,5 +532,17 @@ async function main() {
     });
 }
 
+// Loads the AI model and runs its self-check; a worker (or the one instance, ROLE=all) then notes the result
+// in Firestore (state/engine-worker: one write per instance start), for the dashboard's Status page.
+async function reportEngine({ cfg, store }) {
+    const m = spruce.load().model;
+    try { await m.ready(); await m.selfCheck(); } catch (e) { console.error('the AI model could not be loaded:', e); }
+    const st = m.status();
+    if (cfg.role === 'admin') return st;
+    const ok = st.state === 'ready' && !!(st.check && st.check.ok);
+    await store.setState('engine-worker', Object.assign({}, st, { ok, at: Date.now(), version: VERSION, revision: process.env.K_REVISION || '' }));
+    return st;
+}
+
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
-module.exports = { createApp, expectedProject };
+module.exports = { createApp, expectedProject, reportEngine };

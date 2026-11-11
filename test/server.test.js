@@ -230,6 +230,101 @@ test('demo dashboard API: numbers agree with the records; release and marks work
     } finally { await close(); }
 });
 
+test('Status (0.5.3): the AI model in the dashboard and in the worker: its version, the native engine, loaded, the self-check', async () => {
+    const { reportEngine } = require('../src/server');
+    const PKG_MODEL = require('../vendor/spruce/models/phish-tiny/model.json');
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: 'maple-schools.example' });
+    const { store } = await buildDemo({ cfg, now: Date.now() });
+    const { base, close } = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }) }));
+    const checks = async () => (await (await fetch(`${base}/api/status`)).json()).checks;
+    try {
+        // The worker hasn't reported yet: not known (not a problem); the dashboard's own model is loaded.
+        let s = await checks();
+        assert.equal(s.find(c => c.id === 'model-worker').ok, null);
+        assert.match(s.find(c => c.id === 'model-worker').text, /hasn't reported its AI engine yet/);
+        // The worker starting (ROLE=all here: it reports, as a worker does): loaded, self-check passed.
+        const st = await reportEngine({ cfg, store });
+        assert.equal(st.state, 'ready'); assert.equal(st.check.ok, true);
+        assert.ok(st.check.phishing >= 0.9 && st.check.genuine <= 0.1, JSON.stringify(st.check));
+        const w = await store.getState('engine-worker');
+        assert.deepEqual([w.ok, w.model, w.runtime], [true, `phish-tiny ${PKG_MODEL.version}`, `ONNX Runtime ${require('onnxruntime-node/package.json').version}`]);
+        // (a new app: the worker's report is kept a minute)
+        const app2 = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }) }));
+        try {
+            s = (await (await fetch(`${app2.base}/api/status`)).json()).checks;
+            const here = s.find(c => c.id === 'model'), worker = s.find(c => c.id === 'model-worker');
+            assert.equal(here.ok, true);
+            assert.match(here.text, new RegExp(`The AI model phish-tiny ${PKG_MODEL.version.replace(/\./g, '\\.')} is loaded in the dashboard, in the native engine \\(ONNX Runtime [\\d.]+, basic optimization, 1 thread\\), in \\d+ ms; self-check: a made-up phishing email [\\d.]+%, a made-up genuine one [\\d.]+%\\.`));
+            assert.equal(worker.ok, true);
+            assert.match(worker.text, /^The worker loaded phish-tiny [\d.]+ in the native engine \(ONNX Runtime [\d.]+\) 1 minute ago \(version [\d.]+\), in \d+ ms; self-check: .* The newest email it scored \(\d+ (minutes?|hours|days) ago\) was scored by phish-tiny [\d.]+\.$/);
+            // A worker on another model, or one whose model didn't load: problems, with what to do.
+            await store.setState('engine-worker', Object.assign({}, w, { model: 'phish-tiny 0.9.0' }));
+            const app3 = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }) }));
+            try {
+                const c = (await (await fetch(`${app3.base}/api/status`)).json()).checks.find(x => x.id === 'model-worker');
+                assert.equal(c.ok, false); assert.match(c.text, /The worker runs the AI model phish-tiny 0\.9\.0, the dashboard phish-tiny/); assert.match(c.fix, /deploy\/install\.sh/);
+            } finally { await app3.close(); }
+            await store.setState('engine-worker', Object.assign({}, w, { ok: false, state: 'failed', error: 'model.onnx: no such file', check: null }));
+            const app4 = await serve(createApp({ cfg, store, service: new Service({ cfg, store, gmail }) }));
+            try {
+                const c = (await (await fetch(`${app4.base}/api/status`)).json()).checks.find(x => x.id === 'model-worker');
+                assert.equal(c.ok, false); assert.match(c.text, /couldn't load the AI model .*: model\.onnx: no such file/); assert.match(c.fix, /rule checks alone/);
+            } finally { await app4.close(); }
+        } finally { await app2.close(); }
+    } finally { await close(); }
+});
+
+test('re-scan (0.5.3): one email read again and judged now; kept beside the on-arrival result, nothing moved, noted; a deleted email says so', async () => {
+    const PKG_MODEL = require('../vendor/spruce/models/phish-tiny/model.json');
+    const cfg = loadConfig({ DEMO: '1', MODE: 'enforce', ORG_DOMAINS: 'maple-schools.example' });
+    const { store, raws } = await buildDemo({ cfg, now: Date.now() });
+    const modified = [];
+    const gm = Object.assign({}, gmail, { modify: async (...a) => { modified.push(a); return {}; },
+        raw: async (u, id) => { const b = raws.get(id); if (!b) throw Object.assign(new Error('not found'), { status: 404 }); return { id, raw: b }; } });
+    const service = new Service({ cfg, store, gmail: gm });
+    const { base, close } = await serve(createApp({ cfg, store, service }));
+    const get = async (p) => (await fetch(base + p)).json();
+    const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: JSON.stringify(body) });
+    try {
+        const key = (await get('/api/review?days=30')).keys[0];
+        const before = (await get(`/api/message?key=${encodeURIComponent(key)}`)).message;
+        const res = await post('/api/rescan', { key });
+        assert.equal(res.status, 200);
+        const out = await res.json();
+        assert.equal(out.rescan.model, `phish-tiny ${PKG_MODEL.version}`);
+        assert.equal(typeof out.rescan.ai, 'number'); assert.equal(typeof out.rescan.score, 'number');
+        assert.ok(['move', 'would-move', 'flag', 'none'].includes(out.rescan.action)); assert.match(out.rescan.by, /^demo-admin/);
+        const after = (await get(`/api/message?key=${encodeURIComponent(key)}`)).message;
+        assert.deepEqual([after.ai, after.score, after.action, after.state, after.markedBy], [before.ai, before.score, before.action, before.state, before.markedBy], 'what happened on arrival stays');
+        assert.equal(after.rescan.at, out.rescan.at);
+        assert.equal(modified.length, 0, 'nothing moved');
+        const ev = (await store.listEvents(0)).find(e => /re-scanned an email/.test(e.text));
+        assert.match(ev.text, /^demo-admin@example\.org re-scanned an email to .+ from .+: AI \d+% with phish-tiny [\d.]+ \(\d+% on arrival\), rules score [\d.]+ \([\d.]+ on arrival\); now .+\. Nothing was moved\.$/);
+        assert.equal((await post('/api/rescan', { key })).status, 429, 'not twice within 5 seconds');
+        // Deleted from the mailbox since: says so; an unknown key too.
+        const other = (await get('/api/review?days=30')).keys[1];
+        raws.delete((await get(`/api/message?key=${encodeURIComponent(other)}`)).message.messageId);
+        const gone = await post('/api/rescan', { key: other });
+        assert.equal(gone.status, 404); assert.match((await gone.json()).error, /no longer in the mailbox/);
+        assert.equal((await post('/api/rescan', { key: 'nope' })).status, 404);
+        assert.equal((await post('/api/rescan', {})).status, 400);
+    } finally { await close(); }
+});
+
+test('the AI engine: not loaded, then ready with a self-check; one that fails to load says why', async () => {
+    const { Model } = require('../src/engine/model');
+    const E = require('../src/engine/spruce').load();
+    const ok = new Model({ file: E.model.file, manifest: E.model.meta, tokenizer: E.model.tok, modelInputParts: E.model.parts });
+    assert.equal(ok.status().state, 'not loaded');
+    await ok.ready(); await ok.selfCheck();
+    assert.equal(ok.status().state, 'ready'); assert.equal(ok.status().check.ok, true); assert.ok(ok.status().loadMs >= 0);
+    const bad = new Model({ file: '/nowhere/model.onnx', manifest: E.model.meta, tokenizer: E.model.tok, modelInputParts: E.model.parts });
+    await assert.rejects(bad.ready());
+    assert.equal(bad.status().state, 'failed'); assert.ok(bad.status().error);
+    const c = await bad.selfCheck();
+    assert.equal(c.ok, false); assert.ok(c.error);
+});
+
 test('aggregates: campaigns, users and model health from records', () => {
     const now = Date.now();
     const rec = (user, campaign, action, state, trigger, p) => ({ key: `${user}|${campaign}|${action}`, user, campaign, campaignLabel: campaign, subject: campaign, sender: { domain: 'x.example', address: 'a@x.example', name: '' }, processedAt: now - 1000, action, state, trigger, ai: { probability: p }, signals: [{ weight: 3, kind: 'hidden-filler', text: '' }], falseAlarm: state === 'released' ? true : null, releasedAt: now });

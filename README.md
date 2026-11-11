@@ -109,6 +109,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
       more, or an AI score from the suspicious line) but not enough to move, still in the Inbox. **F**
       not phishing, **P** phishing, **N** next. Marking them shows what the move rules miss, and gives
       the retraining export its best examples.
+    - **R re-scans** the email: it is read again from the mailbox and judged with today's checks and AI
+      model (after a model update, say), and the result is shown beside what happened on arrival, which
+      stays. A re-scan never moves anything: you decide with F or P. Activity notes who re-scanned what.
     - **In enforce mode, P moves an email still in the Inbox to Spam** (the button then reads
       **Phishing: move to Spam**), with the service's `SPRUCE/Moved` label; Activity notes who. In monitor
       mode nothing is moved. An email no longer in the Inbox (archived, deleted) is left where it is.
@@ -120,7 +123,7 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once
       (in enforce mode, confirming also moves those still in the Inbox to Spam).
     - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
-      most, the sender check, and how strong the evidence was. Buttons: **Move back to Inbox**, **Mark
+      most, the sender check, and how strong the evidence was. Buttons: **Re-scan**, **Move back to Inbox**, **Mark
       false alarm** (**Mark not phishing** for a suspicious email), **Confirm phishing** (**Confirm
       phishing: move to Spam** for one still in the Inbox, in enforce mode).
     - Each email also shows its **Message-ID** and Gmail ID, each with a **Copy** button. The Message-ID
@@ -135,6 +138,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - Identity-Aware Proxy off on the worker, and who may call it;
     - both services on the same build, and the jobs reaching the worker;
     - notifications arriving and watches renewed;
+    - the AI model in the dashboard and in the worker: its version, the native engine (ONNX Runtime),
+      whether it loaded and how fast, and a self-check that scores two made-up emails each time an
+      instance starts (the worker notes its own in Firestore, `state/engine-worker`);
     - the phishing lists, alerts, errors, the brake.
 
     `deploy/doctor.sh` checks the rest from Cloud Shell.

@@ -431,6 +431,35 @@
             : h('span', { class: 'muted', text: 'not recorded (emails before 0.3.1)' }))];
     const PASTED = { move: 'Would be moved to Spam', 'would-move': 'Would be recorded as "would move" (monitor mode: nothing is moved)', flag: 'Would be recorded as suspicious, not moved', none: 'Nothing would happen: the checks find nothing to act on' };
 
+    // Re-scan (Review, Messages): the email read again from its mailbox and judged now, with today's checks
+    // and model; nothing is moved, and the record keeps what happened on arrival beside it.
+    const pctOr = (x) => (typeof x === 'number' ? pct(x) : 'none');
+    async function rescanEmail(key) {
+        acting++;
+        try {
+            const out = await api('/api/rescan', { method: 'POST', body: { key } });
+            const r = out.rescan;
+            toast(`Re-scanned with ${r.model || 'no AI model'}: AI ${pctOr(r.ai)}, rules score ${r.score}. ${PASTED[r.action] || r.action}.`);
+            render();
+        } catch (e) { toast(`Couldn't re-scan it: ${e.message}`); } finally { acting--; }
+    }
+    function rescanButton(m, cls) {
+        if (m.pasted || !m.key || MEMORY) return null;
+        return h('button', { class: cls, type: 'button', title: 'Read it again from the mailbox and judge it with today\'s checks and AI model. Nothing is moved.', onclick: () => rescanEmail(m.key) },
+            cls.includes('review') ? [h('kbd', { text: 'R' }), ' Re-scan'] : 'Re-scan');
+    }
+    function rescanBox(m) {
+        const r = m.rescan;
+        if (!r) return null;
+        const was = m.ai && typeof m.ai.probability === 'number' ? m.ai.probability : null;
+        const other = m.ai && m.ai.model && r.model && m.ai.model !== r.model ? `, ${m.ai.model}` : '';
+        return h('div', { class: 'rescan' },
+            h('b', { text: `Re-scanned ${when(r.at)}${r.by ? ` by ${r.by}` : ''}` }),
+            h('div', { text: `With ${r.model || 'no AI model'}: AI ${pctOr(r.ai)} (on arrival ${pctOr(was)}${other}); rules score ${r.score} (on arrival ${m.score === null || m.score === undefined ? '–' : m.score}).` }),
+            h('div', { text: `With today's checks and model: ${PASTED[r.action] || r.action}.` }),
+            h('div', { class: 'small muted', text: 'Nothing was moved by the re-scan. Decide with the buttons; the record keeps what happened on arrival. A re-scan doesn\'t count "first email from this sender" (by now it isn\'t), so its rules score can be lower.' }));
+    }
+
     // One email's decision: a record (Messages), or a pasted email's answer (Check an email: m.pasted).
     // opts.inReview: the review queue shows its own buttons and title.
     function emailView(m, opts = {}) {
@@ -445,6 +474,7 @@
         const notMoved = m.action === 'flag';
         const moves = opts.mode === 'enforce' && m.state === 'inbox' && m.action !== 'move';
         const actions = quiet ? null : h('div', { class: 'actions' },
+            rescanButton(m, 'btn'),
             m.state === 'moved' ? h('button', { class: 'btn primary', type: 'button', onclick: () => act('/api/release', { key: m.key }, 'Moved back to the Inbox.') }, 'Move back to Inbox') : null,
             m.falseAlarm !== true ? h('button', { class: 'btn', type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: true }, notMoved ? 'Marked as not phishing.' : 'Marked as a false alarm.') }, notMoved ? 'Mark not phishing' : 'Mark false alarm') : null,
             m.falseAlarm !== false || moves ? h('button', { class: `btn${moves ? ' primary' : ''}`, type: 'button', onclick: () => act('/api/mark', { key: m.key, falseAlarm: false, move: moves }, (out) => phishedText(out.moved)) }, moves ? 'Confirm phishing: move to Spam' : 'Confirm phishing') : null);
@@ -460,6 +490,7 @@
                         h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Moved back to the Inbox by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
+                        pasted ? null : rescanBox(m),
                         // (about moving, so not for an email the service didn't move: suspicious, or moved by an admin's decision)
                         m.evidence && !notMoved && !(m.heldMovedBy && !m.trigger) ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. Moving its campaign is never paused for it.`
                             : m.evidence === 'admin' ? 'A copy found by an admin\'s search for a campaign.' : 'Weaker evidence: nothing outside the email confirms it, so moving its campaign\'s copies can pause for your decision (they stay in the Inbox meanwhile).' }) : null,
@@ -749,13 +780,14 @@
             } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; }
         };
         const next = () => { st.i++; render(); };
-        reviewKeys = { f: () => decide(true), p: () => decide(false), n: next };
+        reviewKeys = { f: () => decide(true), p: () => decide(false), n: next, r: () => rescanEmail(key) };
         return [...head,
-            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} ${Q.what} nobody has reviewed (last ${days} days, ${Q.order}). Keys: F ${Q.no.toLowerCase()}, P phishing${moves ? ' (moves it to Spam)' : ''}, N next.` }),
+            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} ${Q.what} nobody has reviewed (last ${days} days, ${Q.order}). Keys: F ${Q.no.toLowerCase()}, P phishing${moves ? ' (moves it to Spam)' : ''}, N next, R re-scan with today's model.` }),
             h('div', { class: 'review-bar card' },
                 h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ` ${Q.no}`),
                 h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), moves ? ' Phishing: move to Spam' : ' Phishing'),
                 h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided'),
+                rescanButton(m, 'btn review-rescan'),
                 !moves && m.state === 'inbox' && mode !== 'enforce' ? h('span', { class: 'muted small', text: 'Monitor mode: nothing is moved.' }) : null),
             ...[].concat(emailView(m, { inReview: true, mode }))];
     }

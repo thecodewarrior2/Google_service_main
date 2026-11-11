@@ -13,6 +13,11 @@
 const crypto = require('crypto');
 const path = require('path');
 
+// Two made-up emails for the self-check when the engine starts (Status → Service status): it must score the
+// first as phishing and the second as genuine (both sides of 50%).
+const CHECK_PHISHING = 'subject: Your password expires today. from: "Mail Administrator" at mail-account-verify.example (outside your organization). sender check: dmarc fail. links: "Keep my password" goes to mail-account-verify.example (warning: the site was registered 3 days ago). text: Dear user, your password expires in 2 hours. Click below to keep your current password, or your mailbox will be closed today.';
+const CHECK_GENUINE = 'subject: Field trip permission slips. from: "Amy Foster" at maple-schools.example (your organization). sender check: dmarc pass. text: Hi all, please send the signed permission slips for Friday\'s field trip back to the office by Thursday. Thanks!';
+const runtimeVersion = () => { try { return require('onnxruntime-node/package.json').version; } catch (e) { return ''; } };
 const MARGINS_KEPT = 50000;   // answers remembered per instance, by a hash of the input (campaign copies, shared sentences)
 const BATCH = 32;             // texts in one run at most (the explanation passes of one email: up to 26)
 
@@ -21,15 +26,21 @@ class Model {
         this.file = file; this.meta = manifest; this.cfg = manifest.config;
         this.tok = tokenizer; this.parts = modelInputParts;
         this.ort = ort; this.session = null; this.margins = new Map();
+        // For Status: not loaded, loading, ready or failed; when, how long, why; the self-check's scores.
+        this.state = 'not loaded'; this.loadedAt = null; this.loadMs = null; this.error = null; this.check = null;
     }
     // The session, made once (about 100 ms); server.js asks for it at start, so the first email doesn't wait.
     ready() {
         if (!this.session) {
-            this.ort = this.ort || require('onnxruntime-node');
+            const started = Date.now();
+            this.state = 'loading';
+            try { this.ort = this.ort || require('onnxruntime-node'); }
+            catch (e) { this.state = 'failed'; this.error = String(e && e.message || e).slice(0, 300); return Promise.reject(e); }
             this.session = this.ort.InferenceSession.create(this.file, {
                 graphOptimizationLevel: 'basic', intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential',
                 extra: { session: { intra_op: { allow_spinning: '0' }, inter_op: { allow_spinning: '0' } } }
-            }).catch((e) => { this.session = null; throw e; });
+            }).then((s) => { this.state = 'ready'; this.loadedAt = Date.now(); this.loadMs = this.loadedAt - started; this.error = null; return s; },
+                (e) => { this.session = null; this.state = 'failed'; this.error = String(e && e.message || e).slice(0, 300); throw e; });
         }
         return this.session;
     }
@@ -60,6 +71,22 @@ class Model {
         }
         return out;
     }
+    // The self-check (once per instance, when it starts): two made-up emails scored, which must fall on
+    // either side of 50%. Never throws: the result says what happened.
+    async selfCheck() {
+        const t = Date.now();
+        try {
+            const [a, b] = await this.margins_([CHECK_PHISHING, CHECK_GENUINE]);
+            const phishing = 1 / (1 + Math.exp(-a)), genuine = 1 / (1 + Math.exp(-b));
+            this.check = { ok: Number.isFinite(a) && Number.isFinite(b) && phishing >= 0.5 && genuine < 0.5, phishing, genuine, ms: Date.now() - t };
+        } catch (e) { this.check = { ok: false, error: String(e && e.message || e).slice(0, 300), ms: Date.now() - t }; }
+        return this.check;
+    }
+    // What Status shows about the engine here.
+    status() {
+        return { model: `${this.meta.name} ${this.meta.version}`, runtime: `ONNX Runtime ${runtimeVersion()}`.trim(), optimization: 'basic', threads: 1,
+            state: this.state, loadedAt: this.loadedAt, loadMs: this.loadMs, error: this.error, check: this.check };
+    }
     async margin(text) { return (await this.margins_([text]))[0]; }
     async probability(text) { return 1 / (1 + Math.exp(-(await this.margin(text)))); }
     // The opinion, and what made it: each sentence is scored on its own ("does this sentence alone read
@@ -87,4 +114,4 @@ function loadModel({ dir, manifest, tokenizer, modelInputParts }) {
     return new Model({ file: path.join(dir, 'model.onnx'), manifest, tokenizer, modelInputParts });
 }
 
-module.exports = { Model, loadModel, MARGINS_KEPT };
+module.exports = { Model, loadModel, MARGINS_KEPT, CHECK_PHISHING, CHECK_GENUINE };

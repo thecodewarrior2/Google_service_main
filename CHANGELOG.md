@@ -1,7 +1,28 @@
 # Changelog
 
-## 0.5.3: Model health says which model is in use
+## 0.5.3: Re-scan an email; Status shows the AI engine; Model health names the model in use
 
+- **Re-scan** (Email → Review, and each email's page):
+  - **What it does:** the email is read again from its mailbox and judged with today's checks and AI
+    model, the way "Check an email" does. Use it after a model update, for emails still in the queues.
+  - **What you see:** the result beside what happened on arrival, which stays: the model, the AI score,
+    the rules score (each with its on-arrival value), and what would happen now.
+  - **Nothing is moved:** you decide with the usual buttons. In the Review queue the key is **R**, next to
+    F, P and N.
+  - **Noted in Activity**, with who re-scanned what. At most once every 5 seconds per email. An email
+    deleted from its mailbox can't be re-scanned, and says so.
+  - **The rules score can be lower than on arrival:** a re-scan doesn't count "first email from this
+    sender", since by then the sender isn't new.
+- **Status → Service status shows the AI engine,** in the dashboard and in the worker:
+  - the phish-tiny version;
+  - the native engine (ONNX Runtime and its version, basic optimization, one thread);
+  - whether the model loaded, and in how long;
+  - a self-check run each time an instance starts, which scores a made-up phishing email (it must be 50%
+    or more) and a made-up genuine one (under 50%).
+
+  The worker notes its own when it starts (`state/engine-worker`, one write per instance), with its version
+  and revision. The page says when the worker's model failed to load, or differs from the dashboard's, and
+  which model scored the newest email.
 - **Status → Model health** said "Model: phish-tiny 0.11.0" after upgrading to 0.5.2, which runs 0.13.0.
   The line named the model that had scored the newest recorded email, and no flagged email had arrived
   since the upgrade. Now it says the model in use. When other models scored some of the period's emails,
@@ -9,7 +30,10 @@
   both until the old ones age out.
 - **Install:** from 0.5.2, Settings → Update can install it once it is approved (`installLevel` 3, as
   0.5.2); otherwise from Cloud Shell with the zip.
-- **Tests:** 119 (two more checks in existing tests: the model in use, and the models that scored a period).
+- **Tests:** 122 (from 119): re-scan (judged again, the on-arrival result kept, nothing moved, noted, at
+  most every 5 s, a deleted email); the AI engine's status (loaded, self-check, a model that fails to
+  load); Status's engine checks (the worker not reported yet, on another model, failed). Model health's
+  model in use, and the models that scored a period, are checked in existing tests.
 
 ## 0.5.2: The AI model trained with more of the district's phishing (phish-tiny 0.13.0)
 

@@ -221,6 +221,8 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .weight { align-self: start; font-weight: 650; text-align: center; border-radius: 6px; background: var(--surface-2); padding: 1px 0; font-variant-numeric: tabular-nums; }
 .weight.high { background: var(--critical-soft); color: var(--critical-text); }
 .decision { padding: 12px 14px; border-radius: 8px; margin: 10px 0; font-size: 13px; }
+.rescan { padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; margin: 10px 0; font-size: 13px; overflow-wrap: anywhere; }
+.rescan div { margin-top: 3px; }
 .decision.move { background: var(--critical-soft); }
 .decision.would { background: var(--warning-soft); }
 .decision.flag { background: var(--surface-2); }

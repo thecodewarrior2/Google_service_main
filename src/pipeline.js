@@ -420,6 +420,38 @@ class Service {
         };
     }
 
+    // An email re-scanned (Review, Messages: Re-scan): read again from its mailbox and judged as it would be
+    // now, with today's checks and model, exactly as "Check an email" does. Nothing is moved and the
+    // on-arrival result stays: the new one is kept beside it (rescan), and the admin decides with the usual
+    // buttons. Noted in Activity.
+    async rescan(key, by) {
+        const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+        const rec = await this.store.getRecord(key);
+        if (!rec || !rec.user || !rec.messageId) fail(404, 'That email isn\'t recorded.');
+        let msg;
+        try { msg = await this.gmail.raw(rec.user, rec.messageId); }
+        catch (e) { if (e && e.status === 404) fail(404, 'The email is no longer in the mailbox (deleted for good): it can\'t be re-scanned.'); throw e; }
+        if (!msg || !msg.raw || !msg.raw.length) fail(404, 'The email is no longer in the mailbox: it can\'t be re-scanned.');
+        const facts = await readMessage(msg.raw);
+        const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel });
+        result.allowlistedUnverified = allowlisted && !verified;
+        const decision = decide(result, this.cfg, {});
+        const rescan = {
+            at: this.now(), by, mode: this.cfg.mode,
+            model: result.ai ? result.ai.model : null, ai: result.ai && typeof result.ai.probability === 'number' ? result.ai.probability : null,
+            score: result.score, status: result.status, action: decision.action, trigger: decision.trigger, why: decision.why,
+            signals: result.signals.filter(x => x && x.weight >= 2).slice(0, 8).map(x => ({ kind: x.kind, text: String(x.text || '').slice(0, 300), weight: x.weight }))
+        };
+        const record = await this.store.updateRecord(key, { rescan });
+        const pc = (x) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : 'none');
+        const was = rec.ai && typeof rec.ai.probability === 'number' ? rec.ai.probability : null;
+        const now = { move: 'it would be moved to Spam', 'would-move': 'it would be recorded as "would move"', flag: 'it would be recorded as suspicious', none: 'nothing would happen' }[decision.action] || decision.action;
+        await this.store.addEvent({ kind: 'check', user: rec.user,
+            text: `${by} re-scanned an email to ${rec.user} from ${(rec.sender && rec.sender.domain) || 'an unknown sender'}: AI ${pc(rescan.ai)} with ${rescan.model || 'no model'} (${pc(was)} on arrival), rules score ${rescan.score} (${rec.score} on arrival); now ${now}. Nothing was moved.` });
+        return { record, rescan };
+    }
+
     // An email that came into the Inbox other than by arriving there (the user took it out of Spam, or
     // moved it from another folder) and that the service never checked: checked now and recorded, never
     // moved (the user put it there), with an alert when the checks flag it. Older mail moved back from an
