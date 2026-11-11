@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.5: Clearer wording on what moves an email
+
+Nothing in how emails are judged changes. The words do, where they could be read as "the AI also needs
+the rules".
+
+- **Settings → Policy, the AI move threshold:**
+  - an email from outside the organization that the AI scores at or above it is moved on the AI score
+    alone, whatever the rules find;
+  - from inside (your domains, DMARC passing), the AI score alone never moves it, and it is recorded as
+    suspicious.
+
+  It used to say "an email the AI scores this high or higher is moved (rules aside)".
+- **Settings → Policy → How it decides,** row by row:
+  - **Moved, sender outside:** either one is enough, the AI score at the threshold or the rules flagging
+    it (a rules score of 5). The AI needs no rule, link check or other sign to agree.
+  - **Moved, sender inside:** only by the rules; the AI score alone never moves it.
+  - **Inside or outside:** your domains and DMARC passing make a sender inside; anything else is outside,
+    a forged staff address too. DMARC decides only that (and whether an allowlisted sender counts), and an
+    outside sender doesn't have to pass or fail it. A failed DMARC check is also one of the rules' signs (2
+    or 3 points), never required.
+  - **The rules:** what the rule checks add up, with 3 amber and 5 flagged; the AI score is separate.
+- **README:** the same in its table of what happens to an email.
+- **Install:** Settings → Update, once approved (`installLevel` 3, as 0.5.4).
+- **Tests:** 123, as in 0.5.4.
+
 ## 0.5.4: A re-scan updates the email's scores and model
 
 - **After a re-scan, the email's page shows the re-scan's results.** In 0.5.3 the AI opinion still named

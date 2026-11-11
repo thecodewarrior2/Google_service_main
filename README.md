@@ -69,12 +69,13 @@ For each new Inbox message:
 
 | Situation | Action |
 |---|---|
-| The rules flag it (score 5+) | **Move to Spam** (label `SPRUCE/Moved`) |
-| The AI scores **90%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing) | **Move to Spam** |
+| The rules flag it (score 5+), from any sender | **Move to Spam** (label `SPRUCE/Moved`) |
+| The AI scores **90%** or more (`AI_MOVE_THRESHOLD`), sender outside the organization (or a staff address without DMARC passing): the AI score alone, no rule, link check or other sign needs to agree | **Move to Spam** |
 | Same, in monitor mode, or while moving is paused (a campaign on weaker evidence, or the domain-wide brake) | Left in the Inbox, recorded as "would move" (a paused one can be moved later) |
 | An admin dismissed the campaign as a false alarm | Recorded as suspicious, not moved |
 | The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
-| A rules score of 3 or more, or an AI score of **65%** or more (`AI_SUSPICIOUS_THRESHOLD`), below what moves it; or a high AI score the policy doesn't act on (an inside sender) | Recorded as suspicious, not moved |
+| The AI scores 90% or more, sender inside (your domains, DMARC passing), and the rules don't flag it | Recorded as suspicious, not moved (the AI score alone never moves inside mail) |
+| A rules score of 3 or more, or an AI score of **65%** or more (`AI_SUSPICIOUS_THRESHOLD`), below what moves it | Recorded as suspicious, not moved |
 | Allowlisted sender, DMARC passing | Nothing |
 
 It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is sent where):
