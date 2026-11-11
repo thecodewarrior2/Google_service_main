@@ -1,0 +1,90 @@
+'use strict';
+// The AI model, phish-tiny (a BERT-tiny classifier, 4.4 million parameters), run by the native engine:
+// ONNX Runtime (onnxruntime-node, MIT), from models/phish-tiny/model.onnx (made from model.bin by
+// tools/export-onnx.py). About 25× faster than the plain JavaScript that ran it until 0.4.1: about 6 ms for a
+// 256-token pass instead of 146 ms, with the same answers to rounding (test/engine.test.js holds them to
+// the JavaScript engine's own, on a reference set).
+//
+// The input text and the tokens come from ai.js (modelInputParts, WordPiece), as in training. The
+// engine runs at the "basic" level of graph optimization: the higher levels turn the 8-bit weights into
+// 8-bit arithmetic, which changes the answers (by up to 0.36 in the margin); basic keeps them, and is as
+// fast at full length. One thread, no spinning: a Cloud Run instance has one vCPU, and the event loop
+// gets it back between passes (each takes milliseconds).
+const crypto = require('crypto');
+const path = require('path');
+
+const MARGINS_KEPT = 50000;   // answers remembered per instance, by a hash of the input (campaign copies, shared sentences)
+const BATCH = 32;             // texts in one run at most (the explanation passes of one email: up to 26)
+
+class Model {
+    constructor({ file, manifest, tokenizer, modelInputParts, ort = null }) {
+        this.file = file; this.meta = manifest; this.cfg = manifest.config;
+        this.tok = tokenizer; this.parts = modelInputParts;
+        this.ort = ort; this.session = null; this.margins = new Map();
+    }
+    // The session, made once (about 100 ms); server.js asks for it at start, so the first email doesn't wait.
+    ready() {
+        if (!this.session) {
+            this.ort = this.ort || require('onnxruntime-node');
+            this.session = this.ort.InferenceSession.create(this.file, {
+                graphOptimizationLevel: 'basic', intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential',
+                extra: { session: { intra_op: { allow_spinning: '0' }, inter_op: { allow_spinning: '0' } } }
+            }).catch((e) => { this.session = null; throw e; });
+        }
+        return this.session;
+    }
+    // How strongly the model leans to phishing (its phishing score minus its genuine score) for each text,
+    // in one run per BATCH (shorter texts padded, the padding never attended to).
+    async margins_(texts) {
+        const out = new Array(texts.length);
+        const todo = [];
+        texts.forEach((t, i) => {
+            const k = crypto.createHash('sha256').update(String(t)).digest('base64');
+            const hit = this.margins.get(k);
+            if (hit !== undefined) { this.margins.delete(k); this.margins.set(k, hit); out[i] = hit; }
+            else todo.push({ i, k, ids: this.tok.encode(String(t), this.cfg.maxLen) });
+        });
+        const session = todo.length ? await this.ready() : null;
+        for (let s = 0; s < todo.length; s += BATCH) {
+            const part = todo.slice(s, s + BATCH), B = part.length, T = Math.max(...part.map(x => x.ids.length));
+            const ids = new BigInt64Array(B * T), mask = new Float32Array(B * T);
+            part.forEach((x, b) => { for (let t = 0; t < x.ids.length; t++) { ids[b * T + t] = BigInt(x.ids[t]); mask[b * T + t] = 1; } });
+            const res = await session.run({ input_ids: new this.ort.Tensor('int64', ids, [B, T]), attention_mask: new this.ort.Tensor('float32', mask, [B, T]) });
+            const l = res.logits.data;
+            part.forEach((x, b) => {
+                const m = l[b * 2 + 1] - l[b * 2];
+                out[x.i] = m;
+                if (this.margins.size >= MARGINS_KEPT) this.margins.delete(this.margins.keys().next().value);
+                this.margins.set(x.k, m);
+            });
+        }
+        return out;
+    }
+    async margin(text) { return (await this.margins_([text]))[0]; }
+    async probability(text) { return 1 / (1 + Math.exp(-(await this.margin(text)))); }
+    // The opinion, and what made it: each sentence is scored on its own ("does this sentence alone read
+    // like phishing?"), and so are the facts about the sender and links without the text; the ones that
+    // lean furthest toward phishing are named. Only when the email reads as phishing (50% or more), and
+    // then all in one run.
+    async analyze(facts) {
+        const parts = this.parts(facts);
+        const [m] = await this.margins_([`${parts.head} text: ${parts.sentences.join(' ')}`]);
+        const p = 1 / (1 + Math.exp(-m));
+        const reasons = [];
+        if (p >= 0.5) {
+            const sentences = parts.sentences.slice(0, 25).filter(s => s.length >= 12);
+            const ws = await this.margins_([...sentences.map(s => `text: ${s}`), `${parts.head} text:`]);
+            sentences.forEach((s, i) => { if (ws[i] > 0) reasons.push({ sentence: s.slice(0, 200), weight: ws[i] }); });
+            const w = ws[sentences.length];
+            if (w > 0) reasons.push({ sentence: 'Who sent it, the sender check and where its links go', weight: w, facts: true });
+        }
+        reasons.sort((a, b) => b.weight - a.weight);
+        return { probability: p, reasons: reasons.slice(0, 3), model: this.meta.name, version: this.meta.version };
+    }
+}
+
+function loadModel({ dir, manifest, tokenizer, modelInputParts }) {
+    return new Model({ file: path.join(dir, 'model.onnx'), manifest, tokenizer, modelInputParts });
+}
+
+module.exports = { Model, loadModel, MARGINS_KEPT };

@@ -171,7 +171,7 @@ The push subscription is created after the worker exists (step 6).
 `spruce-invoker` may call it.
 
 ```bash
-gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=8 --timeout=120 --memory=1Gi --max-instances=30 --execution-environment=gen2 --cpu-boost --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
+gcloud run deploy spruce-worker --source . --region=REGION --service-account=spruce-run@PROJECT.iam.gserviceaccount.com --no-allow-unauthenticated --concurrency=32 --timeout=120 --memory=1Gi --max-instances=30 --execution-environment=gen2 --cpu-boost --set-env-vars=ROLE=worker,MODE=monitor,ORG_DOMAINS=ORG,PILOT_OU=/Staff/IT\ Pilot,DIRECTORY_ADMIN=spruce-directory@ORG,DELEGATED_SA=spruce-delegate@PROJECT.iam.gserviceaccount.com,PUBSUB_TOPIC=projects/PROJECT/topics/gmail-spruce,PUSH_SERVICE_ACCOUNT=spruce-invoker@PROJECT.iam.gserviceaccount.com,PUSH_AUDIENCE=WORKER_URL
 ```
 
 The first deploy prints `WORKER_URL`. Deploy again with `PUSH_AUDIENCE` set to it, then allow the
@@ -199,6 +199,13 @@ gcloud run deploy spruce-admin --source . --region=REGION --service-account=spru
 
 `ADMIN_EMAILS` (like every list setting) takes commas or semicolons. Use semicolons in
 `--set-env-vars`, where commas separate the variables.
+
+**From 10,000 watched mailboxes, keep one dashboard instance running** (`--min-instances=1`, about $13 a
+month): its copy of the records stays in memory, so pages open at once instead of first reading the
+last 32 days of records (about 96,000 reads at 3,000 recorded emails a day, each time it starts).
+`deploy/install.sh` and Settings → Update set it from the count of watched mailboxes (`state/watchedCount`,
+written by each watch renewal): 1 from 10,000, 0 below. When the count can't be read yet (a first
+install), they leave it as it is.
 
 **A group of admins instead:** set `ADMIN_GROUP=spruce-admins@ORG` (and `DIRECTORY_ADMIN`) on the
 dashboard service, and grant IAP to `group:spruce-admins@ORG`.
@@ -316,8 +323,8 @@ the dashboard offers only versions at that level or lower.
 
 ## Settings (environment variables)
 
-`MODE`, `AI_MOVE_THRESHOLD`, `AI_SUSPICIOUS_THRESHOLD`, `BRAKE_PER_HOUR`, `TIME_ZONE`, `ALLOW_DOMAINS`
-and `ALLOW_ADDRESSES` can also be changed on the dashboard (Settings → Policy, Settings → Allowlist,
+`MODE`, `AI_MOVE_THRESHOLD`, `AI_SUSPICIOUS_THRESHOLD`, `BRAKE_PER_HOUR`, `TIME_ZONE`, `ALLOW_DOMAINS`,
+`ALLOW_ADDRESSES` and `RETENTION_DAYS` can also be changed on the dashboard (Settings → Policy, Settings → Allowlist,
 with the project ID, which the dashboard checks against `GOOGLE_CLOUD_PROJECT`).
 Those changes are kept in Firestore (`state/policy-<key>`) and read by both services at least every
 30 seconds. A change stays in force until settings.env has another value for the same setting:
@@ -358,7 +365,7 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off for now; `true` needs the key (Secret Manager) |
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
-| `RETENTION_DAYS` | `60` | records (and the checked-message markers) are deleted after this: by Firestore's TTL policies, from the `expireAt` each document gets when written (so a new value applies to documents written from then on), and by the daily cleanup job for older ones |
+| `RETENTION_DAYS` | `35` | days each email's record (and its checked-message marker, and Activity entries) is kept, 14 to 365; also on the dashboard (Settings → Policy). Each document gets its `expireAt` when written, from the value in force then, and Firestore's TTL policies delete it on that date: the oldest go first, never all at once. A lower value also reaches documents already written: the hourly cleanup deletes what is older (within 30 s a run). A higher one applies to documents written from then on |
 | `WORKER_MAX_INSTANCES` (installer) | `30` | the most worker instances at once (1 to 100); they cost only while they work |
 | `BUDGET_ALERT` (installer only) | `1` | budget alert amount for the project, in the billing account's currency; `off` for none |
 | `STORE_SUBJECTS`, `STORE_AI_QUOTES` | `true` | keep subjects and the model's short quotes in records |

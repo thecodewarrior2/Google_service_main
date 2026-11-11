@@ -108,7 +108,9 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   `docs/RETRAINING.md` covers the rest.
 - **The policy, changed on the dashboard** (Settings → Policy, Settings → Allowlist).
   - **Which settings:** `MODE`, `AI_MOVE_THRESHOLD`, `AI_SUSPICIOUS_THRESHOLD`, `BRAKE_PER_HOUR`,
-    `TIME_ZONE`, `ALLOW_DOMAINS` and `ALLOW_ADDRESSES`, kept in Firestore as `state/policy-<key>`. The
+    `TIME_ZONE`, `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` and `RETENTION_DAYS`, kept in Firestore as
+    `state/policy-<key>`. Each document's expiry date (`expireAt`) is computed from the retention in
+    force when it is written. The
     suspicious line is checked against the move threshold both ways (`policyValue`).
   - **How they apply:** in `loadConfig` these four are live values; everything else is frozen.
     `Service.refreshPolicy` reads them at least every 30 s (on each notification, each job, each
@@ -140,10 +142,14 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 
 ## Throughput
 
-The model takes 50–300 ms per email in plain JavaScript on one Cloud Run CPU, and the rest is Gmail API
-time. With `--concurrency=8`, Cloud Run adds instances as notifications arrive. A district of a few
-thousand mailboxes (about 100,000 emails a day, peaks of maybe 20 a second) fits a handful of
-instances.
+The model runs in ONNX Runtime (`src/engine/model.js`, from `models/phish-tiny/model.onnx`): about 6 ms
+for a full-length pass on one Cloud Run CPU, one thread, at the "basic" graph optimization level (the
+higher levels turn the 8-bit weights into 8-bit arithmetic, which changes the answers). An email's
+explanation passes (its sentences) run as one batch. All of an email takes about 10 ms of processor time
+on average; the rest is waiting for Gmail and Firestore. So each worker instance takes 32 requests at a
+time (`--concurrency=32`) and checks at most 12 emails at once, 2 of them large (over 4 MB): about 28
+emails a second per instance, measured with realistic delays. A district of 10,000 mailboxes (about
+100,000 emails a day) needs one instance outside campaigns.
 
 Gmail API quota is per user and per project. Every call names its user (`quotaUser`), so a busy
 mailbox can't use up everyone's quota.

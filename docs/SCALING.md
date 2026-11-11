@@ -1,6 +1,7 @@
 # Scaling: 10,000 mailboxes, 100,000 emails a day
 
-What a district of that size asks of the service, what 0.4.0 changed for it, and the plan for the rest.
+What a district of that size asks of the service, what 0.4.0 and 0.5.0 changed for it, and the plan for
+the rest.
 Every number here was measured with the service's own code on made-up mail, or comes from Google's
 documentation (sources at the end). Prices are list prices to check against the pricing pages.
 
@@ -34,32 +35,60 @@ Run's processor speed. A load test on a spare project is what settles them (belo
 | Old documents (~100,000 a day) | a daily job with 120 s to delete them, borderline | Firestore deletes them itself (TTL policies); the job only takes older ones, within 90 s |
 | Worker limit | 10 instances | 30 (`WORKER_MAX_INSTANCES`), gen2, startup CPU boost |
 
+**0.5.0** (the native engine, 32 at a time; the same simulation, the same made-up mail):
+
+| | 0.4.1 | 0.5.0 |
+|---|---|---|
+| One model pass, full length (256 tokens) | 146 ms (JavaScript) | about 6 ms (ONNX Runtime, one thread) |
+| An email's explanation passes (26 sentences) | one by one | one batch: 23 ms instead of 46 ms |
+| Processor time per email (the made-up mix) | 97 ms (95th percentile 199 ms) | 9.5 ms (23 ms) |
+| One worker instance, realistic delays | 4.8 emails/s at 8 at a time | 7.7 emails/s at 8; 28 emails/s at 32 (the processor 40% busy; half the emails checked within 0.31 s, 95% within 0.52 s) |
+| Emails downloaded and checked at once, per instance | up to 8 (the requests) | at most 12, and only 2 of them over 4 MB (the rest wait their turn), so large attachments can't fill the worker's 1 GiB |
+| The answers | | the same: 400 made-up inputs, largest difference 8.8e-6 in the margin, none on the other side of 50%, 65% or 90% |
+| The image | | ONNX Runtime for Linux x64 only: 47 MB (the package is 294 MB with the other systems') |
+| The dashboard when it starts | reads the retention period's records (60 days by default) | reads the last 32 days; older ones when a page shows them (Last 90 days), forgotten again after an hour without |
+| How long records are kept | 60 days, in settings.env | 35 days by default, also in Settings → Policy |
+
 **At 100,000 emails a day** (estimates from the numbers above):
-- **Processor time:** about 10,000–20,000 vCPU-seconds a day. One instance handles the busiest hour
-  (about 15,000 emails); a campaign to every mailbox is checked within a few minutes, as Cloud Run adds
-  instances (up to 30).
+- **Processor time:** about 1,000 vCPU-seconds a day with 0.5.0 (10,000–20,000 with 0.4.0). One
+  instance handles the busiest hour (about 15,000 emails, 4 a second, against 28 a second it can take);
+  a campaign to every mailbox is checked within a minute or two, as Cloud Run adds instances (up to 30).
 - **Gmail API:** about 67 units per email and 2 per notification, about 8 million a day: a tenth of the
   80 million below which there is no charge, and a tenth of the 1.2 million a minute in a campaign.
-- **Cost:** Cloud Run about $14 a month (it was about $26), Firestore about $45–60 a month in us-east1
-  (it was about $85). Pub/Sub, Scheduler and the Gmail API: next to nothing. 0.4.1 lowers it again
-  (below).
+- **Cost:** below ("What it costs"). Pub/Sub, Scheduler and the Gmail API: next to nothing.
 
-## What it costs (0.4.1)
+## What it costs (0.5.0)
 
 Estimates, at about 10 emails a mailbox a day, three notifications an email, with Google's free
 allowances (Firestore: 50,000 reads, 20,000 writes and 20,000 deletes a day; Cloud Run: 180,000
 vCPU-seconds, 360,000 GiB-seconds and 2 million requests a month; Cloud Scheduler: 3 jobs):
 
-| Mailboxes | Emails a day | Firestore, `us-central1` | Firestore, `us-east1` | Cloud Run | About a month |
-|---|---|---|---|---|---|
-| 500 | 5,000 | $0 | $0 | $0 | **$0** |
-| 2,000 | 20,000 | about $2 | about $4 | $0 | **$2–4** |
-| 5,000 | 50,000 | about $6 | about $12 | about $4 | **$10–16** |
-| 10,000 | 100,000 | about $15 | about $30 | about $14 | **$30–45** |
+| Mailboxes | Emails a day | Firestore, `us-central1` | Firestore, `us-east1` | Cloud Run, worker | Dashboard always on | About a month |
+|---|---|---|---|---|---|---|
+| 500 | 5,000 | $0 | $0 | $0 | no | **$0** |
+| 2,000 | 20,000 | about $2 | about $4 | about $2 | no | **$4–6** |
+| 5,000 | 50,000 | about $6 | about $12 | about $10 | no | **$16–22** |
+| 10,000 | 100,000 | about $15 | about $30 | about $21 | about $13 | **$49–64** |
 
-**Per email** after 0.4.1: about 3 Firestore reads and 3 writes for the email's own notification, 1
+**Cloud Run, counted again.** Cloud Run bills an instance for all the time it has at least one request
+open, waiting for Gmail and Firestore included, not only its processor time. The estimates before 0.5.0
+counted processor time, and were too low: about $14 at 10,000 mailboxes for 0.4.0, where a simulation
+of the billing (notifications arriving at random over a school day, 80% of them from 7 AM to 5 PM, an
+instance billed while it has a request, in 100 ms steps) gives about $26 for 0.4.1 and $21 for 0.5.0
+(about 0.9 million instance-seconds a month: one instance busy most of the school day). Checking 32 at
+a time lowers the bill less than the processor time suggests, because outside campaigns one instance
+was enough already, and it is billed while it waits. (At 5,000 mailboxes: $14 and $10; at 2,000: $4 and
+$2.)
+
+**The dashboard always on** (from 10,000 watched mailboxes): an idle minimum instance is billed at
+$0.0000025 a vCPU-second and a GiB-second, about $13 a month for 1 vCPU and 1 GiB. It saves the start-up
+read of the last 32 days of records (about 96,000 reads, $0.03 in `us-central1`, $0.06 in `us-east1`)
+each time a dashboard that went idle is opened again, so a dashboard opened 5–10 times a day pays back
+$4–9 of it in `us-central1` ($9–17 in `us-east1`), and its pages open at once.
+
+**Per email** after 0.5.0: about 3 Firestore reads and 3 writes for the email's own notification, 1
 read for each notification that brings nothing new (2 an email), about 1 delete when it expires;
-0.1–0.2 s of processor time; 67 Gmail quota units (free below 80 million a day).
+about 10 ms of processor time; 67 Gmail quota units (free below 80 million a day).
 
 **Prices checked on Google's pricing page** (Firestore Standard edition, per 100,000): `us-east1`
 reads $0.06, writes $0.18, deletes $0.02; `us-central1`, `us-west1`, `us-east5`, `us-west8` $0.03,
@@ -82,13 +111,10 @@ region at twice the price.
 **More to save, not done (each with a trade-off):**
 - **Region:** an installation in `us-east1` halves Firestore by moving to a new project in another
   region (a new installation; Firestore can't move).
-- **Worker concurrency 16** (it is 8): measured 7.0 emails a second per instance instead of 4.8, so
-  about 30% less Cloud Run time, but 16 large emails at once could fill the worker's 1 GiB. It needs a
-  limit on large emails first (plan, item 5).
-- **The model run natively** (plan, item 1): Cloud Run's processor time down severalfold.
-- **Dashboard rollups** (plan, item 2): no read of every record when an idle dashboard is opened again
-  (180,000 reads at 10,000 mailboxes and 60 days).
-- **`RETENTION_DAYS`** lower than 60: fewer records kept, and fewer read when the dashboard starts.
+- **Dashboard rollups** (plan, item 2): no read of the last 32 days of records when an idle dashboard
+  is opened again (about 96,000 reads at 10,000 mailboxes), and no always-on dashboard needed for it.
+- (Done in 0.5.0: the worker 32 at a time with a limit on large emails, the model run natively, the
+  dashboard reading 32 days at start, and records kept 35 days by default.)
 - **One write per email instead of two** for its "checked" marker (claimed, then done): possible, but
   the claim is what keeps two instances from judging one email at once; not worth the risk for about
   $3–5 a month at 10,000 mailboxes.
@@ -122,16 +148,14 @@ region at twice the price.
 
 ## The plan for the rest, most useful first
 
-1. **Run the model natively (ONNX Runtime for Node).** The JavaScript pass is now about twice as fast,
-   but still waits on one addition at a time; native matrix arithmetic is estimated 15–40× faster (not
-   measured for this model: benchmark first). Export the same weights in float32 (answers equal to
-   rounding), keep the JavaScript pass as the fallback and as the check. Then the explanation passes can
-   run as one batch. Watch out: the package is 307 MB unpacked (keep only Linux x64's 48 MB), its
-   installer downloads CUDA unless `ONNXRUNTIME_NODE_INSTALL=skip`, and `session.run` blocks the event
-   loop while it runs (set `intraOpNumThreads: 1`, turn spinning off). License MIT.
-   **Effect:** about 0.01–0.02 s per email; one instance for the whole district outside campaigns.
+1. ~~**Run the model natively.**~~ Done in 0.5.0 (ONNX Runtime, measured above): about 10 ms of
+   processor time per email, 28 emails a second per instance, one instance for the district outside
+   campaigns. The JavaScript pass was removed; its answers stay in the tests
+   (`test/fixtures/model-reference.json`), and `tools/export-onnx.py` computes a new model's on its own
+   (numpy, from `model.bin`).
 2. **Dashboard rollups instead of every record in memory.** Today the dashboard reads every record of the
-   period when it starts (about 180,000 reads, perhaps 20–40 seconds, at 3,000 a day). Instead:
+   last 32 days when it starts (since 0.5.0; about 96,000 reads, perhaps 10–20 seconds, at 3,000 a
+   day), older ones when a page shows them. Instead:
    - rollup documents (per day, per campaign, per user) updated in the same transaction as the record,
      sharded for campaign bursts, recounted nightly from the records by a job;
    - lists, search and review queues as Firestore queries with cursors (`startAfter`, never `offset`)
@@ -140,8 +164,9 @@ region at twice the price.
    - a 30-second cache shared by every admin's page; past days kept until midnight.
 
    **Effect:** correct numbers at any size, no read of everything, about $1–3 a month of reads. About a
-   week's work; it adds indexes and a job (`installLevel` goes up). Until then, keeping one dashboard
-   instance warm (`--min-instances=1`, about $13 a month) avoids the start-up read.
+   week's work; it adds indexes and a job (`installLevel` goes up). Until then, from 10,000 watched
+   mailboxes one dashboard instance is kept running (0.5.0, `--min-instances=1`, about $13 a month),
+   which avoids the start-up read.
 3. **Spread the watch renewal over the day.** A successful `users.watch` sends a notification at once,
    so renewing 5,800 mailboxes in 95 seconds sends 5,800 light notifications in that time (2 quota units
    and three Firestore operations each). An hourly job renewing a twenty-fourth of the mailboxes (by a
@@ -152,9 +177,10 @@ region at twice the price.
    - `count()` for totals where a page only needs a number (one read per 1,000 index entries);
    - a new installation in `us-central1` or `us-west1` pays half of `us-east1`'s Firestore prices
      (checked: below). Enterprise edition is cheaper per operation but means a new database.
-5. **Large emails.** `messages.get` with `format=raw` brings attachments too: 8 at once of 25 MB on a
-   1 GiB worker is a memory risk. Either fewer at once for large messages, or `format=full`, whose
-   attachments come as ids (same 60 units), which the parser would have to take.
+5. **Large emails.** `messages.get` with `format=raw` brings attachments too. Since 0.5.0 at most 2
+   emails over 4 MB are read and checked at once per instance (12 in all), so they can't fill the 1 GiB.
+   Still to do: `format=full`, whose attachments come as ids (same 60 units), which the parser would
+   have to take, so a large email isn't downloaded whole.
 6. **The brake's size is the district's decision.** Its automatic limit is half the watched mailboxes an
    hour: a phishing email to all 10,000 has 5,000 copies moved, then moving stops until an admin resumes.
    `BRAKE_PER_HOUR` above the largest campaign expected lets a whole campaign through, and also lets a

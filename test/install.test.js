@@ -91,6 +91,42 @@ test('install.sh: WORKER_MAX_INSTANCES sets the worker\'s limit, and must be 1 t
     } finally { w.cleanup(); }
 });
 
+test('install.sh: RETENTION_DAYS (14 to 365) reaches both services; the dashboard is always on from 10,000 watched mailboxes', { skip: !hasBash }, () => {
+    let w = workspace('spruce-mail-protection-0.5.0', `${SETTINGS}RETENTION_DAYS=60\n`);
+    const envOf = (svc) => fs.readFileSync(path.join(w.fake, `env-${svc}.yaml`), 'utf8');
+    try {
+        // Not known yet (a first install): left as it is.
+        let r = w.run('install.sh');
+        assert.equal(r.code, 0, r.out);
+        for (const svc of ['spruce-worker', 'spruce-admin']) assert.match(envOf(svc), /^RETENTION_DAYS: "60"$/m);
+        assert.ok(!has(r.calls, /--min-instances/));
+        r = w.run('install.sh', { FAKE_WATCHED: '10000' });
+        assert.equal(r.code, 0, r.out);
+        assert.ok(has(r.calls, /run deploy spruce-admin .*--max-instances=3 --min-instances=1 --cpu-boost/));
+        assert.ok(!has(r.calls, /run deploy spruce-worker .*--min-instances/));
+        assert.match(r.out, /10000 mailboxes watched: the dashboard stays on \(one instance always running, about \$13 a month\)/);
+        r = w.run('install.sh', { FAKE_WATCHED: '7' });
+        assert.ok(has(r.calls, /run deploy spruce-admin .*--min-instances=0 /));
+        assert.match(r.out, /7 mailboxes watched: the dashboard starts when opened \(always on from 10000\)/);
+        // Changed on the dashboard, not set in settings.env: taken, written into settings.env.
+        fs.writeFileSync(path.join(w.dir, 'deploy', 'settings.env'), SETTINGS);
+        r = w.run('install.sh', { FAKE_POLICY_retentionDays: '90|35' });
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /The retention period comes from the dashboard: 90 days/);
+        assert.match(fs.readFileSync(path.join(w.dir, 'deploy', 'settings.env'), 'utf8'), /^RETENTION_DAYS=90$/m);
+        assert.match(envOf('spruce-worker'), /^RETENTION_DAYS: "90"$/m);
+        assert.ok(has(r.calls, /curl .*-X DELETE .*\/state\/policy-retentionDays$/));
+    } finally { w.cleanup(); }
+    for (const bad of ['7', '400', '30.5', 'a month']) {
+        w = workspace('spruce-mail-protection-0.5.0', `${SETTINGS}RETENTION_DAYS=${bad}\n`);
+        try {
+            const r = w.run('install.sh');
+            assert.notEqual(r.code, 0, bad); assert.match(r.out, /RETENTION_DAYS must be a number of days from 14 to 365/);
+            assert.ok(!has(r.calls, /run deploy/), bad);
+        } finally { w.cleanup(); }
+    }
+});
+
 test('install.sh: Docker can\'t upload, so Cloud Build builds as spruce-build; a failed Docker build stops before deploying', { skip: !hasBash }, () => {
     const w = workspace();
     try {

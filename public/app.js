@@ -900,7 +900,7 @@
     }
 
     // --- Settings: the policy, changed here with the project ID ---------------------------------------------
-    // Mode, the AI move threshold, the brake and the time zone. Each Change opens a form under its row; it
+    // Mode, the AI lines, the brake, the time zone and how long records are kept. Each Change opens a form under its row; it
     // needs the project ID, and switching to enforce mode the agreement too. Live updates wait while a form
     // is open. deploy/install.sh asks which to keep when settings.env says otherwise (deploy/dashboard-policy.sh).
     const POLICY_ROWS = [
@@ -908,7 +908,8 @@
         { key: 'aiThreshold', label: 'AI move threshold', show: (v) => `${pct(v)}: an email the AI scores this high or higher is moved (rules aside)` },
         { key: 'aiSuspicious', label: 'AI suspicious line', show: (v) => `${pct(v)}: an email the AI scores this high or higher, but not moved, is recorded as suspicious for review` },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
-        { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` }
+        { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` },
+        { key: 'retentionDays', label: 'Records kept', show: (v) => `${num(v)} days: each email's record is deleted ${num(v)} days after it arrived, the oldest first` }
     ];
     const entries = (l, none) => {
         const list = l || [];
@@ -919,13 +920,13 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
         pageBusy = () => !!openKey;
         const short = (key, v) => (Array.isArray(v) ? (v.length ? `${num(v.length)} entr${v.length === 1 ? 'y' : 'ies'}` : 'none')
-            : key === 'mode' ? v : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : v);
+            : key === 'mode' ? v : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : key === 'retentionDays' ? `${num(v)} days` : v);
         const source = (key) => {
             const p = P[key] || {};
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
@@ -1005,6 +1006,20 @@
             ta.value = (value || []).join('\n');
             read = () => ta.value;
             extra = [ta, h('div', { class: 'small muted', text: key === 'allowDomains' ? 'One domain per line, for example vendor.example; its subdomains count too. Not your own domains.' : 'One address per line, for example billing@vendor.example. Addresses in your own domains can be added.' })];
+        } else if (key === 'retentionDays') {
+            const input = h('input', { type: 'number', min: 14, max: 365, step: 1, value: String(value), 'aria-label': 'Days records are kept', class: 'num-input' });
+            const note = h('div', { class: 'small muted' });
+            const say = () => {
+                const n = Math.round(Number(input.value));
+                note.textContent = !(n >= 14 && n <= 365) ? 'From 14 to 365 days.'
+                    : n < value ? `Records older than ${n} days are deleted over the next hours, the oldest first. They can't be brought back.`
+                    : n > value ? `Records saved from now on are kept ${n} days. Those already saved keep their date (${value} days after they arrived).`
+                    : 'Each record is deleted on its own date, that many days after its email arrived: the oldest go first, never all at once.';
+            };
+            input.addEventListener('input', say); say();
+            read = () => Number(input.value);
+            extra = [h('label', { class: 'inline' }, input, h('span', { text: 'days' })), note,
+                h('div', { class: 'small muted', text: 'From 14 to 365. The dashboard shows up to 90 days. Keeping more costs little: Firestore\'s first GiB is free, and a record takes a few kilobytes.' })];
         } else if (key === 'timeZone') {
             let zones = [];
             try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* an older browser: typed in */ }
@@ -1019,6 +1034,7 @@
             try {
                 const out = await api('/api/policy', { method: 'POST', body: { key, value: read(), projectId: project.value, agree: !!(agreeBox && agreeBox.querySelector('input').checked) } });
                 toast(out.changed && out.changed.unchanged ? 'That is already the setting: nothing changed.' : 'Changed. It applies everywhere within 30 seconds.');
+                if (key === 'retentionDays' && out.changed) { fitRanges(out.changed.value); $('#foot').textContent = $('#foot').textContent.replace(/deleted after \d+ days/, `deleted after ${out.changed.value} days`); }
                 close(); render();
             } catch (e) { err.textContent = e.message; update(); }
             finally { acting--; }
@@ -1141,6 +1157,24 @@
         } finally { if (id === rendering) view().classList.remove('loading'); }
     }
 
+    // The period buttons, within how long records are kept (Settings → Policy): with 35 days, Last 90 days
+    // becomes Last 35 days.
+    function fitRanges(keep) {
+        const k = Math.round(Number(keep));
+        if (!(k > 0)) return;
+        const buttons = [...document.querySelectorAll('.range')];
+        buttons.forEach(b => { if (!b.dataset.wanted) b.dataset.wanted = b.dataset.days; });
+        let shown = false;
+        for (const b of buttons) {
+            const want = Number(b.dataset.wanted);
+            b.hidden = shown && want > k;
+            if (!b.hidden) { b.dataset.days = String(Math.min(want, k)); b.textContent = `Last ${Math.min(want, k)} days`; }
+            if (want >= k) shown = true;
+        }
+        const allowed = buttons.filter(b => !b.hidden).map(b => Number(b.dataset.days));
+        if (!allowed.includes(days)) days = allowed.filter(n => n <= days).pop() || allowed[0];
+        for (const b of buttons) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
+    }
     async function boot() {
         for (const b of document.querySelectorAll('.range')) b.addEventListener('click', () => { days = Number(b.dataset.days); try { localStorage.setItem('spruce.days', String(days)); } catch (e) { /* not kept */ } render(); });
         if (MEMORY) document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a[href^="#/"]'); if (a) { e.preventDefault(); go(a.getAttribute('href')); } });
@@ -1172,6 +1206,7 @@
             $('#who').textContent = st.admin || '';
             $('#orgLine').textContent = `Google Workspace · ${st.orgDomains.join(', ') || 'your organization'}`;
             showMode(st.mode);
+            fitRanges(st.retentionDays);
             if (st.demo) $('.top-right').prepend(h('span', { class: 'demo-flag', text: 'DEMO · made-up data' }));
             $('#foot').textContent = `Checks and AI model from S.P.R.U.C.E+ (${st.model.name} ${st.model.version}). Records keep the sender, subject and the checks' findings, never email bodies, and are deleted after ${st.retentionDays} days.`;
         } catch (e) { /* the view shows the error */ }

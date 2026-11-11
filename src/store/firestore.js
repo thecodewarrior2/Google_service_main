@@ -38,9 +38,12 @@ const shuffled = (n) => { const a = [...Array(n).keys()]; for (let i = n - 1; i 
 class FirestoreStore {
     constructor(cfg) {
         this.db = new Firestore({ databaseId: cfg.firestoreDatabase, ignoreUndefinedProperties: true });
-        this.keepMs = (Number(cfg.retentionDays) || 60) * DAY;
+        this.cfg = cfg;
     }
-    // When a document written at ms expires (TTL), after keepMs (RETENTION_DAYS) by default.
+    // How long records are kept: RETENTION_DAYS, or what Settings → Policy says (cfg reads the setting in
+    // force when the record is written).
+    get keepMs() { return (Number(this.cfg.retentionDays) || 35) * DAY; }
+    // When a document written at ms expires (TTL), after keepMs by default: each on its own date.
     expiry(ms, keepMs = this.keepMs) { return Timestamp.fromMillis(ms + keepMs); }
     col(n) { return this.db.collection(n); }
     async getUser(email) { const d = await this.col('users').doc(safeId(email)).get(); return d.exists ? d.data() : null; }

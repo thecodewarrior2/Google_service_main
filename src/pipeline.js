@@ -51,6 +51,18 @@ const hourOf = (ms) => new Date(ms).toISOString().slice(0, 13);
 const messageIdOf = (v) => String(v || '').trim().replace(/^<|>$/g, '').slice(0, 300);
 // The address in a From header ("Name <a@b>" or "a@b").
 const addressOf = (from) => { const m = /<([^<>@\s]+@[^<>\s]+)>/.exec(String(from || '')); return (m ? m[1] : String(from || '').trim()).toLowerCase(); };
+// At most n at once; the others wait their turn, first come first served.
+class Slots {
+    constructor(n) { this.free = n; this.waiting = []; }
+    async run(fn) {
+        if (this.free > 0) this.free--; else await new Promise(r => this.waiting.push(r));
+        try { return await fn(); } finally { const next = this.waiting.shift(); if (next) next(); else this.free++; }
+    }
+}
+// Emails downloaded and checked at once per instance (the worker takes 32 requests at once, most of them
+// notifications with nothing new), and of those, how many over LARGE_BYTES (attachments): 12 downloads
+// of the largest Gmail sends plus 2 being read fit in the worker's 1 GiB.
+const EMAIL_SLOTS = 12, LARGE_SLOTS = 2, LARGE_BYTES = 4 * 1024 * 1024;
 // Runs fn over items, n at a time, until stop() says so.
 async function pool(items, n, fn, stop = () => false) {
     let i = 0;
@@ -94,12 +106,13 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, rene
 }
 
 // --- The policy settings an admin can change on the dashboard (Settings, with the project ID) ----------
-// mode, aiThreshold, brakePerHour (0: automatic) and timeZone come from deploy/settings.env (the services'
+// mode, aiThreshold, aiSuspicious, brakePerHour (0: automatic), timeZone, the allowlists and retentionDays
+// (how long records are kept) come from deploy/settings.env (the services'
 // environment). A change on the dashboard is kept in Firestore (state/policy-<key>: { value, env, before,
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 const LIST_KEYS = ['allowDomains', 'allowAddresses'];
 const MAX_ALLOWED = 500;
 const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -107,6 +120,7 @@ const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,
 // (one per line, or separated by commas or semicolons: an entry with a space in it is reported whole)
 const asList = (v) => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\r\n,;]+/)).map(x => String(x).trim().toLowerCase()).filter(Boolean))].sort();
 const POLICY_REFRESH_MS = 30 * 1000;
+const MIN_KEEP_DAYS = 14, MAX_KEEP_DAYS = 365;   // retentionDays (config.js says the same)
 const OWN_ENV = Symbol('envPolicy of this configuration');
 const sameSetting = (a, b) => (Array.isArray(a) || Array.isArray(b) ? asList(a).join(',') === asList(b).join(',')
     : typeof a === 'number' || typeof b === 'number' ? Number(a) === Number(b) : String(a) === String(b));
@@ -143,6 +157,7 @@ function policyValue(key, v, now = {}) {
     }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
+    if (key === 'retentionDays') { const n = Number(v); return Number.isInteger(n) && n >= MIN_KEEP_DAYS && n <= MAX_KEEP_DAYS ? n : bad(`Records are kept a whole number of days, from ${MIN_KEEP_DAYS} to ${MAX_KEEP_DAYS}.`); }
     return bad('That setting can\'t be changed on the dashboard.');
 }
 function policyWords(key, v) {
@@ -150,6 +165,7 @@ function policyWords(key, v) {
     if (key === 'mode') return v === 'enforce' ? 'enforce' : 'monitor';
     if (key === 'aiThreshold' || key === 'aiSuspicious') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
+    if (key === 'retentionDays') return `${Number(v)} days`;
     return String(v);
 }
 
@@ -171,6 +187,12 @@ class Service {
         // Kept per instance, as they never change once known: when each sender was first seen (a hash, as
         // in Firestore), and the campaigns whose alert has been sent.
         this.installedAt = null; this.senderSeen = new Map(); this.alerted = new Set();
+        this.emailSlots = new Slots(EMAIL_SLOTS); this.largeSlots = new Slots(LARGE_SLOTS);
+    }
+    // A large email (over LARGE_BYTES) is read and judged LARGE_SLOTS at a time.
+    readAndJudge(user, msg, opts) {
+        const go = async () => this.judge(user, msg, await readMessage(msg.raw), opts);
+        return msg.raw && msg.raw.length > LARGE_BYTES ? this.largeSlots.run(go) : go();
     }
     // A day's counter of checked emails (scanned, moved, …): written at once, or added up and written with
     // the others every statFlushMs (a busy instance writes once every few seconds, not once per email, and
@@ -255,8 +277,10 @@ class Service {
         const text = LIST_KEYS.includes(key) ? listChange() : key === 'mode'
             ? (value === 'enforce' ? `${by} switched to enforce mode on the dashboard (${how}): from now on, emails the policy flags are moved to Spam.`
                 : `${by} switched to monitor mode on the dashboard (${how}): nothing is moved from now on, and emails already moved stay in Spam.`)
-            : `${by} changed ${({ aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', brakePerHour: 'the brake', timeZone: 'the time zone' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
-              + (key === 'timeZone' ? ' The weekly summary uses it now; the nightly jobs move to it the next time deploy/install.sh runs.' : '');
+            : `${by} changed ${({ aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', brakePerHour: 'the brake', timeZone: 'the time zone', retentionDays: 'how long records are kept' })[key]} from ${policyWords(key, before)} to ${policyWords(key, value)} on the dashboard (${how}).`
+              + (key === 'timeZone' ? ' The weekly summary uses it now; the nightly jobs move to it the next time deploy/install.sh runs.' : '')
+              + (key === 'retentionDays' ? (value < before ? ` Records older than ${value} days are deleted over the next hours, the oldest first.`
+                  : ` Records saved from now on are kept ${value} days; the ones already saved keep the date they had (${before} days after they arrived).`) : '');
         if (key === 'timeZone') await this.store.addEvent({ kind: 'settings', text });
         else await this.alert('settings', text, { policy: key });
         return { key, value, before };
@@ -410,7 +434,7 @@ class Service {
             const recent = msg.internalDate && this.now() - msg.internalDate < 7 * DAY;
             let out = null;
             if (recent && msg.labelIds.includes('INBOX') && !msg.labelIds.some(l => l === 'SENT' || l === 'DRAFT' || l === 'SPAM')) {
-                out = await this.judge(user, msg, await readMessage(msg.raw), { userPlaced: true });
+                out = await this.emailSlots.run(() => this.readAndJudge(user, msg, { userPlaced: true }));
             }
             await this.store.markSeen(user, id);
             return out;
@@ -432,7 +456,8 @@ class Service {
         return { more: false, checked };
     }
 
-    async checkMessage(user, id, tries) {
+    checkMessage(user, id, tries) { return this.emailSlots.run(() => this.checkMessageNow(user, id, tries)); }
+    async checkMessageNow(user, id, tries) {
         let msg;
         try { msg = await this.gmail.raw(user, id); }
         catch (e) { if (e instanceof GoogleApiError && e.status === 404) return null; throw e; } // deleted before it was read
@@ -442,12 +467,11 @@ class Service {
         // without moving it again (it has the service's own label, which only the service adds).
         if (tries > 1 && !(await this.store.getRecord(recordKey(user, id)))
             && msg.labelIds.includes(await this.gmail.labelId(user, this.cfg.movedLabel))) {
-            return this.judge(user, msg, await readMessage(msg.raw), { alreadyMoved: true });
+            return this.readAndJudge(user, msg, { alreadyMoved: true });
         }
         // Only mail that arrived in the Inbox: not the user's own sent mail or drafts, nor what Gmail already put in Spam.
         if (!msg.labelIds.includes('INBOX') || msg.labelIds.some(l => l === 'SENT' || l === 'DRAFT' || l === 'SPAM')) return null;
-        const facts = await readMessage(msg.raw);
-        return this.judge(user, msg, facts);
+        return this.readAndJudge(user, msg);
     }
 
     // Analysis, decision, action and record for one message (also used by the tests and the demo).
@@ -1011,4 +1035,4 @@ class Service {
     }
 }
 
-module.exports = { Service, campaignOf, senderHash, recordKey, dayOf, POLICY_KEYS, policyValue, STAT_FLUSH_MS };
+module.exports = { Service, campaignOf, senderHash, recordKey, dayOf, POLICY_KEYS, policyValue, STAT_FLUSH_MS, Slots, EMAIL_SLOTS, LARGE_SLOTS };

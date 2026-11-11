@@ -16,7 +16,7 @@ retry() { local i; for i in 1 2 3 4 5 6; do if "$@"; then return 0; fi; echo "  
 SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
-AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE= WORKER_MAX_INSTANCES=
+AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE= WORKER_MAX_INSTANCES= RETENTION_DAYS=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +24,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES | RETENTION_DAYS) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -43,6 +43,9 @@ TZ_NAME="${TIME_ZONE:-UTC}"
 [[ "$BUDGET_ALERT" =~ ^(off|[0-9]+(\.[0-9]{1,2})?)$ ]] || fail "BUDGET_ALERT must be an amount (like 1 or 5) or off."
 WORKER_MAX="${WORKER_MAX_INSTANCES:-30}"
 [[ "$WORKER_MAX" =~ ^[0-9]+$ ]] && [ "$WORKER_MAX" -ge 1 ] && [ "$WORKER_MAX" -le 100 ] || fail "WORKER_MAX_INSTANCES must be a number from 1 to 100 (or empty for 30)."
+# How long records are kept (also on the dashboard, Settings → Policy). Empty = 35.
+keep_days_ok() { [ -z "$RETENTION_DAYS" ] || { [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] && [ "$RETENTION_DAYS" -ge 14 ] && [ "$RETENTION_DAYS" -le 365 ]; } || fail "RETENTION_DAYS must be a number of days from 14 to 365 (or empty for 35)."; }
+keep_days_ok
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
 if grep -v '^[[:space:]]*#' "$SETTINGS" | grep -q 'maple-schools.example\|my-spruce-project'; then fail "$SETTINGS still has the example values: put in your own."; fi
 command -v gcloud >/dev/null || fail "gcloud is not installed (use Cloud Shell)."
@@ -64,9 +67,10 @@ gcloud config set project "$PROJECT" --quiet >/dev/null
 # The policy settings changed on the dashboard (Settings → Policy): taken where settings.env doesn't set
 # them, asked about where the two differ, and written into settings.env (deploy/dashboard-policy.sh).
 . deploy/dashboard-policy.sh
-dashboard_policy_read "$PROJECT" "$MODE" "$AI_MOVE_THRESHOLD" "$BRAKE_PER_HOUR" "$TIME_ZONE" "$ALLOW_DOMAINS" "$ALLOW_ADDRESSES" "$AI_SUSPICIOUS_THRESHOLD"
+dashboard_policy_read "$PROJECT" "$MODE" "$AI_MOVE_THRESHOLD" "$BRAKE_PER_HOUR" "$TIME_ZONE" "$ALLOW_DOMAINS" "$ALLOW_ADDRESSES" "$AI_SUSPICIOUS_THRESHOLD" "$RETENTION_DAYS"
 dashboard_policy_reconcile "$SETTINGS"
 case "$MODE" in monitor | enforce) ;; *) fail "MODE must be monitor or enforce." ;; esac
+keep_days_ok
 TZ_NAME="${TIME_ZONE:-UTC}"
 NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')" || fail "can't read project $PROJECT (does it exist, and are you an owner?)."
 # Google requires a billing account on the project for Cloud Run, Scheduler, Build and Artifact
@@ -216,7 +220,7 @@ env_file() {
 WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
-    TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app")
+    RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
 LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 
@@ -234,7 +238,7 @@ gcloud run services remove-iam-policy-binding spruce-worker --region="$REGION" -
 WF="$(env_file worker ROLE worker "${COMMON[@]}" PILOT_GROUP "$PILOT_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
     PUBSUB_TOPIC "projects/$PROJECT/topics/$TOPIC" PUSH_SERVICE_ACCOUNT "$SA_INVOKER" PUSH_AUDIENCE "$WORKER_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP")"
 gcloud run deploy spruce-worker --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --concurrency=8 --timeout=120 --memory=1Gi --max-instances="$WORKER_MAX" --execution-environment=gen2 --cpu-boost \
+    --concurrency=32 --timeout=120 --memory=1Gi --max-instances="$WORKER_MAX" --execution-environment=gen2 --cpu-boost \
     --env-vars-file="$WF" --update-labels="$LABELS" --quiet
 # All traffic to this build, even after deploy/rollback.sh pinned an older one.
 gcloud run services update-traffic spruce-worker --region="$REGION" --to-latest --quiet >/dev/null
@@ -245,8 +249,16 @@ step "8/9 Dashboard (behind Identity-Aware Proxy, for ADMIN_GROUP and ADMIN_EMAI
 AF="$(env_file admin ROLE admin "${COMMON[@]}" IAP_AUDIENCE "$IAP_AUD" ADMIN_EMAILS "$ADMIN_EMAILS" ADMIN_GROUP "$ADMIN_GROUP" DIRECTORY_ADMIN "$DIRECTORY_ADMIN" \
     RENEW_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-renew-watches" ALERT_EMAIL "$ALERT_TO" \
     UPDATE_JOB "projects/$PROJECT/locations/$REGION/jobs/spruce-update" RELEASES_REPO "$(printf '%s' "$RELEASES" | sed -n 's|^https://github.com/\([^/]*/[^/]*\)$|\1|p' | sed 's/\.git$//')")"
+# Always on from 10,000 watched mailboxes (deploy/dashboard-policy.sh); not known yet (a first install,
+# before the first watch renewal): left as it is, and the next install or Settings → Update decides.
+WATCHED="$(dashboard_watched_count "$PROJECT")"
+ADMIN_MIN=()
+if [[ "$WATCHED" =~ ^[0-9]+$ ]]; then
+    if [ "$WATCHED" -ge "$DASHBOARD_ALWAYS_ON_AT" ]; then ADMIN_MIN=(--min-instances=1); echo "  $WATCHED mailboxes watched: the dashboard stays on (one instance always running, about \$13 a month), so its pages open at once."
+    else ADMIN_MIN=(--min-instances=0); echo "  $WATCHED mailboxes watched: the dashboard starts when opened (always on from $DASHBOARD_ALWAYS_ON_AT)."; fi
+fi
 gcloud run deploy spruce-admin --image="$IMAGE" --region="$REGION" --service-account="$SA_RUN" --no-allow-unauthenticated \
-    --memory=1Gi --max-instances=3 --cpu-boost --env-vars-file="$AF" --update-labels="$LABELS" --quiet
+    --memory=1Gi --max-instances=3 "${ADMIN_MIN[@]}" --cpu-boost --env-vars-file="$AF" --update-labels="$LABELS" --quiet
 gcloud run services update-traffic spruce-admin --region="$REGION" --to-latest --quiet >/dev/null
 # Settings → Update deploys new builds of both services (deploy/cloud-update.sh), as spruce-updater.
 for s in spruce-worker spruce-admin; do

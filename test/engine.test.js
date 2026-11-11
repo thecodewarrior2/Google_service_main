@@ -79,17 +79,45 @@ test('allowlisted senders are "trusted": never escalated, whatever the checks fi
     assert.equal(r.status, 'trusted');
 });
 
-test('the model (0.4.0): a pass\'s answer is remembered by a hash of its input, so identical copies cost one pass; the answer is the same', () => {
+test('the model (0.4.0): a pass\'s answer is remembered by a hash of its input, so identical copies cost one pass; the answer is the same', async () => {
     const E = require('../src/engine/spruce').load();
-    let passes = 0;
-    const fwd = E.model.forward;
-    E.model.forward = function (ids) { passes++; return fwd.call(this, ids); };
+    const session = await E.model.ready();
+    let runs = 0;
+    const run = session.run.bind(session);
+    session.run = (...a) => { runs++; return run(...a); };
     try {
         const text = 'from: billing@harbor-supply-invoices.example text: Our bank details have changed; please update the account number on file and pay today. ' + Math.random();
-        const a = E.model.margin(text), b = E.model.margin(text);
-        assert.equal(passes, 1, 'the second copy costs no pass');
+        const a = await E.model.margin(text), b = await E.model.margin(text);
+        assert.equal(runs, 1, 'the second copy costs no pass');
         assert.equal(a, b);
-        E.model.margin(text + ' (another one)');
-        assert.equal(passes, 2);
-    } finally { E.model.forward = fwd; }
+        await E.model.margin(text + ' (another one)');
+        assert.equal(runs, 2);
+    } finally { session.run = run; }
+});
+
+// The reference: 400 made-up inputs, their token ids, and phish-tiny 0.11.0's answers as the JavaScript
+// engine of 0.4.1 computed them (tools/export-onnx.py's numpy computation agrees to 1.2e-6). A new model
+// gets new answers from tools/export-onnx.py --reference (docs/RETRAINING.md, step 7).
+test('the native engine (0.5.0): the same answers as the JavaScript engine it replaced, on 400 made-up inputs; one at a time or in a batch', async () => {
+    const E = require('../src/engine/spruce').load();
+    const ref = require('./fixtures/model-reference.json');
+    assert.equal(ref.model, E.modelInfo.version, 'the reference is for this model (a new model: python3 tools/export-onnx.py <folder> --reference test/fixtures/model-reference.json)');
+    ref.cases.forEach((c, i) => assert.deepEqual(E.model.tok.encode(c.text, E.model.cfg.maxLen), c.ids, `case ${i}: the tokenizer's ids`));
+    const { Model } = require('../src/engine/model');
+    // (a fresh model: nothing remembered from the other tests)
+    const fresh = new Model({ file: E.model.file, manifest: E.model.meta, tokenizer: E.model.tok, modelInputParts: E.model.parts });
+    const one = [];
+    for (const c of ref.cases) one.push(await fresh.margin(c.text));
+    let worst = 0, flips = 0;
+    ref.cases.forEach((c, i) => {
+        worst = Math.max(worst, Math.abs(one[i] - c.margin));
+        const p0 = 1 / (1 + Math.exp(-c.margin)), p1 = 1 / (1 + Math.exp(-one[i]));
+        for (const line of [0.5, 0.65, 0.9]) if ((p0 >= line) !== (p1 >= line)) flips++;
+    });
+    assert.ok(worst < 1e-4, `largest difference ${worst}`);
+    assert.equal(flips, 0, 'no email changes side of the 50%, 65% or 90% line');
+    // In one batch (padded): the same as one at a time.
+    const batched = new Model({ file: E.model.file, manifest: E.model.meta, tokenizer: E.model.tok, modelInputParts: E.model.parts });
+    const all = await batched.margins_(ref.cases.slice(0, 64).map(c => c.text));
+    all.forEach((m, i) => assert.ok(Math.abs(m - one[i]) < 1e-4, `case ${i}: ${m} vs ${one[i]}`));
 });

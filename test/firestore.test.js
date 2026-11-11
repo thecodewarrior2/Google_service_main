@@ -113,16 +113,16 @@ test('records, events and the shared phishing lists round-trip; purge deletes wh
     assert.equal(await s.getRecord(`${U}|r0`), null);
     assert.ok(await s.getRecord(`${U}|r1`));
     assert.deepEqual((await s.listEvents(old - 1)).map(e => e.text), ['new']);
-    // 0.4.0: what expires carries expireAt (a Timestamp, RETENTION_DAYS on), for Firestore's TTL policies;
-    // reads leave it out.
+    // 0.4.0: what expires carries expireAt (a Timestamp, RETENTION_DAYS on: 35 days by default since
+    // 0.5.0), for Firestore's TTL policies; reads leave it out.
     const raw = (await s.db.collection('records').doc(`${U}|r1`).get()).data();
     assert.ok(raw.expireAt && typeof raw.expireAt.toMillis === 'function');
-    assert.ok(Math.abs(raw.expireAt.toMillis() - (raw.processedAt + 60 * 24 * 3600 * 1000)) < 1000, 'processedAt + 60 days');
+    assert.ok(Math.abs(raw.expireAt.toMillis() - (raw.processedAt + 35 * 24 * 3600 * 1000)) < 1000, 'processedAt + 35 days');
     assert.equal('expireAt' in (await s.getRecord(`${U}|r1`)), false);
     assert.equal((await s.listRecords({ sinceMs: Date.now() - 3600 * 1000 })).some(r => 'expireAt' in r), false);
     assert.equal((await s.listEvents(old - 1)).some(e => 'expireAt' in e), false);
     const ev = (await s.db.collection('events').where('text', '==', 'new').get()).docs[0].data();
-    assert.ok(ev.expireAt.toMillis() > Date.now() + 59 * 24 * 3600 * 1000);
+    assert.ok(ev.expireAt.toMillis() > Date.now() + 34 * 24 * 3600 * 1000 && ev.expireAt.toMillis() < Date.now() + 36 * 24 * 3600 * 1000);
     // Several counters in one write.
     await s.incStats('2026-11-11', { scanned: 40, moved: 2 });
     const st = (await s.getStats('2026-11-11', '2026-11-11'))[0];

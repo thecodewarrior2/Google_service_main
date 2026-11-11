@@ -41,7 +41,8 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
                     projectKnown: true, demoProjectId: 'demo-project',
                     policy: { mode: { value: cfg.mode, env: cfg.mode, changed: null, replaced: null }, aiThreshold: { value: cfg.aiThreshold, env: cfg.aiThreshold, changed: null, replaced: null }, aiSuspicious: { value: cfg.aiSuspicious, env: cfg.aiSuspicious, changed: null, replaced: null },
                               brakePerHour: { value: 0, env: 0, changed: null, replaced: null }, timeZone: { value: 'America/New_York', env: 'America/New_York', changed: null, replaced: null },
-                              allowDomains: { value: [], env: [], changed: null, replaced: null }, allowAddresses: { value: [], env: [], changed: null, replaced: null } }, version: require('../package.json').version,
+                              allowDomains: { value: [], env: [], changed: null, replaced: null }, allowAddresses: { value: [], env: [], changed: null, replaced: null },
+                              retentionDays: { value: cfg.retentionDays, env: cfg.retentionDays, changed: null, replaced: null } }, version: require('../package.json').version,
                     checks: { cloudflare: true, safeBrowsing: false, phishingLists: true, siteAge: true }, lists: await intel.feeds.status() }
     };
     // The API stand-in: the same routes and answers as src/server.js, over the data above.

@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -82,7 +82,9 @@ function loadConfig(env = process.env) {
         firestoreDatabase: env.FIRESTORE_DATABASE || '(default)',
         storeSubjects: bool(env.STORE_SUBJECTS, true),
         storeAiQuotes: bool(env.STORE_AI_QUOTES, true),
-        retentionDays: num(env.RETENTION_DAYS, 60),
+        // How long records are kept (days, 14 to 365; also on the dashboard, Settings → Policy). Each one
+        // is deleted on its own date, the oldest first: never all at once.
+        retentionDays: num(env.RETENTION_DAYS, 35),
         firstSeenLearningDays: num(env.FIRST_SEEN_LEARNING_DAYS, 14),
         // Google: the service account that acts for each mailbox (domain-wide delegation), the admin it
         // acts as to list the pilot users, and the Pub/Sub topic Gmail notifies.
@@ -128,6 +130,7 @@ function configProblems(c) {
         if (!c.adminEmails.length && !c.adminGroups.length) p.push('Neither ADMIN_EMAILS nor ADMIN_GROUP is set: nobody could use the dashboard.');
         if (c.adminGroups.length && !c.directoryAdmin) p.push('ADMIN_GROUP needs DIRECTORY_ADMIN (an admin the service may act as to check who is in the group).');
     }
+    if (!(Number.isInteger(c.retentionDays) && c.retentionDays >= 14 && c.retentionDays <= 365)) p.push('RETENTION_DAYS must be a whole number of days from 14 to 365.');
     if (!(c.aiSuspicious >= 0.5 && c.aiSuspicious <= 1)) p.push('AI_SUSPICIOUS_THRESHOLD must be between 0.5 and 1.');
     if (!(c.aiThreshold > 0.5 && c.aiThreshold <= 1 && c.aiThreshold >= c.aiSuspicious)) p.push('AI_MOVE_THRESHOLD must be between AI_SUSPICIOUS_THRESHOLD (where an email counts as suspicious) and 1.');
     return p;

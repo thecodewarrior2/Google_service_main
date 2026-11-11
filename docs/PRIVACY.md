@@ -54,7 +54,11 @@ And:
 - **sender history:** a hash of each sender address, to tell "first email from this sender";
 - **mailbox state:** each watched mailbox's sync position.
 
-**Retention:** records and message IDs are deleted after `RETENTION_DAYS` (60 by default) by a daily job.
+**Retention:** records, message IDs and Activity entries are deleted after `RETENTION_DAYS` (35 by
+default, 14 to 365; also changed on the dashboard, Settings → Policy). Each is deleted on its own date,
+that many days after its email arrived, by Firestore's TTL policies, so the oldest go first and the
+rest stay; nothing is cleared all at once. Shortening it deletes the older ones within hours (the hourly
+cleanup).
 To delete what the dashboard shows sooner, all at once: `bash deploy/clear-data.sh` (docs/INSTALL.md,
 "Clearing the dashboard's data").
 

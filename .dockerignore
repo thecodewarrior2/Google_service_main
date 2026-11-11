@@ -9,3 +9,4 @@ deploy
 .env
 *.key.json
 service-account*.json
+vendor/spruce/models/phish-tiny/model.bin

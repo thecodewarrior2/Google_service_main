@@ -1,12 +1,17 @@
 'use strict';
 // The dashboard's copy of the records (one per dashboard instance). The first use reads the records of
-// the retention period; after that, only records saved or changed since (each one has updatedAt), at most
-// every refreshMs (from a minute before the newest change seen, so a record saved in the same millisecond,
-// or by an instance whose clock is a little behind, isn't missed; seen twice is harmless). Without it, every page of every open dashboard (they update themselves every 30 s)
+// the last startDays (32: the 30 days the Overview and the other pages show first, from the midnight
+// before, with a day to spare); a page that shows
+// more (Last 90 days) has the older ones read then, up to the retention period, and they are forgotten
+// again after OLDER_KEPT_MS without such a page. After that, only records saved or changed since (each
+// one has updatedAt), at most every refreshMs (from a minute before the newest change seen, so a record
+// saved in the same millisecond, or by an instance whose clock is a little behind, isn't missed; seen
+// twice is harmless). Without it, every page of every open dashboard (they update themselves every 30 s)
 // read up to 20,000 records from Firestore, which a district's dashboard left open would pay for.
 const DAY = 24 * 60 * 60 * 1000;
 const OVERLAP_MS = 60 * 1000;
 const PAGE = 10000;                       // records read at a time when the cache starts
+const OLDER_KEPT_MS = 60 * 60 * 1000;     // records older than startDays, kept this long after a page last used them
 const INTERNED = 200000;                  // distinct strings shared between records (then started again)
 
 // What the dashboard's pages use of a record (src/dashboard/aggregate.js, the lists, the CSV, the review
@@ -39,14 +44,19 @@ function slimmer() {
 }
 
 class RecordCache {
-    constructor(store, { keepDays = 90, refreshMs = 15000, now = () => Date.now() } = {}) {
-        this.store = store; this.keepMs = keepDays * DAY; this.refreshMs = refreshMs; this.now = now;
+    // keepDays: how far back records are kept (a number, or a function for a setting that can change:
+    // Settings → Policy, how long records are kept). startDays: what the first use reads.
+    constructor(store, { keepDays = 90, startDays = 32, refreshMs = 15000, now = () => Date.now() } = {}) {
+        this.store = store; this.keepDays = keepDays; this.startMs = startDays * DAY; this.refreshMs = refreshMs; this.now = now;
         this.byKey = new Map(); this.cursor = 0; this.loadedAt = 0; this.loading = null; this.slim = slimmer();
+        this.from = Infinity;     // every record processed since this is held (Infinity: none read yet)
+        this.olderUsedAt = 0; this.extending = null;
     }
-    // The first time: every record of the period, PAGE at a time (newest first). After that: what changed.
-    async readAll(sinceMs) {
+    get keepMs() { return (typeof this.keepDays === 'function' ? this.keepDays() : this.keepDays) * DAY; }
+    // Every record processed from sinceMs to before untilMs, PAGE at a time (newest first).
+    async readAll(sinceMs, untilMs = Number.MAX_SAFE_INTEGER) {
         const rows = [];
-        let until = Number.MAX_SAFE_INTEGER;
+        let until = untilMs;
         for (;;) {
             const page = await this.store.listRecords({ sinceMs, untilMs: until, limit: PAGE });
             rows.push(...page);
@@ -61,25 +71,49 @@ class RecordCache {
         if (!force && this.loadedAt && this.now() - this.loadedAt < this.refreshMs) return;
         this.loading = (async () => {
             const first = !this.loadedAt;
-            const at = this.now();
-            const rows = first ? await this.readAll(at - this.keepMs)
+            const at = this.now(), keepMs = this.keepMs;
+            const from = at - Math.min(this.startMs, keepMs);
+            const rows = first ? await this.readAll(from)
                 : await this.store.listRecordsChangedSince(this.cursor - OVERLAP_MS, 5000);
+            if (first) this.from = from;
             for (const r of rows) {
-                this.byKey.set(r.key, this.slim(r));
+                if (r.processedAt >= this.from) this.byKey.set(r.key, this.slim(r));   // (an older one changed: read when a page needs it)
                 this.cursor = Math.max(this.cursor, r.updatedAt || r.processedAt || 0);
             }
             if (first && !rows.length) this.cursor = at - 1;
-            for (const [k, r] of this.byKey) if (r.processedAt < at - this.keepMs) this.byKey.delete(k);
+            // Past the retention period (it may have been shortened); and the older part, when no page has
+            // needed it for OLDER_KEPT_MS.
+            let floor = at - keepMs;
+            if (this.from < at - this.startMs && at - this.olderUsedAt > OLDER_KEPT_MS) floor = Math.max(floor, at - this.startMs);
+            if (this.from < floor) {
+                for (const [k, r] of this.byKey) if (r.processedAt < floor) this.byKey.delete(k);
+                this.from = floor;
+            }
             this.loadedAt = at;
         })().finally(() => { this.loading = null; });
         return this.loading;
     }
-    // Records processed since sinceMs, newest first (as store.listRecords): the cache's own (frozen) slim
-    // records, not copies: the pages only read them.
+    // The records from sinceMs to the oldest held, read when a page first shows a longer period.
+    async extend(sinceMs) {
+        while (this.extending) await this.extending;
+        if (sinceMs >= this.from) return;
+        this.extending = (async () => {
+            const until = this.from;
+            const rows = await this.readAll(sinceMs, until);
+            for (const r of rows) if (!this.byKey.has(r.key)) this.byKey.set(r.key, this.slim(r));
+            this.from = Math.min(this.from, sinceMs);
+        })().finally(() => { this.extending = null; });
+        return this.extending;
+    }
+    // Records processed since sinceMs (within the retention period), newest first (as store.listRecords):
+    // the cache's own (frozen) slim records, not copies: the pages only read them.
     async list(sinceMs = 0, limit = Infinity) {
         await this.refresh();
+        const at = this.now(), s = Math.max(sinceMs, at - this.keepMs);
+        if (s < at - this.startMs) this.olderUsedAt = at;
+        if (s < this.from) await this.extend(s);
         const out = [];
-        for (const r of this.byKey.values()) if (r.processedAt >= sinceMs) out.push(r);
+        for (const r of this.byKey.values()) if (r.processedAt >= s) out.push(r);
         out.sort((a, b) => b.processedAt - a.processedAt);
         return out.length > limit ? out.slice(0, limit) : out;
     }
@@ -87,4 +121,4 @@ class RecordCache {
     stale() { this.loadedAt = Math.min(this.loadedAt, 1); }
 }
 
-module.exports = { RecordCache, slimmer };
+module.exports = { RecordCache, slimmer, OLDER_KEPT_MS };

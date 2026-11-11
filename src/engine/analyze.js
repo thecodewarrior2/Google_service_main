@@ -114,7 +114,7 @@ async function analyze(facts, ctx = {}) {
     };
     let ai = null;
     try {
-        const r = E.model.analyze(aiFacts);
+        const r = await E.model.analyze(aiFacts);
         ai = { probability: r.probability, reasons: r.reasons.map(x => ({ sentence: x.sentence, facts: !!x.facts })), model: `${r.model} ${r.version}` };
     } catch (e) {
         ai = { probability: null, error: String(e && e.message || e), model: `${E.modelInfo.name} ${E.modelInfo.version}` };

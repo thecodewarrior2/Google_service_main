@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.5.0: The native engine, records kept 35 days, the dashboard on when it's large
+
+The AI model now runs in ONNX Runtime instead of JavaScript, each worker checks 32 emails at a time, how
+long records are kept is a dashboard setting (35 days by default), and the dashboard reads less when it
+starts. Measured on made-up mail: `docs/SCALING.md`.
+
+- **The native engine.** The phish-tiny model runs in ONNX Runtime (`onnxruntime-node` 1.31.1, MIT)
+  from `models/phish-tiny/model.onnx`, which `tools/export-onnx.py` makes from `model.bin`. A full-length
+  pass takes about 6 ms instead of 146 ms, and an email's explanation passes (its sentences) run as one
+  batch. All of an email now takes about 10 ms of processor time on average (97 ms in 0.4.1, 217 ms in
+  0.3.12).
+  - **The same answers:** on 400 made-up inputs the largest difference in the margin is 8.8e-6, and no
+    email changes side of the 50%, 65% or 90% line. The test holds the engine to the JavaScript engine's
+    answers, which stay in `test/fixtures/model-reference.json` with their token ids.
+  - **It runs at the "basic" level of graph optimization.** The higher levels turn the 8-bit weights
+    into 8-bit arithmetic, which changed answers by up to 0.36 in the margin. One thread and no spinning,
+    so the instance's one vCPU is shared fairly.
+  - **The JavaScript engine is removed** (`vendor/spruce/ai.js` keeps the tokenizer and the model's
+    input text, as in training).
+  - **A new model** gets new reference answers from `tools/export-onnx.py --reference`, which computes
+    them from `model.bin` in numpy, without ONNX (it agrees with the JavaScript engine to 1.2e-6):
+    `docs/RETRAINING.md`, step 7.
+  - **The image** keeps ONNX Runtime for Linux x64 only: 47 MB of the package's 294 MB. Its installer's
+    download is turned off (`.npmrc`).
+- **32 at a time.** Each worker instance takes 32 requests at once (8 before) and checks at most 12
+  emails at once, and only 2 of them over 4 MB, so large attachments can't fill its 1 GiB. Measured: 28
+  emails a second per instance (4.8 in 0.4.1), half of them checked within 0.31 s.
+- **Records kept 35 days by default** (60 before), and **changeable in Settings → Policy** (14 to 365
+  days, with the project ID; noted in Activity and emailed as an alert), or with `RETENTION_DAYS` in
+  `deploy/settings.env`. `install.sh` reconciles the two like the other policy settings.
+  - **Each record goes on its own date**, that many days after its email arrived, oldest first. It is
+    never a clear-out every 35 days.
+  - **Shorter:** records older than the new value are deleted over the next hours, by the hourly
+    cleanup.
+  - **Longer:** applies to records saved from then on. Those already saved keep their date.
+  - **After this upgrade,** records between 35 and 60 days old are deleted within hours, unless
+    `RETENTION_DAYS` or the dashboard says otherwise.
+- **The period buttons follow the setting:** with 35 days, Last 90 days becomes Last 35 days.
+- **The dashboard reads the last 32 days when it starts**, not the whole retention period. Last 90 days
+  (or the longest period kept) reads the older ones then; they are forgotten after an hour without such
+  a page.
+- **Always on from 10,000 watched mailboxes.** `install.sh` and Settings → Update keep one dashboard
+  instance running (`--min-instances=1`, about $13 a month) when the last watch renewal counted 10,000
+  or more watched mailboxes, so its pages open at once. Below that, it starts when opened, at no cost.
+  When the count isn't known yet (a first install), the setting is left as it is.
+- **Costs, counted again** (`docs/SCALING.md`, `docs/INSTALL.md`). Cloud Run bills an instance for all
+  the time it has a request open, waiting included. The earlier estimates counted only processor time
+  and were too low. At 10,000 mailboxes the worker costs about $21 a month with 0.5.0 (about $26 with
+  0.4.1, which was estimated at $14). In all, about $49–64 a month at that size, $13 of it the
+  always-on dashboard.
+- **Install:** from Cloud Shell (`installLevel` 3: `install.sh` sets the dashboard's minimum instances
+  and the new setting). Settings → Update can't install it.
+- **Tests:** 119 (from 113). They cover:
+  - the native engine against the reference answers, one at a time and in a batch, and the tokenizer
+    against the stored ids;
+  - at most 12 emails at once, 2 of them large;
+  - retention from settings.env and the dashboard, the Activity texts, the cleanup after shortening,
+    and Firestore's expiry dates following the setting;
+  - the dashboard's copy (32 days first, older on demand, forgotten after an hour, trimmed when
+    retention shrinks);
+  - the installer (`RETENTION_DAYS` 14 to 365, reconciled with the dashboard; the dashboard always on
+    from 10,000 mailboxes, at install and in Settings → Update).
+
 ## 0.4.1: Lower monthly costs
 
 For school systems on small budgets: the same protection for less. Costs by district size, with the

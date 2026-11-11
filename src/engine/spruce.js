@@ -9,8 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const crypto = require('crypto');
-const MARGINS_KEPT = 50000;
+const { loadModel } = require('./model');
 
 const VENDOR = path.resolve(__dirname, '..', '..', 'vendor', 'spruce');
 
@@ -30,24 +29,12 @@ function load() {
         vm.runInContext(fs.readFileSync(path.join(VENDOR, f), 'utf8'), ctx, { filename: `vendor/spruce/${f}` });
     }
     const get = (name) => vm.runInContext(name, ctx);
-    const manifest = JSON.parse(fs.readFileSync(path.join(VENDOR, 'models', 'phish-tiny', 'model.json'), 'utf8'));
-    const bin = fs.readFileSync(path.join(VENDOR, 'models', 'phish-tiny', 'model.bin'));
-    const vocab = fs.readFileSync(path.join(VENDOR, 'models', 'phish-tiny', 'vocab.txt'), 'utf8');
-    const PhishModel = get('PhishModel');
-    const model = new PhishModel(manifest, bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.length), vocab);
-    // Each pass's answer, remembered per instance by a hash of its input: the copies of a campaign, and the
-    // sentences many emails share (greetings, footers), cost one pass. Only the hash and the number are
-    // kept, in memory (the most recent MARGINS_KEPT).
-    const margins = new Map(), pass = model.margin.bind(model);
-    model.margin = (text) => {
-        const k = crypto.createHash('sha256').update(String(text)).digest('base64');
-        const hit = margins.get(k);
-        if (hit !== undefined) { margins.delete(k); margins.set(k, hit); return hit; }
-        const m = pass(text);
-        if (margins.size >= MARGINS_KEPT) margins.delete(margins.keys().next().value);
-        margins.set(k, m);
-        return m;
-    };
+    // The model: its input and tokens from ai.js, the network in the native engine (src/engine/model.js).
+    const MODEL_DIR = path.join(VENDOR, 'models', 'phish-tiny');
+    const manifest = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'model.json'), 'utf8'));
+    const vocab = fs.readFileSync(path.join(MODEL_DIR, 'vocab.txt'), 'utf8');
+    const WordPiece = get('WordPiece');
+    const model = loadModel({ dir: MODEL_DIR, manifest, tokenizer: new WordPiece(vocab), modelInputParts: get('modelInputParts') });
     let vendorInfo = {};
     try { vendorInfo = JSON.parse(fs.readFileSync(path.join(VENDOR, 'VENDOR.json'), 'utf8')); } catch (e) { /* not synced by the tool */ }
     const fn = (n) => { const f = get(n); if (typeof f !== 'function') throw new Error(`vendor/spruce has no ${n}()`); return f; };

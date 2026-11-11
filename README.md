@@ -16,8 +16,9 @@ mode).
   Gmail API with domain-wide delegation and is not sent to any other service.
 - **Its own checks and AI model.** `vendor/spruce/` holds the checks (`shared.js`, `decoders.js`) and the
   phish-tiny model (`ai.js`, `models/`). They began as the S.P.R.U.C.E+ browser extension's; since 0.4.0
-  they are this project's own code, changed here (the model runs about twice as fast, with the same
-  answers).
+  they are this project's own code, changed here. Since 0.5.0 the model runs in ONNX Runtime (the
+  native engine, `src/engine/model.js`): about 25 times faster than the JavaScript that ran it, with
+  the same answers.
 - **Careful by default:**
   - **Monitor mode** (records, moves nothing) until you switch to enforce mode.
   - **The AI score alone never moves mail from inside the organization.** The rules still can, for
@@ -256,8 +257,8 @@ The last command writes `build/mockup.html`, a single file to share the look and
 
 Changing a setting is quick: edit `deploy/settings.env` and run `install.sh` again. It reuses the image
 built from the same files, so it only redeploys, in about a minute. The mode, the AI move threshold, the
-AI suspicious line, the brake, the time zone and the allowlist can also be changed on the dashboard
-(Settings → Policy, Settings → Allowlist). When the two differ,
+AI suspicious line, the brake, the time zone, how long records are kept and the allowlist can also be
+changed on the dashboard (Settings → Policy, Settings → Allowlist). When the two differ,
 `install.sh` asks which to keep, and writes the answer into settings.env.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
@@ -270,7 +271,7 @@ training examples, and a better AI model.
 
 | Path | What |
 |---|---|
-| `src/engine/` | MIME and HTML reading, the extension's checks and model (`spruce.js` loads `vendor/spruce/`); `network.js` applies the lookups |
+| `src/engine/` | MIME and HTML reading, the checks and the model (`spruce.js` loads `vendor/spruce/`; `model.js` runs the model in ONNX Runtime); `network.js` applies the lookups |
 | `src/intel/` | Cloudflare Security DNS, Google Safe Browsing, the phishing lists, registry dates; request limits |
 | `src/policy.js` | What happens to an analyzed email |
 | `src/pipeline.js` | Notifications → messages → decisions → actions → records; moving back, brake, watches, retention |
@@ -282,11 +283,11 @@ training examples, and a better AI model.
 | `src/training.js`, `src/names.js` | The retraining export: an email → a training example, with the people taken out |
 | `src/digest.js` | The weekly summary email (put in admins' Inboxes; never judged by the service) |
 | `src/cloudrun.js` | Cloud Run, read-only, for the Status page |
-| `src/dashboard/cache.js` | The dashboard's copy of the records: one full read, then only what changed |
+| `src/dashboard/cache.js` | The dashboard's copy of the records: the last 32 days first, older ones when a page shows them, then only what changed |
 | `src/server.js` | The HTTP service (`ROLE=worker` / `admin`) |
 | `public/` | The dashboard (plain HTML, CSS and JavaScript; no build step) |
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `cloud-update.sh` (Settings → Update's Cloud Build), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
-| `tools/` | `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
+| `tools/` | `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js`, `export-onnx.py` (a new model for the native engine) |
 | `vendor/spruce/` | The checks and the AI model (this project's own code since 0.4.0; they began as the extension's, `VENDOR.json` says from which commit) |

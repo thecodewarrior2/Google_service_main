@@ -31,10 +31,13 @@ case "$method $url" in
     case "$key" in
       allowDomains | allowAddresses) vj="$(arr "$v")"; ej="$(arr "$e")" ;;
       aiThreshold | aiSuspicious) vj="{\"doubleValue\":$v}"; ej="{\"doubleValue\":$e}" ;;
-      brakePerHour) vj="{\"integerValue\":\"$v\"}"; ej="{\"integerValue\":\"$e\"}" ;;
+      brakePerHour | retentionDays) vj="{\"integerValue\":\"$v\"}"; ej="{\"integerValue\":\"$e\"}" ;;
       *) vj="{\"stringValue\":\"$v\"}"; ej="{\"stringValue\":\"$e\"}" ;;
     esac
     echo "{\"fields\":{\"value\":{\"mapValue\":{\"fields\":{\"value\":$vj,\"env\":$ej,\"by\":{\"stringValue\":\"it.head@district-test.example\"},\"at\":{\"integerValue\":\"1794300000000\"}}}}}}" ;;
+  "GET "*/state/watchedCount)   # FAKE_WATCHED: how many mailboxes are watched, else not found
+    [ -n "${FAKE_WATCHED:-}" ] || { echo '{"error":{"code":404,"status":"NOT_FOUND"}}'; exit 22; }
+    echo "{\"fields\":{\"value\":{\"integerValue\":\"$FAKE_WATCHED\"}}}" ;;
   "GET "*/state/update)   # FAKE_UPDATE: the update's progress, the document's JSON (deploy/cloud-update.sh check), else not found
     [ -n "${FAKE_UPDATE:-}" ] || { echo '{"error":{"code":404,"status":"NOT_FOUND"}}'; exit 22; }
     printf '%s' "$FAKE_UPDATE" ;;

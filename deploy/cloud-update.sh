@@ -11,7 +11,8 @@
 #                           in /workspace/build (release stays as downloaded, so every phase runs this
 #                           file from main's newest commit)
 #   image   (docker image)  /workspace/build built and stored in Artifact Registry
-#   deploy  (gcloud image)  both services deployed with it, their settings as they are; all traffic to it
+#   deploy  (gcloud image)  both services deployed with it, their settings as they are (the dashboard always
+#                           on from 10,000 watched mailboxes, as install.sh does); all traffic to it
 #   finish  (gcloud image)  "done" or "failed" (state/update), and a line in Activity
 #
 # Nothing asked for (the job also runs by itself once a year): every phase does nothing. A failed phase
@@ -107,8 +108,17 @@ deploy)
     [ -f "$W/built" ] || exit 0
     . "$W/request.env"
     labels="spruce-version=${VERSION//./-},spruce-model=${MODEL//./-},spruce-install-level=${NEWLEVEL}"
+    # The dashboard always on from 10,000 watched mailboxes (as deploy/install.sh); unknown: left as it is.
+    watched="$(fs "$FS/state/watchedCount" 2>/dev/null | python3 -c '
+import json, sys
+v = json.load(sys.stdin).get("fields", {}).get("value", {})
+n = v.get("integerValue", v.get("doubleValue"))
+if n is not None: print(int(float(n)))' 2>/dev/null || true)"
+    admin_min=()
+    if [[ "$watched" =~ ^[0-9]+$ ]]; then if [ "$watched" -ge 10000 ]; then admin_min=(--min-instances=1); else admin_min=(--min-instances=0); fi; fi
     for s in spruce-worker spruce-admin; do
-        gcloud run deploy "$s" --image="$IMAGE" --region="$REGION" --update-labels="$labels" --quiet >/dev/null || failed "$s couldn't be deployed"
+        extra=(); [ "$s" != spruce-admin ] || extra=("${admin_min[@]}")
+        gcloud run deploy "$s" --image="$IMAGE" --region="$REGION" --update-labels="$labels" "${extra[@]}" --quiet >/dev/null || failed "$s couldn't be deployed"
         gcloud run services update-traffic "$s" --region="$REGION" --to-latest --quiet >/dev/null || failed "$s's traffic couldn't be moved to the new build"
     done
     touch "$W/deployed"

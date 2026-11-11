@@ -258,6 +258,15 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
         assert.equal(r.event.kind.stringValue, 'update');
         assert.equal(r.event.text.stringValue, `The update from 0.3.8 to 9.9.9 finished: both services run 9.9.9 (started by it.head@${ORG} on the dashboard).`);
         assert.match(r.calls, /curl .*-X DELETE .*\/state\/updateRequest/);
+        assert.doesNotMatch(r.calls, /--min-instances/, 'how many mailboxes are watched unknown: the dashboard left as it is');
+        // 0.5.0: the dashboard always on from 10,000 watched mailboxes (state/watchedCount), else not; the
+        // worker as it is.
+        r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1', FAKE_WATCHED: '12000' });
+        assert.match(r.calls, /run deploy spruce-admin .*--min-instances=1 --quiet/);
+        assert.doesNotMatch(r.calls, /run deploy spruce-worker .*--min-instances/);
+        r = run({ FAKE_REQUEST: reqDoc('9.9.9', approved), FAKE_RUNNING: '0-3-8', FAKE_LEVEL: '1', FAKE_WATCHED: '9999' });
+        assert.match(r.calls, /run deploy spruce-admin .*--min-instances=0 --quiet/);
+        assert.deepEqual(r.states.map(s => s.phase), ['building', 'done']);
         // The job run twice (the button, and by hand): a build that finds another one building leaves it
         // alone, and changes nothing. One building for longer than the build's timeout has stopped.
         const progressDoc = (phase, ageMs, build) => JSON.stringify({ fields: { value: { mapValue: { fields: { phase: { stringValue: phase }, at: { integerValue: String(Date.now() - ageMs) }, build: { stringValue: build } } } } } });

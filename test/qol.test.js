@@ -141,16 +141,17 @@ test('the dashboard\'s record cache: one full read, then only what changed', asy
     store.listRecordsChangedSince = async (ms, n) => { changed++; return listChanged(ms, n); };
     let now = Date.now();
     const cache = new RecordCache(store, { refreshMs: 1000, now: () => now });
+    const week = now - 7 * 24 * 3600 * 1000;   // (within the 32 days read first: test/retention.test.js has the longer periods)
     await store.saveRecord({ key: 'a', processedAt: now - 1000, action: 'flag' });
-    assert.equal((await cache.list(0)).length, 1);
+    assert.equal((await cache.list(week)).length, 1);
     await store.saveRecord({ key: 'b', processedAt: now, action: 'move' });
-    assert.equal((await cache.list(0)).length, 1, 'within refreshMs: the copy');
+    assert.equal((await cache.list(week)).length, 1, 'within refreshMs: the copy');
     now += 2000;
     await new Promise(r => setTimeout(r, 2));
-    assert.equal((await cache.list(0)).length, 2);
+    assert.equal((await cache.list(week)).length, 2);
     await store.updateRecord('a', { action: 'move' });
     cache.stale();
-    assert.equal((await cache.list(0)).find(r => r.key === 'a').action, 'move', 'changed records too');
+    assert.equal((await cache.list(week)).find(r => r.key === 'a').action, 'move', 'changed records too');
     assert.equal(full, 1, 'read in full once'); assert.ok(changed >= 2);
 });
 

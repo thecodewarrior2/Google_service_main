@@ -100,6 +100,7 @@ can only read groups. It never uses that account's password.
    | `MODE` | leave `monitor` |
    | `BUDGET_ALERT` | leave `1`: an email at the first charge (see "Costs") |
    | `TIME_ZONE` | your time zone, for example `America/New_York`: the nightly jobs and the weekly summary use it (empty = UTC) |
+   | `RETENTION_DAYS` | leave empty: each email's record is kept 35 days (14 to 365; also changeable on the dashboard, Settings → Policy) |
    | `ALERT_EMAIL` | leave empty: alerts go to `ADMIN_GROUP`. That group must accept email from outside the domain (alerts come from Google Cloud); otherwise put a person's address. `off` for none |
 
 ## 5. Install
@@ -381,9 +382,13 @@ The installer keeps it there:
 | Mailboxes | Emails a day | About a month |
 |---|---|---|
 | 500 | 5,000 | $0 (within the free allowances) |
-| 2,000 | 20,000 | about $2 |
-| 5,000 | 50,000 | about $10 |
-| 10,000 | 100,000 | about $30 |
+| 2,000 | 20,000 | about $4 |
+| 5,000 | 50,000 | about $16 |
+| 10,000 | 100,000 | about $50, of which $13 keeps the dashboard always on |
+
+Cloud Run bills an instance for all the time it has a request open, waiting for Gmail included; the
+estimates before 0.5.0 counted only processor time, and were too low (about $14 for Cloud Run at 10,000
+mailboxes, where it is about $21-26).
 
 What keeps it low:
 - **The region.** Firestore in `us-east1` costs twice what it does in any other US region
@@ -392,8 +397,11 @@ What keeps it low:
   new project.
 - **Close the dashboard when you're done.** An open page refreshes every 30 seconds (it reads little,
   but not nothing), and a dashboard that has gone idle reads its records again when it is next opened.
-- **`RETENTION_DAYS`** (60 by default): fewer days, fewer records to keep and to read when the dashboard
-  starts.
+- **`RETENTION_DAYS`** (35 by default, also in Settings → Policy): records are cheap to keep (a few
+  kilobytes each; Firestore's first GiB is free), so this is about privacy more than cost.
+- **The dashboard is always on only from 10,000 watched mailboxes** (about $13 a month). Below that it
+  starts when opened and stops after, at no cost; it then reads the last 32 days of records once
+  (about 10,000 reads per 1,000 mailboxes, at about 300 recorded emails a day per 1,000).
 
 To turn the alert off, set `BUDGET_ALERT=off`.
 

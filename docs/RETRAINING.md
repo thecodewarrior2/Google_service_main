@@ -312,6 +312,18 @@ cp ../spruce-browser-extension/models/phish-tiny/{model.json,model.bin,vocab.txt
 
 Then set its version in `vendor/spruce/VENDOR.json` (`model`), as in `model.json`.
 
+The service runs the model in ONNX Runtime (since 0.5.0), from `model.onnx`: make it from the new
+`model.bin`. The same command computes the new model's answers for the tests' made-up inputs on its own
+(numpy, from `model.bin`), so the tests check that ONNX Runtime gives them:
+
+```bash
+pip install onnx numpy
+```
+
+```bash
+python3 tools/export-onnx.py vendor/spruce/models/phish-tiny --reference test/fixtures/model-reference.json
+```
+
 ```bash
 npm test
 ```

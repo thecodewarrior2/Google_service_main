@@ -609,3 +609,26 @@ test('the hourly job also cleans up (0.4.1): what TTL doesn\'t delete, within wh
     assert.ok(asked && asked.budgetMs > 0 && asked.budgetMs <= 30000, JSON.stringify(asked));
     assert.equal(await store.getRecord('old'), null);
 });
+
+test('emails at once (0.5.0): at most 12 downloaded and checked per instance, at most 2 of them large; the rest wait their turn', async () => {
+    const { Slots, EMAIL_SLOTS, LARGE_SLOTS } = require('../src/pipeline');
+    assert.deepEqual([EMAIL_SLOTS, LARGE_SLOTS], [12, 2]);
+    const s = new Slots(3);
+    let now = 0, most = 0;
+    const order = [];
+    await Promise.all(Array.from({ length: 10 }, (_, i) => s.run(async () => { now++; most = Math.max(most, now); order.push(i); await new Promise(r => setTimeout(r, 5)); now--; })));
+    assert.equal(most, 3); assert.deepEqual(order, [...Array(10).keys()], 'first come, first served');
+    // Through the service: 40 emails at once, some large.
+    const { store, gmail, svc } = await setup({ MODE: 'monitor' });
+    let dl = 0, dlMost = 0;
+    const raw = gmail.raw;
+    gmail.raw = async (u, id) => { dl++; dlMost = Math.max(dlMost, dl); await new Promise(r => setTimeout(r, 15)); dl--; const m = await raw(u, id).catch(() => null);
+        return m || { id, threadId: 't', labelIds: ['INBOX'], historyId: null, internalDate: 1, raw: Buffer.concat([Buffer.from('From: a@b.example\r\nSubject: x\r\n\r\n'), Buffer.alloc(Number(id.slice(1)) % 4 === 0 ? 5 * 1024 * 1024 : 100, 97)]) }; };
+    let reading = 0, readingMost = 0;
+    const judge = svc.judge.bind(svc);
+    svc.judge = async (u, msg, facts, o) => { if (msg.raw.length > 4 * 1024 * 1024) { reading++; readingMost = Math.max(readingMost, reading); await new Promise(r => setTimeout(r, 10)); reading--; } return judge(u, msg, facts, o); };
+    await Promise.all(Array.from({ length: 40 }, (_, i) => svc.processMessage('reader@maple-schools.example', `x${i}`)));
+    assert.ok(dlMost <= 12, `downloads at once: ${dlMost}`);
+    assert.ok(readingMost <= 2 && readingMost >= 1, `large ones read at once: ${readingMost}`);
+    assert.ok(await store.seen('reader@maple-schools.example', 'x39'));
+});

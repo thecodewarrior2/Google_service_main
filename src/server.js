@@ -81,8 +81,9 @@ function demoReleases() {
 
 function createApp({ cfg, store, service, scheduler = null, cloudrun = null, releases = null }) {
     releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
-    // (records past RETENTION_DAYS are deleted daily: the copy forgets them too)
-    const cache = new RecordCache(store, { keepDays: Math.min(92, cfg.retentionDays || 92) });
+    // The last 32 days at first, older records when a page shows them (Last 90 days), never past how long
+    // records are kept (RETENTION_DAYS, or Settings → Policy: the copy forgets them too).
+    const cache = new RecordCache(store, { keepDays: () => Math.min(92, cfg.retentionDays || 35) });
     // The daily counters (stats/{day}~{shard}): a past day no longer changes, so each instance reads it
     // once; today is read again after STATS_TODAY_MS. (Ten minutes after midnight yesterday still counts as
     // today: instances write what they added up every few seconds. clear-data.sh restarts the dashboard.)
@@ -482,6 +483,8 @@ async function main() {
     spruce.load();
     // (the day's counters added up and written every few seconds; written when the instance stops, below)
     const service = new Service({ cfg, store, gmail, intel, statFlushMs: cfg.demo ? 0 : STAT_FLUSH_MS });
+    // The AI engine started now (about 100 ms), not on the first email.
+    spruce.load().model.ready().catch((e) => console.error('the AI model could not be loaded:', e));
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
     const scheduler = !cfg.demo && cfg.role !== 'worker' && (cfg.renewJob || cfg.updateJob) ? require('./scheduler').createScheduler() : null;
     // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
