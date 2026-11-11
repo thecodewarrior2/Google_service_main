@@ -376,8 +376,9 @@ The installer keeps it there:
 - **Instance limits:** at most 30 workers (`WORKER_MAX_INSTANCES`) and 3 dashboards running at once,
   so a burst of mail can't run up the bill.
 
-**A whole district** (estimates from `docs/SCALING.md`, about 10 emails a mailbox a day, in
-`us-central1`; `us-east1` costs about twice as much for Firestore):
+**A whole district** (estimates, about 10 emails a mailbox a day, in `us-central1`; `us-east1` costs
+about twice as much for Firestore). The breakdown, the free allowances and what the estimates assume are
+in `docs/COSTS.md`:
 
 | Mailboxes | Emails a day | About a month |
 |---|---|---|
@@ -397,8 +398,9 @@ What keeps it low:
   new project.
 - **Close the dashboard when you're done.** An open page refreshes every 30 seconds (it reads little,
   but not nothing), and a dashboard that has gone idle reads its records again when it is next opened.
-- **`RETENTION_DAYS`** (35 by default, also in Settings → Policy): records are cheap to keep (a few
-  kilobytes each; Firestore's first GiB is free), so this is about privacy more than cost.
+- **`RETENTION_DAYS`** (35 by default, also in Settings → Policy): storage costs little. At 10,000
+  mailboxes, about $0.50 a month for 35 days and $6–7 for a year (`docs/COSTS.md`); below 2,000 mailboxes
+  35 days fit in Firestore's free GiB. So this is about privacy more than cost.
 - **The dashboard is always on only from 10,000 watched mailboxes** (about $13 a month). Below that it
   starts when opened and stops after, at no cost; it then reads the last 32 days of records once
   (about 10,000 reads per 1,000 mailboxes, at about 300 recorded emails a day per 1,000).

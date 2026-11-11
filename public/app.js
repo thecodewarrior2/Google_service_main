@@ -1019,7 +1019,7 @@
             input.addEventListener('input', say); say();
             read = () => Number(input.value);
             extra = [h('label', { class: 'inline' }, input, h('span', { text: 'days' })), note,
-                h('div', { class: 'small muted', text: 'From 14 to 365. The dashboard shows up to 90 days. Keeping more costs little: Firestore\'s first GiB is free, and a record takes a few kilobytes.' })];
+                h('div', { class: 'small muted', text: 'From 14 to 365. The dashboard shows up to 90 days. Keeping longer costs a little more storage: at 10,000 mailboxes, about $0.50 a month for 35 days and $6–7 for a year (docs/COSTS.md).' })];
         } else if (key === 'timeZone') {
             let zones = [];
             try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { /* an older browser: typed in */ }

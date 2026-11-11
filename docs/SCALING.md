@@ -59,6 +59,8 @@ Run's processor speed. A load test on a spare project is what settles them (belo
 
 ## What it costs (0.5.0)
 
+(The summary, for budgeting: `docs/COSTS.md`.)
+
 Estimates, at about 10 emails a mailbox a day, three notifications an email, with Google's free
 allowances (Firestore: 50,000 reads, 20,000 writes and 20,000 deletes a day; Cloud Run: 180,000
 vCPU-seconds, 360,000 GiB-seconds and 2 million requests a month; Cloud Scheduler: 3 jobs):
@@ -68,7 +70,7 @@ vCPU-seconds, 360,000 GiB-seconds and 2 million requests a month; Cloud Schedule
 | 500 | 5,000 | $0 | $0 | $0 | no | **$0** |
 | 2,000 | 20,000 | about $2 | about $4 | about $2 | no | **$4–6** |
 | 5,000 | 50,000 | about $6 | about $12 | about $10 | no | **$16–22** |
-| 10,000 | 100,000 | about $15 | about $30 | about $21 | about $13 | **$49–64** |
+| 10,000 | 100,000 | about $15 | about $30 | about $21 | about $13 | **$50–65** |
 
 **Cloud Run, counted again.** Cloud Run bills an instance for all the time it has at least one request
 open, waiting for Gmail and Firestore included, not only its processor time. The estimates before 0.5.0

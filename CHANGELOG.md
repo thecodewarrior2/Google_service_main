@@ -45,10 +45,11 @@ starts. Measured on made-up mail: `docs/SCALING.md`.
   instance running (`--min-instances=1`, about $13 a month) when the last watch renewal counted 10,000
   or more watched mailboxes, so its pages open at once. Below that, it starts when opened, at no cost.
   When the count isn't known yet (a first install), the setting is left as it is.
-- **Costs, counted again** (`docs/SCALING.md`, `docs/INSTALL.md`). Cloud Run bills an instance for all
+- **Costs, counted again**, and **`docs/COSTS.md`**: what it costs a month by district size, where the
+  money goes, the free allowances and what the estimates assume. Cloud Run bills an instance for all
   the time it has a request open, waiting included. The earlier estimates counted only processor time
   and were too low. At 10,000 mailboxes the worker costs about $21 a month with 0.5.0 (about $26 with
-  0.4.1, which was estimated at $14). In all, about $49–64 a month at that size, $13 of it the
+  0.4.1, which was estimated at $14). In all, about $50–65 a month at that size, $13 of it the
   always-on dashboard.
 - **Install:** from Cloud Shell (`installLevel` 3: `install.sh` sets the dashboard's minimum instances
   and the new setting). Settings → Update can't install it.

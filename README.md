@@ -262,8 +262,8 @@ changed on the dashboard (Settings → Policy, Settings → Allowlist). When the
 `install.sh` asks which to keep, and writes the answer into settings.env.
 
 See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, kept and shown).
-`docs/SCALING.md` is what a district of 10,000 mailboxes and 100,000 emails a day asks of it, measured,
-and the plan beyond.
+`docs/COSTS.md` is what it costs a month, by district size. `docs/SCALING.md` is what a district of
+10,000 mailboxes and 100,000 emails a day asks of it, measured, and the plan beyond.
 `docs/ARCHITECTURE.md` explains the pieces. `docs/RETRAINING.md` turns the emails admins marked into
 training examples, and a better AI model.
 
