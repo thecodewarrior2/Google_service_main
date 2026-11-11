@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.2: The AI model trained with more of the district's phishing (phish-tiny 0.13.0)
+
+phish-tiny 0.13.0 adds 6 more of the district's phishing emails to 0.5.1's examples. On emails it never
+trained on, it beats 0.11.0 on both sides: fewer false alarms on the district's mail, and about half the
+missed phishing. Use it instead of 0.5.1, which was not published. Everything in 0.5.0 is included;
+install it the same way.
+
+- **What it learned from:** 0.5.1's examples, plus 6 phishing and spam emails from a second batch of
+  originals:
+  - a "call this number" antivirus bill;
+  - two retirement-outreach campaigns posing as the district's;
+  - a fake wage-garnishment notice to payroll;
+  - an estate-claim scam;
+  - a motivational speaker's cold pitch to a principal.
+
+  Each comes with two variants. That makes 48 genuine and 48 phishing training examples, the balance
+  `docs/RETRAINING.md` asks for.
+- **Made anonymous** like 0.5.1's examples, with one more kind of detail: a partial Social Security number
+  of a named employee (in the fake garnishment notice) was replaced with a made-up one.
+- **Left out of this batch:**
+  - a SharePoint share notice, whose trick could only be in the shared file;
+  - a Zoom webinar confirmation in Zoom's own template;
+  - an ed-tech vendor's sales email from its real domain.
+
+  Training on them would teach the model to distrust those services' genuine mail.
+- **Measured with the service's own engine at the 90% line, on emails no model was trained on**
+  (0.11.0 → 0.13.0):
+  - the district's genuine mail called phishing: 15 → 7 of 23;
+  - the district's phishing caught: 2 → 3 of 6;
+  - published phishing missed: 20 → 11 of 603 (15 → 8 at the 50% line);
+  - published genuine emails called phishing: 17 → 13 of 624;
+  - genuine look-alikes called phishing: 3 → 3 of 24, and the hand-written emails all right, as before.
+
+  0.12.0 (0.5.1) made fewer false alarms (5 of 23) but missed more phishing (21 of 603). The fake e-sign
+  document it scored 3% scores 98% now.
+- **`vendor/spruce/models/phish-tiny/MODEL_CARD.md`** has the details.
+- **Install:** from Cloud Shell with the zip, as 0.5.0 (`installLevel` 3).
+- **Tests:** 119, as in 0.5.0.
+
 ## 0.5.1: The AI model trained with the district's own mail (phish-tiny 0.12.0)
 
 phish-tiny 0.12.0 is trained with 78 examples from a district's own mail, made anonymous first, and makes

@@ -1,6 +1,6 @@
 {
  "name": "phish-tiny",
- "version": "0.12.0",
+ "version": "0.13.0",
  "base": "prajjwal1/bert-tiny",
  "labels": [
   "genuine",
@@ -25,26 +25,26 @@
    "n": 33
   },
   "real_world_heldout": {
-   "accuracy": 0.9751,
+   "accuracy": 0.9867,
    "precision": 1.0,
-   "recall": 0.9751,
+   "recall": 0.9867,
    "false_positives": 0,
-   "false_negatives": 15,
+   "false_negatives": 8,
    "n": 603
   },
   "genuine_lookalikes": {
-   "accuracy": 0.875,
+   "accuracy": 0.8333,
    "precision": 0.0,
    "recall": 0.0,
-   "false_positives": 3,
+   "false_positives": 4,
    "false_negatives": 0,
    "n": 24
   },
   "real_world_genuine_heldout": {
-   "accuracy": 0.9712,
+   "accuracy": 0.9567,
    "precision": 0.0,
    "recall": 0.0,
-   "false_positives": 18,
+   "false_positives": 27,
    "false_negatives": 0,
    "n": 624
   }
