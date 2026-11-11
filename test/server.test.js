@@ -216,6 +216,8 @@ test('demo dashboard API: numbers agree with the records; release and marks work
         const PKG_MODEL = require('../vendor/spruce/models/phish-tiny/model.json');
         assert.equal(health.current, `phish-tiny ${PKG_MODEL.version}`);
         assert.ok(health.models.length >= 1 && health.models.every(m => m.model && m.count > 0));
+        // (0.5.7) Rules and AI together, with the settings in force.
+        assert.deepEqual(health.together.ai, [0.65, 0.9]); assert.equal(typeof health.together.count, 'number');
         const st = await get('/api/settings');
         assert.equal(st.demo, true);
         // (0.4.1) The list comes only for Settings → Mailboxes, which asks for it; the other pages get the count.
@@ -377,6 +379,18 @@ test('aggregates: campaigns, users and model health from records', () => {
     const mixed = [Object.assign(rec('d', 'c3', 'flag', 'inbox', null, 0.7), { ai: { probability: 0.7, model: 'phish-tiny 0.13.0' } }),
         ...['e', 'f'].map(u => Object.assign(rec(u, 'c4', 'flag', 'inbox', null, 0.8), { ai: { probability: 0.8, model: 'phish-tiny 0.11.0' } }))];
     assert.deepEqual(A.modelHealth(mixed, now, 7).models, [{ model: 'phish-tiny 0.11.0', count: 2 }, { model: 'phish-tiny 0.13.0', count: 1 }]);
+    // (0.5.7) Rules and AI together, measured only: outside senders with a rules score of 3 to under 5 and an
+    // AI score from the suspicious line to under the move threshold, with what admins marked them. Left out:
+    // inside senders (by the record's own verdict, or, without one, an address in your domains), and emails
+    // outside the zone on either side.
+    const z = (u, score, p, extra = {}) => Object.assign(rec(u, 'z', 'flag', 'inbox', null, p), { score, ai: { probability: p, model: 'm' } }, extra);
+    const zone = [z('g', 3.5, 0.8, { falseAlarm: false }), z('h', 4, 0.7, { falseAlarm: true }), z('i', 3, 0.65),
+        z('j', 4.5, 0.85, { inside: true }), z('k', 2.5, 0.8), z('l', 4, 0.9), z('m', 5, 0.8), z('n', 4, 0.6),
+        z('o', 4, 0.8, { sender: { domain: 'maple-schools.example', address: 'x@maple-schools.example', name: '' } }),
+        z('p', 4, 0.8, { inside: false, sender: { domain: 'maple-schools.example', address: 'x@maple-schools.example', name: '' } })];
+    const t = A.modelHealth(zone, now, 7, { orgDomains: ['maple-schools.example'], aiSuspicious: 0.65, aiThreshold: 0.9 }).together;
+    assert.deepEqual([t.count, t.phishing, t.falseAlarms, t.unreviewed, t.ai, t.rules], [4, 1, 1, 2, [0.65, 0.9], [3, 5]]);
+    assert.equal(A.modelHealth(zone, now, 7, { orgDomains: ['maple-schools.example'], aiSuspicious: 0.65, aiThreshold: 0.8 }).together.count, 2, 'the zone follows the settings');
     assert.deepEqual(A.users(rs, now, 7).map(u => u.user), ['a', 'b', 'c']);
     assert.equal(A.filterRecords(rs, { q: 'C2' }).length, 1);
 });

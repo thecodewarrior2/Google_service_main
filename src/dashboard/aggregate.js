@@ -121,7 +121,8 @@
 
     // How the AI and the rules are doing: scores of recorded emails, and how often each kind of move
     // was undone (released) — the false-alarm rate that should decide the AI threshold.
-    function modelHealth(records, now, n) {
+    // opts: the settings in force (orgDomains, aiSuspicious, aiThreshold), for "rules and AI together".
+    function modelHealth(records, now, n, opts = {}) {
         const since = now - n * DAY;
         const rs = records.filter(r => r.processedAt >= since && r.ai && typeof r.ai.probability === 'number');
         const buckets = Array.from({ length: 10 }, (_, i) => ({ from: i * 10, to: i * 10 + 10, count: 0, released: 0, falseAlarms: 0 }));
@@ -142,8 +143,19 @@
         const counts = new Map();
         for (const r of rs) { const m = r.ai.model || 'unknown'; counts.set(m, (counts.get(m) || 0) + 1); }
         const models = [...counts].map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count || a.model.localeCompare(b.model));
+        // Rules and AI together (measured only; nothing is moved for it): emails from outside senders that
+        // both scored in between, a rules score from 3 to under 5 and an AI score from the suspicious line to
+        // under the move threshold, so neither alone moves them. What admins marked them says whether moving
+        // such emails would be worth trying. Inside senders are left out (the AI never moves those): from the
+        // record's own verdict, or, for records from before 0.5.7, any address in your domains.
+        const own = (d) => (opts.orgDomains || []).some(o => d === o || d.endsWith(`.${o}`));
+        const isInside = (r) => (typeof r.inside === 'boolean' ? r.inside : own(String((r.sender && r.sender.domain) || '').toLowerCase()));
+        const lo = typeof opts.aiSuspicious === 'number' ? opts.aiSuspicious : 0.65, hi = typeof opts.aiThreshold === 'number' ? opts.aiThreshold : 0.9;
+        const zone = rs.filter(r => !isInside(r) && typeof r.score === 'number' && r.score >= 3 && r.score < 5 && r.ai.probability >= lo && r.ai.probability < hi);
+        const together = { count: zone.length, phishing: zone.filter(r => r.falseAlarm === false).length, falseAlarms: zone.filter(r => r.falseAlarm === true).length,
+                           unreviewed: zone.filter(r => r.falseAlarm !== true && r.falseAlarm !== false).length, ai: [lo, hi], rules: [3, 5] };
         return { buckets, byTrigger, userReleased, reviewed: reviewed.length, confirmed: reviewed.filter(r => r.falseAlarm === false).length, falseAlarms: reviewed.filter(r => r.falseAlarm === true).length,
-                 model: (rs[0] && rs[0].ai.model) || '', models };
+                 model: (rs[0] && rs[0].ai.model) || '', models, together };
     }
 
     // "Ready for enforce mode?": what monitor mode has shown, as checks. ctx: { now, days, mode,

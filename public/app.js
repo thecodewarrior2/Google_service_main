@@ -569,7 +569,27 @@
                 h('section', { class: 'card' }, h('h2', { text: 'Undone moves by trigger' }), h('div', { class: 'sub', text: 'Moved back ÷ moved. A high rate for "AI score" alone means the threshold is too low.' }),
                     dataTable([{ name: 'Trigger', get: r => r.label }, { name: 'Moved', num: true, get: r => num(r.moved) }, { name: 'Moved back', num: true, get: r => num(r.released) }, { name: 'By users', num: true, get: r => num(r.byUser || 0) }, { name: 'Rate', num: true, get: r => pct(r.rate, 1) }], d.byTrigger),
                     h('p', { class: 'small muted', text: modelLine(d) }))),
+            togetherCard(d),
             trainingCard(d)];
+    }
+    // Rules and AI together: measured only. Emails from outside senders that scored in between on both
+    // (neither alone moves them), and what admins marked them: whether moving such emails would be worth
+    // trying. Nothing is moved because of it.
+    function togetherCard(d) {
+        const t = d.together;
+        if (!t) return null;
+        const [lo, hi] = t.ai;
+        const marked = t.phishing + t.falseAlarms;
+        const verdict = !t.count ? 'None in this period.'
+            : marked < 10 ? `Too few marked so far to tell (${num(marked)} of ${num(t.count)}): mark them in Email → Review → Suspicious, not moved.`
+            : t.phishing >= 0.8 * marked ? `Most of those marked are phishing (${pct(t.phishing / marked)}): moving such emails could be worth trying, in monitor mode first.`
+            : t.falseAlarms >= 0.5 * marked ? `Many of those marked are genuine (${pct(t.falseAlarms / marked)}): moving such emails would make false alarms.`
+            : `Mixed so far (${pct(t.phishing / marked)} phishing): keep marking them.`;
+        return h('section', { class: 'card spaced' }, h('h2', { text: 'Rules and AI together (measured only)' }),
+            h('div', { class: 'sub', text: `Emails from outside senders with a rules score of ${t.rules[0]} to under ${t.rules[1]} and an AI score of ${pct(lo)} to under ${pct(hi)}: each in between, so neither alone moves them, and they are recorded as suspicious. Nothing is moved because of this count.` }),
+            h('div', { class: 'grid kpis' }, kpi('In between on both', num(t.count), `last ${days} days`), kpi('Marked phishing', num(t.phishing), 'by an admin'),
+                kpi('Marked false alarm', num(t.falseAlarms), 'by an admin'), kpi('Not reviewed', num(t.unreviewed), 'yet')),
+            h('p', { class: 'small muted', text: verdict }));
     }
 
     // --- Model health: examples for retraining the model (off until an admin allows it in Settings) ----

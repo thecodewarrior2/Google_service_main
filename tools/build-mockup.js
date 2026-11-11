@@ -67,7 +67,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
       case '/api/messages': { const l = A.filterRecords(recs, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since });
         return Object.assign(base, { total: l.length, messages: l.slice(0, 500).map(brief) }); }
       case '/api/message': { const r = recs.find(x => x.key === q.get('key')); if (!r) throw new Error('not found'); return Object.assign(base, { message: r, mode: D.settings.mode }); }
-      case '/api/health': return Object.assign(base, A.modelHealth(recs, now, n), { current: D.settings.model.name + ' ' + D.settings.model.version, threshold: D.settings.aiThreshold, trainingExport: !!D.settings.trainingExport.enabled });
+      case '/api/health': return Object.assign(base, A.modelHealth(recs, now, n, { orgDomains: D.settings.orgDomains, aiSuspicious: D.settings.aiSuspicious, aiThreshold: D.settings.aiThreshold }), { current: D.settings.model.name + ' ' + D.settings.model.version, threshold: D.settings.aiThreshold, trainingExport: !!D.settings.trainingExport.enabled });
       case '/api/settings': return Object.assign(base, D.settings);
       case '/api/release': { const r = recs.find(x => x.key === body.key); if (!r || r.state !== 'moved') throw new Error('it is not in Spam');
         Object.assign(r, { state: 'released', releasedBy: ADMIN, releasedAt: Date.now(), falseAlarm: r.falseAlarm === null ? true : r.falseAlarm, markedBy: r.markedBy || ADMIN });

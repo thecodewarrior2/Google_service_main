@@ -451,7 +451,7 @@ class Service {
             model: ai ? ai.model : null, ai: ai && typeof ai.probability === 'number' ? ai.probability : null,
             score: result.score, status: result.status, action: decision.action, trigger: decision.trigger, why: decision.why
         };
-        const patch = { rescan, arrival, ai, score: result.score, status: result.status, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null };
+        const patch = { rescan, arrival, ai, score: result.score, status: result.status, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null, inside: !!result.inside };
         const record = await this.store.updateRecord(key, patch);
         const pc = (x) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : 'none');
         const was = arrival.ai ? arrival.ai.probability : null;
@@ -573,6 +573,8 @@ class Service {
             // How sure: strong = the rules flagged it and something outside the email confirms it.
             evidence: result.strong ? 'strong' : 'weak', confirmedBy: result.confirmedBy || [],
             ownAddressUnverified: !!(result.ownAddress && !result.inside), userPlaced: userPlaced || undefined,
+            // From inside the organization (your domains, DMARC passing), as the policy judged it (Model health).
+            inside: !!result.inside,
             state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null
         };
         await this.store.saveRecord(rec);

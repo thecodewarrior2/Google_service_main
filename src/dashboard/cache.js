@@ -39,7 +39,7 @@ function slimmer() {
         signals: Object.freeze((r.signals || []).filter(x => x && x.weight >= 2).map(x => Object.freeze({ kind: I(x.kind), text: I(x.text), weight: x.weight }))),
         state: I(r.state), held: I(r.held), braked: r.braked, userPlaced: r.userPlaced, ownAddressUnverified: r.ownAddressUnverified,
         releasedBy: I(r.releasedBy), releasedAt: r.releasedAt, releasedByUser: r.releasedByUser, falseAlarm: r.falseAlarm, markedBy: I(r.markedBy),
-        heldMovedBy: I(r.heldMovedBy)
+        heldMovedBy: I(r.heldMovedBy), inside: r.inside
     });
 }
 

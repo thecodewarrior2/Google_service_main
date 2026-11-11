@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.7: Model health measures "rules and AI together"
+
+Nothing in how emails are judged changes: this only counts.
+
+- **Status → Model health → Rules and AI together (measured only).** It counts the emails from outside
+  senders that score in between on both:
+  - a rules score of 3 to under 5;
+  - and an AI score from the suspicious line (65%) to under the move threshold (90%).
+
+  Neither score alone moves them, so they are recorded as suspicious. The card shows how many there were in
+  the period, how many admins marked as phishing and as false alarms, and how many aren't reviewed. It also
+  says, once ten or more are marked, whether mostly phishing (moving such emails could be worth trying, in
+  monitor mode first) or many genuine (it would make false alarms). The lines follow Settings → Policy.
+- **Why measure first:** in the district's own examples, no email scored between 65% and 89% (0 of 71
+  genuine, 0 of 26 phishing). The rules and the AI aren't independent either: the AI reads many of the
+  rules' findings, so a total would count them twice.
+- **Inside senders are left out,** since the AI never moves them. Each record now notes whether its sender
+  counted as inside (your domains, DMARC passing). For records from before 0.5.7, any address in your
+  domains counts as inside, which can only leave emails out of the count.
+- **Install:** Settings → Update, once approved (`installLevel` 3, as 0.5.6).
+- **Tests:** 124, with three more checks in existing tests: the zone and its marks, inside senders left out,
+  and the zone following the settings.
+
 ## 0.5.6: Microsoft 365 links are no longer "look-alike domains"
 
 - **Links to Microsoft 365 no longer get a false look-alike finding.** That covers

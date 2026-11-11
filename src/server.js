@@ -248,7 +248,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const { records } = await load(q);
             const tx = (await store.getState('trainingExport')) || {};
             const E = spruce.load();
-            return Object.assign(A.modelHealth(records, Date.now(), nDays(q)), { current: `${E.modelInfo.name} ${E.modelInfo.version}`, threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
+            return Object.assign(A.modelHealth(records, Date.now(), nDays(q), { orgDomains: cfg.orgDomains, aiSuspicious: cfg.aiSuspicious, aiThreshold: cfg.aiThreshold }), { current: `${E.modelInfo.name} ${E.modelInfo.version}`, threshold: cfg.aiThreshold, trainingExport: !!tx.enabled });
         },
         'GET /api/settings': async (q) => {
             const E = spruce.load();
