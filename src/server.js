@@ -66,6 +66,26 @@ const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
 const unreviewed = (r) => (r.action === 'move' || r.action === 'would-move') && r.trigger !== 'admin' && !r.markedBy;
 // Review's other queue: suspicious emails (below what moves) still in the Inbox, nobody has reviewed.
 const suspiciousUnreviewed = (r) => r.action === 'flag' && r.state === 'inbox' && !r.markedBy;
+// A review queue as items: the copies of one campaign together (in the queue's order, where its first copy
+// is), each with its keys, recipients and senders (at most 2000 of each).
+const REVIEW_GROUP_MAX = 2000;
+function reviewGroups(list) {
+    const out = [], byCampaign = new Map();
+    for (const r of list) {
+        let g = r.campaign ? byCampaign.get(r.campaign) : null;
+        if (!g) {
+            g = { campaign: r.campaign || null, label: r.campaignLabel || '', keys: [], users: new Set(), senders: new Set() };
+            if (r.campaign) byCampaign.set(r.campaign, g);
+            out.push(g);
+        }
+        if (g.keys.length < REVIEW_GROUP_MAX) g.keys.push(r.key);
+        g.count = (g.count || 0) + 1;
+        if (r.user && g.users.size < REVIEW_GROUP_MAX) g.users.add(r.user);
+        const from = r.sender && r.sender.address;
+        if (from && g.senders.size < REVIEW_GROUP_MAX) g.senders.add(from);
+    }
+    return out.map(g => ({ campaign: g.campaign, label: g.label, count: g.count, keys: g.keys, users: [...g.users], senders: [...g.senders] }));
+}
 // A user took back an email the checks flagged, and no admin has looked yet.
 const rescueToCheck = (r) => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai';
 
@@ -196,6 +216,14 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             else add('hourly', !!sync.at && !sync.code && now - sync.at < 2 * 3600 * 1000, sync.at ? `The hourly job (health check, phishing lists, weekly summary, cleanup) last ran ${Math.round((now - sync.at) / 60000)} minutes ago${sync.code ? ', and didn\'t reach the worker' : ''}.` : 'The hourly job hasn\'t run yet.',
                 'Check spruce-sync-feeds in Cloud Scheduler, or run bash deploy/doctor.sh.');
         }
+        // The colleague-name check (the directory's names, as one-way hashes, against outside senders' names).
+        const names = await store.getState('colleagueNames').catch(() => null);
+        const namesFix = 'Give DIRECTORY_ADMIN the Users → Read privilege (its admin role, Admin API privileges) and add https://www.googleapis.com/auth/admin.directory.user.readonly to the domain-wide delegation entry (docs/INSTALL.md, "The colleague-name check"). It is read again within an hour.';
+        if (!cfg.colleagueNames) add('colleague-names', null, 'The colleague-name check is off (COLLEAGUE_NAMES=off).', 'Remove COLLEAGUE_NAMES=off from both services\' settings (docs/DEPLOY.md) to turn it on.');
+        else if (!cfg.directoryAdmin) add('colleague-names', null, 'The colleague-name check is off: DIRECTORY_ADMIN isn\'t set, so the directory\'s names can\'t be read.', 'Set DIRECTORY_ADMIN in deploy/settings.env and run bash deploy/install.sh.');
+        else if (!names) add('colleague-names', null, 'The colleague-name check hasn\'t read the directory yet: the worker does at its first email.', null);
+        else if (names.error) add('colleague-names', false, `The colleague-name check couldn't read the directory's names (${ago(now - names.at)}): ${names.error}${names.names ? ` It uses the ${names.names} it read before.` : ''}`, namesFix);
+        else add('colleague-names', true, `The colleague-name check knows ${names.names} names from the directory (read ${ago(now - names.at)}): an outside sender using one of them is a sign.`, null);
         const mb = await mailboxes();
         const last = mb.lastNotification || 0;
         add('notifications', mb.watched > 0 && !!last && now - last < cfg.quietHours * 3600 * 1000,
@@ -285,6 +313,15 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             try { return await service.rescan(key, admin.email); }
             catch (e) { if (e.status) return { error: e.message, status: e.status }; throw e; }
         },
+        // "Show more" on the AI opinion: what the model reads of the email, sentence by sentence (read from
+        // Gmail now; nothing stored; Activity notes it). At most every 5 s per email and admin.
+        'POST /api/message/context': async (q, body, admin) => {
+            const key = String(body.key || '');
+            if (!key) return { error: 'Choose an email.', status: 400 };
+            if (!once(`context:${key}|${admin.email}`)) return { error: 'Opened a moment ago.', status: 429 };
+            try { return await service.aiContext(key, admin.email); }
+            catch (e) { if (e.status) return { error: e.message, status: e.status }; throw e; }
+        },
         // Resume moving; with moveHeld, the emails the brake held are moved now too.
         'POST /api/resume': async (q, body, admin) => service.resume(admin.email, { moveHeld: body.moveHeld === true }),
         // A campaign: what the brakes and admins decided, and how many copies are where.
@@ -333,13 +370,15 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         },
         // The review queues: emails moved or "would move" nobody has reviewed, oldest first; or, with
         // queue=suspicious, suspicious emails not moved, newest first (still in the Inbox: the newest can
-        // still be moved before they are opened). counts: both queues.
+        // still be moved before they are opened). counts: both queues, in emails.
+        // groups: the copies of one campaign (the same email to many people) are one item, decided together:
+        // its keys, who received it and who sent it. An email of no campaign is an item of its own.
         'GET /api/review': async (q) => {
             const records = await cache.list(since(q));
             const queue = q.get('queue') === 'suspicious' ? 'suspicious' : 'moved';
             const list = queue === 'suspicious' ? records.filter(suspiciousUnreviewed).sort((a, b) => b.processedAt - a.processedAt)
                 : records.filter(unreviewed).sort((a, b) => a.processedAt - b.processedAt);
-            return { queue, total: list.length, keys: list.slice(0, 1000).map(r => r.key), mode: cfg.mode,
+            return { queue, total: list.length, groups: reviewGroups(list).slice(0, 1000), keys: list.slice(0, 1000).map(r => r.key), mode: cfg.mode,
                 counts: { moved: queue === 'moved' ? list.length : records.filter(unreviewed).length, suspicious: queue === 'suspicious' ? list.length : records.filter(suspiciousUnreviewed).length } };
         },
         // Several emails at once: release, false-alarm or phishing (at most 500).
@@ -405,7 +444,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                 }
                 return { download: { body: training.toJsonl(out.rows), type: 'application/x-ndjson; charset=utf-8', filename: `spruce-retraining-${A.dayOf(Date.now())}.jsonl`,
                     headers: { 'x-spruce-examples': String(out.rows.length), 'x-spruce-phishing': String(c.phishing), 'x-spruce-genuine': String(c.genuine),
-                        'x-spruce-gone': String(c.gone), 'x-spruce-failed': String(c.failed), 'x-spruce-not-reached': String(c.notReached), 'x-spruce-conflicting': String(c.conflicting) } } };
+                        'x-spruce-gone': String(c.gone), 'x-spruce-failed': String(c.failed), 'x-spruce-not-reached': String(c.notReached), 'x-spruce-conflicting': String(c.conflicting), 'x-spruce-not-english': String(c.notEnglish || 0) } } };
             } finally { exporting = false; }
         },
         // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
@@ -478,7 +517,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                 // A route's status is the HTTP status code only when it is one (a field of that name holding
                 // anything else, such as an update's progress, broke Settings → Update in 0.3.9 to 0.3.11).
                 const code = out && Number.isInteger(out.status) && out.status >= 100 && out.status <= 599 ? out.status : (out && out.error ? 400 : 200);
-                return send(res, code, Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold }, out));
+                return send(res, code, Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious }, out));
             }
             if (req.method === 'GET') {
                 const rel = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
@@ -497,16 +536,18 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
 async function main() {
     // Demo mode: the made-up district's domain when ORG_DOMAINS isn't set, as its emails were judged with
     // (Check an email and Re-scan then see "your organization" as the records do).
-    const cfg = loadConfig(/^(1|true|yes|on)$/i.test(String(process.env.DEMO || '')) && !process.env.ORG_DOMAINS ? Object.assign({}, process.env, { ORG_DOMAINS: require('./demo/seed').ORG }) : process.env);
+    const cfg = loadConfig(/^(1|true|yes|on)$/i.test(String(process.env.DEMO || '')) && !process.env.ORG_DOMAINS ? Object.assign({}, process.env, { ORG_DOMAINS: require('./demo/seed').ORG, DIRECTORY_ADMIN: process.env.DIRECTORY_ADMIN || `spruce-directory@${require('./demo/seed').ORG}` }) : process.env);
     const problems = configProblems(cfg);
     if (problems.length) { console.error('Not started; fix the configuration:\n - ' + problems.join('\n - ')); process.exit(1); }
     let store, gmail, intel = null;
     if (cfg.demo) {
-        const { buildDemo } = require('./demo/seed');
-        let raws;
-        ({ store, intel, raws } = await buildDemo({ cfg, now: Date.now() }));
+        const { buildDemo, directoryNames } = require('./demo/seed');
+        let raws, staff;
+        ({ store, intel, raws, staff } = await buildDemo({ cfg, now: Date.now() }));
         gmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}), labels: async () => ['INBOX'], search: async () => ({ ids: [], next: null }), headers: async () => ({}),
             // the made-up emails themselves, for the retraining export
+            // the made-up directory, for the colleague-name check
+            userNames: async () => directoryNames(staff),
             raw: async (u, id) => { const b = raws.get(id); if (!b) throw Object.assign(new Error('not found'), { status: 404 }); return { id, threadId: `t-${id}`, labelIds: ['INBOX'], historyId: null, internalDate: Date.now(), raw: b }; } };
         console.log('DEMO mode: made-up data, no Google access.');
     } else {
@@ -548,4 +589,4 @@ async function reportEngine({ cfg, store }) {
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
-module.exports = { createApp, expectedProject, reportEngine };
+module.exports = { reviewGroups, createApp, expectedProject, reportEngine };

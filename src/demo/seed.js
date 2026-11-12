@@ -82,10 +82,23 @@ function campaignTemplates() {
             html: '<p>Dear Staff Member,</p><p>Tell us about your benefits this year. Everyone who completes the survey receives a $25 gift card.</p><p><a href="https://forms.survey-host.example/s/benefits-2026">Start the survey</a></p>' }) },
         { id: 'webinar', recipients: 5, daysAgo: 1, spread: 0.4, make: (to) => eml({ fromName: 'EdTech Summit', from: 'events@edtech-summit.example', to, dmarc: 'pass',
             subject: 'Last seats: free webinar on classroom AI tools',
-            html: '<p>Join 2,000 educators for a free webinar on AI tools in the classroom.</p><p>Thursday, 4 PM. Seats are limited.</p><p><a href="https://summit-registration.example/edtech/register">Register now</a></p><p><a href="https://edtech-summit.example/unsubscribe">Unsubscribe</a></p>' }) }
+            html: '<p>Join 2,000 educators for a free webinar on AI tools in the classroom.</p><p>Thursday, 4 PM. Seats are limited.</p><p><a href="https://summit-registration.example/edtech/register">Register now</a></p><p><a href="https://edtech-summit.example/unsubscribe">Unsubscribe</a></p>' }) },
+        // Someone outside using the name of a person in the district (the made-up principal, in the demo
+        // directory below): the colleague-name check's sign.
+        { id: 'colleague', recipients: 4, daysAgo: 2, spread: 0.1, make: (to) => eml({ fromName: PRINCIPAL, from: 'jordan.whitfield.office@freemail.example', to, dmarc: 'pass',
+            subject: 'Are you available?',
+            html: '<p>Hi,</p><p>Are you available? I am in a meeting and need a quick favor before the end of the day.</p><p>Reply with your cell number and I will text you the details.</p><p>Jordan Whitfield</p>' }) },
+        // An email in Spanish: the rules check it as any other, the AI model (English only) gives no score.
+        { id: 'spanish', recipients: 6, daysAgo: 5, spread: 0.3, make: (to) => eml({ fromName: 'Servicio de Correo', from: 'soporte@correo-seguro-cuenta.example', to, dmarc: 'fail',
+            subject: 'Su cuenta de correo será suspendida hoy',
+            html: '<p>Estimado usuario,</p><p>Su cuenta de correo ha sido suspendida temporalmente por actividad inusual. Para restablecer el acceso, haga clic en el enlace y confirme su información antes de las 24 horas.</p><p><a href="https://correo-seguro-cuenta.example/verificar">Verificar mi cuenta</a></p><p>Gracias por su atención,</p><p>Equipo de soporte</p>' }) },
     ];
 }
 
+// The made-up principal whose name the 'colleague' campaign borrows: one of the demo directory's names.
+const PRINCIPAL = 'Jordan Whitfield';
+// The demo directory's full names (the colleague-name check reads them as one-way hashes).
+const directoryNames = (staff) => [PRINCIPAL, ...staff.map(u => u.split('@')[0].split('.').map(w => w[0].toUpperCase() + w.slice(1)).join(' '))];
 const fakeGmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}) };
 
 async function buildDemo({ now = Date.now(), cfg }) {
@@ -100,10 +113,11 @@ async function buildDemo({ now = Date.now(), cfg }) {
     const templates = campaignTemplates();
     const intel = createFakeIntel();                   // made-up lookup answers (no network in demo mode)
     const raws = new Map();                            // each made-up email, by its Gmail id (the retraining export reads them)
+    const demoGmail = Object.assign({}, fakeGmail, { userNames: async () => directoryNames(staff) });   // (the colleague-name check's directory)
     for (const t of templates) {
         const when0 = now - t.daysAgo * DAY + r.int(8, 15) * 3600 * 1000 - DAY / 2;
         const mode = when0 < monitorUntil ? 'monitor' : 'enforce';
-        const svc = new Service({ cfg: Object.assign({}, cfg, { mode, orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14 }), store, gmail: fakeGmail, intel, now: () => when0, log: { error() {} } });
+        const svc = new Service({ cfg: Object.assign({}, cfg, { mode, orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14, directoryAdmin: `spruce-directory@${ORG}`, colleagueNames: true }), store, gmail: demoGmail, intel, now: () => when0, log: { error() {} } });
         const recips = r.int(0, 1) ? staff.slice(0, t.recipients) : staff.slice(-t.recipients);
         recips.forEach((u, i) => raws.set(`demo-${t.id}-${i}`, Buffer.from(t.make(u))));
         const facts = await readMessage(raws.get(`demo-${t.id}-0`));
@@ -147,7 +161,10 @@ async function buildDemo({ now = Date.now(), cfg }) {
         { at: now - 10 * DAY, kind: 'mode', text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }
     ];
+    // (the colleague-name check read the demo directory while the made-up mail was judged: as of now)
+    const cn = await store.getState('colleagueNames');
+    if (cn) await store.setState('colleagueNames', Object.assign({}, cn, { at: now - 20 * 60 * 1000 }));
     return { store, staff, intel, raws };
 }
 
-module.exports = { buildDemo, campaignTemplates, ORG };
+module.exports = { buildDemo, campaignTemplates, directoryNames, ORG };

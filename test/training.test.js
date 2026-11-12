@@ -84,7 +84,9 @@ test('an outside phishing sender\'s name is kept for the model, but names in it 
 });
 
 test('everyday words in made-up phishing and genuine mail are not marked; the text is cut to what the model reads', async () => {
-    for (const t of campaignTemplates().filter(x => !['newvendor'].includes(x.id))) {
+    // (newvendor and colleague are signed with a person's name on purpose: the export marks it, as it should;
+    // spanish is left out of the export: the model reads English only)
+    for (const t of campaignTemplates().filter(x => !['newvendor', 'colleague', 'spanish'].includes(x.id))) {
         const f = await example(t.make(ME), t.falseAlarm ? 0 : 1);
         assert.ok(!/⟦/.test(JSON.stringify(f)), `${t.id}: ${JSON.stringify(f)}`);
         assert.deepEqual(T.problems({ name: t.id, label: t.falseAlarm ? 0 : 1, facts: f }), [], t.id);
@@ -147,7 +149,7 @@ test('the export: off by default; confirmed phishing only unless false alarms ar
     const users = [ME, `sam.okafor@${ORG}`, `avery.lee@${ORG}`];
     const judged = {};
     let n = 0;
-    for (const [id, make] of [['microsoft', ts.microsoft.make], ['storage', ts.storage.make], ['deals', ts.deals.make], ['payroll', ts.payroll.make], ['parent', () => PARENT]]) {
+    for (const [id, make] of [['microsoft', ts.microsoft.make], ['storage', ts.storage.make], ['deals', ts.deals.make], ['payroll', ts.payroll.make], ['spanish', ts.spanish.make], ['parent', () => PARENT]]) {
         judged[id] = [];
         for (const u of users) {
             const raw = Buffer.from(make(u)); const mid = `m${++n}`;
@@ -156,13 +158,14 @@ test('the export: off by default; confirmed phishing only unless false alarms ar
             if (r && r.key) judged[id].push(r.key);
         }
     }
-    for (const id of ['microsoft', 'storage', 'deals', 'payroll']) assert.ok(judged[id].length === 3, `${id} recorded`);
+    for (const id of ['microsoft', 'storage', 'deals', 'payroll', 'spanish']) assert.ok(judged[id].length === 3, `${id} recorded`);
     assert.equal((await svc.trainingExport({ by: 'it.head@maple-schools.example' })).error, 'off', 'off by default');
     await svc.setTrainingExport(true, `it.head@${ORG}`);
     assert.ok((await store.listEvents()).some(e => e.kind === 'settings' && /allowed the retraining export/.test(e.text)));
     // Marks: microsoft and storage confirmed (every copy), deals a false alarm, payroll both ways (left out).
     for (const k of [...judged.microsoft, ...judged.storage]) await svc.mark(k, false, `it.head@${ORG}`);
     for (const k of judged.deals) await svc.mark(k, true, `it.head@${ORG}`);
+    for (const k of judged.spanish) await svc.mark(k, false, `it.head@${ORG}`);   // confirmed, but not in English: left out
     await svc.mark(judged.payroll[0], false, `it.head@${ORG}`); await svc.mark(judged.payroll[1], true, `it.head@${ORG}`);
     // Every storage copy but one deleted since: that one is used. Every deals copy deleted but one, too.
     for (const k of judged.storage.slice(0, 2)) raws.delete(k);
@@ -174,6 +177,7 @@ test('the export: off by default; confirmed phishing only unless false alarms ar
     assert.equal(a.counts.conflicting, 1, 'payroll, marked both ways');
     assert.deepEqual(a.rows.map(r => r.label), [1, 1], 'phishing only by default, one per campaign');
     assert.equal(a.counts.gone, 0, 'a copy still in a mailbox replaces the deleted ones');
+    assert.equal(a.counts.notEnglish, 1, 'the Spanish campaign is left out: the model learns English only');
     assert.deepEqual(a.rows.map(r => r.facts.senderAddress).sort(), ['noreply@brt.greenpath-mail.example', 'security@micros0ft-support.example']);
     for (const r of a.rows) {
         assert.match(r.name, /^spruce-m\d+$/);

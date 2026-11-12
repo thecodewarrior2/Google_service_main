@@ -12,7 +12,7 @@
 // listed message is done, the mailbox's sync position stays where it was, and it only ever moves forward.
 const crypto = require('crypto');
 const { readMessage } = require('./engine/mime');
-const { analyze, senderVerified } = require('./engine/analyze');
+const { analyze, aiReading, senderVerified } = require('./engine/analyze');
 const { decide, isAllowed } = require('./policy');
 const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds, movesForward } = require('./store/history');
@@ -52,6 +52,16 @@ const messageIdOf = (v) => String(v || '').trim().replace(/^<|>$/g, '').slice(0,
 // The address in a From header ("Name <a@b>" or "a@b").
 const addressOf = (from) => { const m = /<([^<>@\s]+@[^<>\s]+)>/.exec(String(from || '')); return (m ? m[1] : String(from || '').trim()).toLowerCase(); };
 // At most n at once; the others wait their turn, first come first served.
+// The AI's answer as a record keeps it: the score, the model, the sentences that weighed most (unless
+// STORE_AI_QUOTES=off), and why there is no score (an email in a language the model doesn't read).
+function aiRecord(ai, cfg) {
+    if (!ai) return null;
+    const out = { probability: ai.probability, model: ai.model,
+        reasons: cfg.storeAiQuotes ? (ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] };
+    if (ai.skipped) { out.skipped = ai.skipped; out.language = ai.language || null; }
+    return out;
+}
+
 class Slots {
     constructor(n) { this.free = n; this.waiting = []; }
     async run(fn) {
@@ -403,7 +413,7 @@ class Service {
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
         // Judged for the recipient in the organization, if the email names one; else for the admin.
         const mailbox = (facts.to || []).find(a => this.cfg.orgDomains.includes(a.split('@')[1])) || by;
-        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel });
+        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames() });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
         const domain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
@@ -425,6 +435,55 @@ class Service {
     // become the new ones (the email's page shows the newest scan); what they were on arrival is kept once
     // (arrival), and what happened to it (moved, flagged...) stays: nothing is moved, and the admin decides
     // with the usual buttons. Noted in Activity.
+    // The colleague-name check's list: the full name of everyone in the directory, kept only as one-way hashes
+    // (the extension's colleagueNameHash: "Smith, John" = "John Smith"), in memory, read again every 12 hours
+    // (after a failure, every hour). Off (null) without DIRECTORY_ADMIN or with COLLEAGUE_NAMES=off; a
+    // failed read (no Users → Read privilege or no admin.directory.user.readonly scope) keeps the last list
+    // and is noted in state/colleagueNames for Status, never alerted.
+    async colleagueNames() {
+        if (!this.cfg.colleagueNames || !this.cfg.directoryAdmin || !this.gmail || typeof this.gmail.userNames !== 'function') return null;
+        const now = this.now(), c = this.colleagues;
+        if (c && now - c.at < (c.error ? HOUR : 12 * HOUR)) return c.hashes;
+        if (this.colleaguesLoading) return this.colleaguesLoading;
+        this.colleaguesLoading = (async () => {
+            try {
+                const E = require('./engine/spruce').load();
+                const names = await this.gmail.userNames(this.cfg.directoryAdmin);
+                const hashes = new Set(names.map(n => E.colleagueNameHash(n)).filter(Boolean));
+                this.colleagues = { hashes, at: now, error: null };
+                await this.store.setState('colleagueNames', { at: now, names: hashes.size, error: null }).catch(() => {});
+            } catch (e) {
+                const error = String(e && e.message || e).slice(0, 300);
+                this.colleagues = { hashes: c ? c.hashes : null, at: now, error };
+                await this.store.setState('colleagueNames', { at: now, names: c && c.hashes ? c.hashes.size : 0, error }).catch(() => {});
+                if (!c || !c.error) this.log.warn(JSON.stringify({ message: `Couldn't read the directory's names for the colleague-name check: ${error}` }));
+            } finally { this.colleaguesLoading = null; }
+            return this.colleagues.hashes;
+        })();
+        return this.colleaguesLoading;
+    }
+
+    // "Show more" on an email's AI opinion: what the model reads of it, sentence by sentence, each with how far
+    // it leans toward phishing, so an admin can decide with the surrounding text. Read from Gmail now (the
+    // service stores no email text), with addresses, phone numbers and long numbers already replaced as the
+    // model sees them; nothing is stored or moved, and Activity notes who looked.
+    async aiContext(key, by) {
+        const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+        const rec = await this.store.getRecord(key);
+        if (!rec || !rec.user || !rec.messageId) fail(404, 'That email isn\'t recorded.');
+        let msg;
+        try { msg = await this.gmail.raw(rec.user, rec.messageId); }
+        catch (e) { if (e && e.status === 404) fail(404, 'The email is no longer in the mailbox (deleted for good): its text can\'t be read.'); throw e; }
+        if (!msg || !msg.raw || !msg.raw.length) fail(404, 'The email is no longer in the mailbox: its text can\'t be read.');
+        const facts = await readMessage(msg.raw);
+        const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, keepAiFacts: true });
+        const reading = result.language.english ? await aiReading(result.aiFacts) : null;
+        await this.store.addEvent({ kind: 'check', user: rec.user,
+            text: `${by} opened what the AI reads of an email to ${rec.user} from ${(rec.sender && rec.sender.domain) || 'an unknown sender'} (read from Gmail just now; nothing stored).` });
+        return { language: result.language, reading };
+    }
+
     async rescan(key, by) {
         const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
         const rec = await this.store.getRecord(key);
@@ -438,11 +497,10 @@ class Service {
         // The sender counts as new if it was on arrival (by now it isn't, and that would change the rules'
         // score, not the model or the checks): from the arrival's signs, kept with them after a re-scan.
         const firstTime = rec.arrival ? !!rec.arrival.firstTime : (rec.signals || []).some(x => x && x.kind === 'first-time');
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel });
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames() });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
-        const ai = result.ai ? { probability: result.ai.probability, model: result.ai.model,
-            reasons: this.cfg.storeAiQuotes ? (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] } : null;
+        const ai = aiRecord(result.ai, this.cfg);
         // What it was on arrival: kept from the first re-scan on (a record re-scanned by 0.5.3 still has it in ai).
         const arrival = rec.arrival || { at: rec.processedAt, score: rec.score, status: rec.status, firstTime,
             ai: rec.ai && typeof rec.ai.probability === 'number' ? { probability: rec.ai.probability, model: rec.ai.model || null } : null };
@@ -529,7 +587,7 @@ class Service {
         const learning = now - installedAt < this.cfg.firstSeenLearningDays * DAY;
         // Allowlisted only with DMARC passing for the address (policy.js).
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
-        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !learning && now - first < DAY, intel: this.intel });
+        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !learning && now - first < DAY, intel: this.intel, colleagues: await this.colleagueNames() });
         result.allowlistedUnverified = allowlisted && !verified;
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });
@@ -565,8 +623,7 @@ class Service {
             subject: this.cfg.storeSubjects ? facts.subject.slice(0, 300) : '',
             campaign: campaign.key, campaignLabel,
             status: result.status, score: result.score, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null,
-            ai: result.ai ? { probability: result.ai.probability, model: result.ai.model,
-                              reasons: this.cfg.storeAiQuotes ? (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) : [] } : null,
+            ai: aiRecord(result.ai, this.cfg),
             auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
             attachments: facts.attachments.slice(0, 10).map(a => ({ name: a.name.slice(0, 120), type: a.type })),
             action: decision.action, trigger: decision.trigger, why: decision.why, braked: held === 'brake', held, mode: this.cfg.mode,
@@ -993,7 +1050,7 @@ class Service {
         if (!st.enabled) return { error: 'off' };
         const records = await this.store.listRecords({ sinceMs: this.now() - days * DAY, limit: 100000 });
         const { groups, conflicting } = training.pickRecords(records, { falseAlarms });
-        const rows = [], counts = { phishing: 0, genuine: 0, gone: 0, failed: 0, notReached: 0, conflicting, candidates: groups.length };
+        const rows = [], counts = { phishing: 0, genuine: 0, gone: 0, failed: 0, notReached: 0, notEnglish: 0, conflicting, candidates: groups.length };
         const started = Date.now();
         let reached = 0;
         // The newest copy still in a mailbox (up to 3 tried): a copy deleted since doesn't lose the campaign.
@@ -1015,6 +1072,8 @@ class Service {
                 const facts = await readMessage(msg.raw);
                 const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
                 const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, keepAiFacts: true });
+                // The model learns English only (an email clearly in another language is left out, and counted).
+                if (!result.language.english) { counts.notEnglish++; return; }
                 const label = rec.falseAlarm === false ? 1 : 0;
                 rows.push({ at: rec.processedAt, row: training.example(rec, label, result.aiFacts, facts.people, this.cfg.orgDomains) });
             } catch (e) { counts.failed++; this.log.error(`retraining export ${copies[0].key}:`, e); }

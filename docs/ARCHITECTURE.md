@@ -142,6 +142,10 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 
 ## Throughput
 
+The model reads English only: `src/engine/language.js` finds an email clearly in another language (its
+writing system, or the commonest words of other languages), and then the model isn't run and the AI
+gives no score, saying why (the rules run as always).
+
 The model runs in ONNX Runtime (`src/engine/model.js`, from `models/phish-tiny/model.onnx`): about 6 ms
 for a full-length pass on one Cloud Run CPU, one thread, at the "basic" graph optimization level (the
 higher levels turn the 8-bit weights into 8-bit arithmetic, which changes the answers). An email's

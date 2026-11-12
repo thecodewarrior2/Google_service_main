@@ -95,6 +95,19 @@ A lookup that fails leaves an email "not checked", never "safe". Short links are
 there is no outside unshortening service. A short link is judged by its own host and by what decodes
 offline.
 
+**The AI model reads English only** (it was trained on English mail). An email clearly in another
+language (its writing system, or the commonest words of Spanish, French, Vietnamese, Haitian Creole and
+others) gets no AI score: the dashboard says so, the rule checks run as for any email, and the
+retraining export leaves it out. A bilingual email with a real English part is read.
+
+**The colleague-name check:** the full names in your directory are read (by `DIRECTORY_ADMIN`, every 12
+hours) and kept only as one-way hashes, in memory; an outside sender whose display name is one of them
+("Jordan Whitfield" <jordan.whitfield.office@gmail.com>) gets a sign (3: amber; it moves mail only with
+other signs, since staff sometimes write from a personal address). It needs the **Users → Read**
+privilege and one more delegation scope (docs/INSTALL.md, "The colleague-name check"); without them it is
+off, and Status says how to turn it on. `COLLEAGUE_NAMES=off` (a setting of both services, docs/DEPLOY.md)
+turns it off.
+
 ## The dashboard
 
 The dashboard keeps itself up to date: the page you're on is fetched again every 30 seconds while
@@ -108,7 +121,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
   day by trigger; top reasons; largest campaigns; alerts.
 - **Email**, with the number of emails waiting for review on the tab:
   - **Review:** emails nobody has reviewed, one at a time, in two queues (the menu shows how many are
-    left in the first):
+    left in the first). The copies of one email (a campaign: the same email to many people) are one item,
+    decided together: who received it (and who sent it, when the copies came from several addresses) is
+    listed, the first two shown, **…show more** for everyone:
     - **Moved or would move**, oldest first: **F** false alarm, **P** phishing, **N** next.
     - **Suspicious, not moved**, newest first: emails the checks found suspicious (a rules score of 3 or
       more, or an AI score from the suspicious line) but not enough to move, still in the Inbox. **F**

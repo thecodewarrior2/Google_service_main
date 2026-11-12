@@ -101,6 +101,20 @@ class GmailClient {
         } while (pageToken);
         return out;
     }
+    // The full names of the organization's users (acting as a Workspace admin: the Users → Read privilege and
+    // the admin.directory.user.readonly scope), for the colleague-name check. Names only, never stored: the
+    // service keeps a one-way hash of each (see Service.colleagueNames).
+    async userNames(admin) {
+        const out = [];
+        let pageToken;
+        do {
+            const r = await this.call(admin, 'GET', '', { scope: SCOPES.directory, base: DIRECTORY,
+                query: Object.assign({ customer: 'my_customer', maxResults: '500', projection: 'basic', fields: 'users(name/fullName),nextPageToken' }, pageToken ? { pageToken } : {}) });
+            for (const u of r.users || []) if (u.name && u.name.fullName) out.push(String(u.name.fullName));
+            pageToken = r.nextPageToken;
+        } while (pageToken);
+        return out;
+    }
     // Whether an address is in a group, directly or through a group inside it (acting as a Workspace admin).
     async hasMember(admin, groupEmail, email) {
         try {

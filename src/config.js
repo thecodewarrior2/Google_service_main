@@ -82,6 +82,9 @@ function loadConfig(env = process.env) {
         firestoreDatabase: env.FIRESTORE_DATABASE || '(default)',
         storeSubjects: bool(env.STORE_SUBJECTS, true),
         storeAiQuotes: bool(env.STORE_AI_QUOTES, true),
+        // The colleague-name check: the directory's names (as one-way hashes, in memory) against outside
+        // senders' names. Needs DIRECTORY_ADMIN with Users → Read and the admin.directory.user.readonly scope.
+        colleagueNames: bool(env.COLLEAGUE_NAMES, true),
         // How long records are kept (days, 14 to 365; also on the dashboard, Settings → Policy). Each one
         // is deleted on its own date, the oldest first: never all at once.
         retentionDays: num(env.RETENTION_DAYS, 35),

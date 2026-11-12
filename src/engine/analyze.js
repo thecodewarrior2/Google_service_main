@@ -8,6 +8,7 @@
 // Google Safe Browsing, the phishing lists and registry dates. Short links are NOT looked up (no
 // unshorten.me or similar service): a short link is judged by its own host and what decodes offline.
 const spruce = require('./spruce');
+const { detectLanguage } = require('./language');
 const { networkChecks } = require('./network');
 
 const MAX_LINKS = 300;
@@ -56,7 +57,8 @@ function senderVerified(facts) {
 
 // facts: from mime.readMessage. ctx: { mailbox (the recipient's address), orgDomains: [..], trusted: bool,
 // firstTime: bool (first email from this address anywhere in the organization, after the learning period),
-// keepAiFacts: bool (the answer also has what the model read, for the retraining export) }
+// keepAiFacts: bool (the answer also has what the model read, for the retraining export),
+// colleagues: Set of colleagueNameHash values (the organization's people), or null }
 async function analyze(facts, ctx = {}) {
     const E = spruce.load();
     const mailbox = String(ctx.mailbox || '').toLowerCase();
@@ -78,7 +80,8 @@ async function analyze(facts, ctx = {}) {
     const signals = [
         ...headerSigns,
         ...safe(() => E.displayNameAnomalies(facts.senderName)),
-        ...safe(() => E.nameAddressSigns(facts.senderName, facts.senderAddress, org, null, null)),
+        // ctx.colleagues: one-way hashes of the organization's people's names (Service.colleagueNames).
+        ...safe(() => E.nameAddressSigns(facts.senderName, facts.senderAddress, org, ctx.colleagues || null, null)),
         ...safe(() => E.ownNameSigns(facts.senderName, facts.senderAddress, mailbox)),
         ...safe(() => E.subjectScamSigns(facts.subject)),
         ...safe(() => E.bodyScamSigns(facts.visibleText)),
@@ -112,12 +115,19 @@ async function analyze(facts, ctx = {}) {
         layout: facts.layout || [],
         mailChecks: headerSigns.map(s => s.kind).filter(Boolean)
     };
+    // The model was trained on English only: on an email clearly in another language its score means little,
+    // so it gives none, and says why (the rule checks above don't depend on the language).
+    const language = detectLanguage(`${facts.subject}\n${facts.visibleText}`);
     let ai = null;
-    try {
-        const r = await E.model.analyze(aiFacts);
-        ai = { probability: r.probability, reasons: r.reasons.map(x => ({ sentence: x.sentence, facts: !!x.facts })), model: `${r.model} ${r.version}` };
-    } catch (e) {
-        ai = { probability: null, error: String(e && e.message || e), model: `${E.modelInfo.name} ${E.modelInfo.version}` };
+    if (!language.english) {
+        ai = { probability: null, skipped: 'language', language: language.name, model: `${E.modelInfo.name} ${E.modelInfo.version}` };
+    } else {
+        try {
+            const r = await E.model.analyze(aiFacts);
+            ai = { probability: r.probability, reasons: r.reasons.map(x => ({ sentence: x.sentence, facts: !!x.facts })), model: `${r.model} ${r.version}` };
+        } catch (e) {
+            ai = { probability: null, error: String(e && e.message || e), model: `${E.modelInfo.name} ${E.modelInfo.version}` };
+        }
     }
     return {
         status: verdict.status,
@@ -132,9 +142,15 @@ async function analyze(facts, ctx = {}) {
         confirmedBy,
         strong: verdict.status === 'flagged' && confirmedBy.length > 0,
         ai,
+        language: { code: language.code, name: language.name, english: language.english },
         // Only for the retraining export (src/training.js), which takes the people out: never stored.
         aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
 }
 
-module.exports = { analyze, judgeLinks, linkSignals, senderVerified };
+// What the model read of an email (analyze's aiFacts), sentence by sentence (Model.reading).
+async function aiReading(aiFacts, max = 40) {
+    return spruce.load().model.reading(aiFacts, max);
+}
+
+module.exports = { analyze, aiReading, judgeLinks, linkSignals, senderVerified };

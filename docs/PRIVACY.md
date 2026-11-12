@@ -24,6 +24,15 @@ protect.
     unit);
   - only active accounts in the organization's own domains are watched, even if a group lists others.
 
+- **The directory's full names** (the colleague-name check, when its permission is given): read through
+  the Admin SDK every 12 hours, turned at once into one-way hashes (the extension's fingerprint: "Smith,
+  John" and "John Smith" give the same one) and kept only in the service's memory. No name is stored;
+  Firestore keeps only how many there are and when they were read (`state/colleagueNames`).
+- **An email again, when an admin asks:** Re-scan, and **…show more** on an email's AI opinion, read that
+  one email from Gmail again. "…show more" shows the admin what the AI model reads of it (addresses
+  reduced to their domain, phone numbers and long numbers replaced), sentence by sentence; nothing of it
+  is stored, and Activity notes who looked at which email.
+
 ## What it keeps (Firestore, in your own project and region)
 
 For emails the policy moved, would have moved, or found suspicious, it keeps:

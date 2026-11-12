@@ -108,6 +108,18 @@ class Model {
         reasons.sort((a, b) => b.weight - a.weight);
         return { probability: p, reasons: reasons.slice(0, 3), model: this.meta.name, version: this.meta.version };
     }
+    // What the model read, sentence by sentence, for a person deciding (the dashboard's "show more"): the
+    // facts line (subject, sender, sender check, links, layout) and each sentence of the text, each scored on
+    // its own as in analyze (a margin above 0 leans toward phishing), up to max sentences, in order.
+    async reading(facts, max = 40) {
+        const parts = this.parts(facts);
+        const [m] = await this.margins_([`${parts.head} text: ${parts.sentences.join(' ')}`]);
+        const sentences = parts.sentences.slice(0, max);
+        const ws = await this.margins_([...sentences.map(s => `text: ${s}`), `${parts.head} text:`]);
+        return { probability: 1 / (1 + Math.exp(-m)), model: this.meta.name, version: this.meta.version,
+                 head: parts.head, headWeight: ws[sentences.length], sentences: sentences.map((s, i) => ({ text: s, weight: ws[i] })),
+                 more: Math.max(0, parts.sentences.length - sentences.length) };
+    }
 }
 
 function loadModel({ dir, manifest, tokenizer, modelInputParts }) {

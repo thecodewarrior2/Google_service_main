@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.10: Review decides a campaign at once; Next works; more of the AI's reasoning; colleague names; English only
+
+- **Review: the copies of one email are one item.** A campaign (the same email to many people) used to be
+  one review per recipient, every copy looking the same, so **Next, undecided** seemed to do nothing. Now
+  its copies are decided together: the item says who received it (the first two, **…show more** for
+  everyone in a popup) and, when the copies came from several addresses, who sent it; **False alarm
+  (all 12)** and **Phishing (all 12)** mark every copy at once (in enforce mode, Phishing moves the ones
+  still in the Inbox to Spam), with a link to every copy in Messages. `GET /api/review` gives `groups`
+  (keys, recipients, senders) besides the flat `keys`.
+- **Fixed: Next, undecided after "Look again".** "Look again" put `restart=1` in the address, and every
+  later redraw (Next) loaded the queue again from its first email: the page flashed and stayed. The queue
+  is loaded once and the address cleared. A popup open on the page now holds the F, P and N keys and the
+  live refresh.
+- **The AI opinion says more.** Where its score stands against the lines in force (moves an outside
+  email from 90%, suspicious from 65%; an inside sender's score alone never moves it), what weighed most,
+  what the model reads. **…show more** opens what the model reads of that email, sentence by sentence,
+  each scored on its own (what weighed most marked), with the line about the sender and links: read from
+  Gmail on demand (`POST /api/message/context`), as the model sees it (addresses reduced to their domain,
+  phone numbers and long numbers replaced), nothing stored, and Activity notes who looked.
+- **The colleague-name check.** The directory's full names (read by `DIRECTORY_ADMIN` every 12 hours,
+  kept only as one-way hashes, in memory) against outside senders' display names: "Jordan Whitfield"
+  <jordan.whitfield.office@gmail.com> gets a sign (3: amber; staff sometimes write from a personal
+  address, so it moves mail only with other signs). It is the extension's own check, which the service
+  had no names for. Optional: it needs the **Users → Read** privilege and the
+  `admin.directory.user.readonly` scope (docs/INSTALL.md); without them it is off and **Status** says how
+  to turn it on. `COLLEAGUE_NAMES=off` turns it off.
+- **English only, said.** The model was trained on English mail, so on an email clearly in another
+  language its score means little. `src/engine/language.js` (no library) tells: the writing system
+  (Chinese, Japanese, Korean, Cyrillic, Arabic, Hebrew, Greek, Thai, Hindi and others), or for the Latin
+  alphabet the commonest words of Spanish, Portuguese, French, German, Italian, Dutch, Vietnamese,
+  Polish, Turkish, Indonesian, Tagalog, Haitian Creole and Somali. Then the model isn't run: the AI
+  opinion says **"Not scored: the AI model reads English only"** and names the language; the rule
+  checks run as for any email; the retraining export leaves it out (and counts it). A bilingual email
+  with a real English part, and a very short one, are read as before.
+- **Overview:** hovering a day of "Emails moved per day" also gives the emails checked that day, and how
+  many were moved back.
+- Demo mode: a made-up colleague-name campaign and one in Spanish. Tests: `test/review-ai-names.test.js`
+  (languages, the colleague-name check and its hashes, review groups, the bulk decision, "…show more").
+- `installLevel` is unchanged: the colleague-name check's permission is optional.
+
+
 ## 0.5.9: The name is now S.P.R.U.C.E Mail Protection Service
 
 Nothing in how emails are judged changes: only the name.

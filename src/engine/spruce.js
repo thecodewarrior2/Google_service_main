@@ -47,6 +47,7 @@ function load() {
         parseRawHeaders: fn('parseRawHeaders'),
         displayNameAnomalies: fn('displayNameAnomalies'),
         nameAddressSigns: fn('nameAddressSigns'),
+        colleagueNameHash: fn('colleagueNameHash'),
         ownNameSigns: fn('ownNameSigns'),
         subjectScamSigns: fn('subjectScamSigns'),
         bodyScamSigns: fn('bodyScamSigns'),

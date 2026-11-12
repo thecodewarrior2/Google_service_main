@@ -18,11 +18,12 @@
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         return data;
     }
-    // The AI move threshold in force (every answer says it; 90% until the first one).
-    let aiThreshold = 0.9;
+    // The AI move threshold and suspicious line in force (every answer says them; 90% and 65% until the first one).
+    let aiThreshold = 0.9, aiSuspicious = 0.65;
     const api = async (path, opts) => {
         const data = await (window.SPRUCE_API || realApi)(path, opts);
         if (data && typeof data.aiThreshold === 'number') aiThreshold = data.aiThreshold;
+        if (data && typeof data.aiSuspicious === 'number') aiSuspicious = data.aiSuspicious;
         return data;
     };
     // A POST whose answer is a file (the retraining export): saved by the browser; its headers returned.
@@ -84,6 +85,28 @@
         setTimeout(() => t.remove(), 3200);
     }
 
+    // --- Popup: an in-page dialog over the page (Escape or Close closes it; the page's keys wait meanwhile) ----
+    function popup(title, ...content) {
+        const close = h('button', { class: 'linkbtn', type: 'button', text: 'Close' });
+        const dlg = h('dialog', { class: 'popup', 'aria-label': title },
+            h('div', { class: 'popup-head' }, h('h2', { text: title }), close),
+            h('div', { class: 'popup-body' }, ...content));
+        close.addEventListener('click', () => dlg.close());
+        dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });   // a click outside the box
+        dlg.addEventListener('close', () => dlg.remove());
+        document.body.append(dlg);
+        if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+        return dlg;
+    }
+    const popupOpen = () => !!document.querySelector('dialog.popup[open]');
+    // A list that shows its first two, then "…show more": the rest in a popup.
+    function shortList(items, title, { describe = (n) => `${n} in all` } = {}) {
+        if (items.length <= 2) return h('span', { text: items.join(', ') });
+        const more = h('button', { class: 'linkbtn', type: 'button', text: `…show more (${items.length - 2})` });
+        more.addEventListener('click', () => popup(title, h('p', { class: 'sub', text: describe(items.length) }), h('ul', { class: 'plain-list' }, items.map(x => h('li', { text: x })))));
+        return h('span', {}, `${items.slice(0, 2).join(', ')} `, more);
+    }
+
     // --- Tooltip (one, shared; values lead, names follow) ------------------------------------------
     const tip = () => $('#tip');
     function showTip(evt, title, rows) {
@@ -120,8 +143,9 @@
         const r = round ? Math.min(4, w / 2, hgt) : 0;
         return `M${x},${y + hgt}V${y + r}${r ? `Q${x},${y} ${x + r},${y}` : ''}H${x + w - r}${r ? `Q${x + w},${y} ${x + w},${y + r}` : ''}V${y + hgt}Z`;
     }
-    // Stacked columns, one per day; series: [{ key, name, color }].
-    function stackedColumns(rows, series, { label = 'day' } = {}) {
+    // Stacked columns, one per day; series: [{ key, name, color }]. totals: the tooltip also gives the day's
+    // emails checked (first) and moved back (last), when the rows have them (Overview's trend).
+    function stackedColumns(rows, series, { label = 'day', totals = false } = {}) {
         const W = chartWidth(), H = 230, L = 38, B = 24, T = 10, R = 8;
         const pw = W - L - R, ph = H - B - T;
         const ax = niceAxis(Math.max(1, ...rows.map(r => series.reduce((a, se) => a + (r[se.key] || 0), 0)))), max = ax.max;
@@ -138,8 +162,10 @@
             const x = L + i * band + (band - bw) / 2;
             let acc = 0;
             const segs = series.filter(se => (r[se.key] || 0) > 0);
+            const checked = totals && typeof r.scanned === 'number' ? [{ name: 'Emails checked', value: num(r.scanned) }] : [];
+            const back = totals && typeof r.released === 'number' ? [{ name: 'Moved back', value: num(r.released) }] : [];
             const g = s('g', { class: 'bar', tabindex: 0, role: 'img',
-                'aria-label': `${dayLabel(r.day)}: ${series.map(se => `${se.name} ${r[se.key] || 0}`).join(', ')}` });
+                'aria-label': `${dayLabel(r.day)}: ${[...checked, ...series.map(se => ({ name: se.name, value: r[se.key] || 0 })), ...back].map(x => `${x.name} ${x.value}`).join(', ')}` });
             segs.forEach((se, j) => {
                 const v = r[se.key];
                 const y0 = y(acc), y1 = y(acc + v);
@@ -149,7 +175,7 @@
                 acc += v;
             });
             g.append(s('rect', { class: 'hit', x: L + i * band, y: T, width: band, height: ph }));
-            const rowsTip = series.map(se => ({ name: se.name, value: num(r[se.key] || 0), color: css(se.color) }));
+            const rowsTip = [...checked, ...series.map(se => ({ name: se.name, value: num(r[se.key] || 0), color: css(se.color) })), ...back];
             g.addEventListener('pointermove', (e) => showTip(e, dayLabel(r.day), rowsTip));
             g.addEventListener('focus', (e) => showTip(e, dayLabel(r.day), rowsTip));
             g.addEventListener('pointerleave', hideTip); g.addEventListener('blur', hideTip);
@@ -257,16 +283,16 @@
             kpi(d.mode === 'enforce' ? 'Recorded, not moved' : 'Moved', num(d.mode === 'enforce' ? sm.wouldMove : sm.moved), d.mode === 'enforce' ? 'monitor phase or brake' : sm.moved ? movedBack : ''),
             kpi('Suspicious only', num(sm.flagged), 'amber, below the move rules')));
         // Trend
-        const chartBox = h('div', { class: 'chart' }, stackedColumns(d.trend, TREND_SERIES));
+        const chartBox = h('div', { class: 'chart' }, stackedColumns(d.trend, TREND_SERIES, { totals: true }));
         let asTable = false;
         const toggle = h('button', { class: 'linkbtn', type: 'button', text: 'Show as table' });
         toggle.addEventListener('click', () => {
             asTable = !asTable; toggle.textContent = asTable ? 'Show as chart' : 'Show as table'; chartBox.textContent = '';
             chartBox.append(asTable ? dataTable([{ name: 'Day', get: r => dayLabel(r.day) }, { name: 'Checked', num: true, get: r => num(r.scanned) }, ...TREND_SERIES.map(se => ({ name: se.name, num: true, get: r => num(r[se.key]) })), { name: 'Moved back', num: true, get: r => num(r.released) }], d.trend.slice().reverse())
-                                    : stackedColumns(d.trend, TREND_SERIES));
+                                    : stackedColumns(d.trend, TREND_SERIES, { totals: true }));
         });
         out.push(h('div', { class: 'grid two' },
-            h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Emails moved per day' }), h('div', { class: 'sub', text: 'By what triggered the move; hover a day for the numbers.' })), toggle), legend(TREND_SERIES), chartBox),
+            h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Emails moved per day' }), h('div', { class: 'sub', text: 'By what triggered the move; hover a day for its numbers and the emails checked that day.' })), toggle), legend(TREND_SERIES), chartBox),
             h('section', { class: 'card' }, h('h2', { text: 'Top reasons' }), h('div', { class: 'sub', text: 'Signs found in moved and would-move emails.' }),
                 d.topReasons.length ? hbars(d.topReasons.map(r => ({ name: r.reason, value: r.count }))) : h('div', { class: 'empty', text: 'Nothing moved in this period.' }))));
         out.push(h('div', { class: 'grid two' },
@@ -462,6 +488,59 @@
             h('div', { class: 'small muted', text: 'The scores, the AI opinion and the signs on this page are the re-scan\'s; what happened to the email stays, and nothing was moved by the re-scan: decide with the buttons. The sender counts as new if it was new on arrival.' }));
     }
 
+    // The AI's opinion of one email: its score and where that stands against the lines that move or flag
+    // mail, what weighed most, and "…show more": what the model reads of it, sentence by sentence (read from
+    // Gmail on demand; the service keeps no email text). No score: why (a language it doesn't read).
+    function aiOpinion(m, ai, opts = {}) {
+        if (ai === null) {
+            if (m.ai && m.ai.skipped === 'language') return h('div', { class: 'ai-none' },
+                h('b', { text: 'Not scored: the AI model reads English only.' }),
+                h('div', { text: `This email looks like it is in ${m.ai.language || 'another language'}, so the AI gives no opinion of it. The rule checks don't depend on the language and ran as usual; decide from the signs and the email itself.` }));
+            return h('div', { class: 'empty', text: m.ai && m.ai.error ? `The model gave no score (${m.ai.error}).` : 'The model gave no score.' });
+        }
+        const inside = !!m.inside;
+        const where = ai >= aiThreshold ? (inside ? `at or over the move line (${pct(aiThreshold)}), but the sender is inside your organization, so the AI score alone doesn't move it` : `at or over the move line (${pct(aiThreshold)}): the AI score alone moves an outside email`)
+            : ai >= aiSuspicious ? `over the suspicious line (${pct(aiSuspicious)}), under the move line (${pct(aiThreshold)}): recorded as suspicious, not moved`
+            : ai >= 0.5 ? `leans toward phishing, but under the suspicious line (${pct(aiSuspicious)}): the AI alone does nothing`
+            : `reads as genuine (under 50%)`;
+        const canRead = !m.pasted && !!m.key;
+        const more = canRead ? h('button', { class: 'linkbtn', type: 'button', text: '…show more' }) : null;
+        if (more) more.addEventListener('click', () => showAiReading(m));
+        return [
+            h('div', { class: 'kpi' }, h('div', { class: 'value', text: pct(ai) }), h('div', { class: 'note', text: `${m.ai.model}: how likely it is phishing` })),
+            m.rescan && m.arrival ? h('div', { class: 'small muted', text: `Re-scanned ${when(m.rescan.at)}. On arrival: ${m.arrival.ai ? `${pct(m.arrival.ai.probability)}, ${m.arrival.ai.model || 'an unknown model'}` : 'no AI score'}.` }) : null,
+            (() => { const mt = h('div', { class: `meter ${ai >= aiThreshold ? 'hot' : ''}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(ai * 100), 'aria-label': 'AI score' }, h('div')); mt.firstChild.style.width = pct(ai); return mt; })(),
+            h('div', { class: 'small ai-where', text: `Where it stands: ${pct(ai)} is ${where}.` }),
+            m.ai.reasons && m.ai.reasons.length ? [h('div', { class: 'small muted', text: 'What weighed most (each part scored on its own):' }),
+                m.ai.reasons.map(r => h('div', { class: 'quote', text: r.facts ? 'Who sent it, the sender check and where its links go' : `“${r.sentence}”` }))]
+                : ai >= 0.5 ? h('div', { class: 'small muted', text: 'Which parts weighed most isn\'t kept for this email (STORE_AI_QUOTES=off, or recorded before it was).' }) : null,
+            h('div', { class: 'small muted' }, 'The model reads the subject, the sender\'s name and domain, the sender check, where the links go and the text, with addresses and numbers replaced. ',
+                more ? [more, ' to see all of it, sentence by sentence, around what weighed most.'] : null)];
+    }
+    // "…show more": what the model reads of the email, read from Gmail now (nothing is kept), in a popup.
+    async function showAiReading(m) {
+        const body = h('div', { class: 'ai-reading' }, h('div', { class: 'empty', text: 'Reading the email from Gmail…' }));
+        popup(`What the AI reads: ${m.subject || 'this email'}`, body);
+        try {
+            const { language, reading: r } = await api('/api/message/context', { method: 'POST', body: { key: m.key } });
+            body.textContent = '';
+            body.append(h('p', { class: 'sub', text: 'Read from Gmail just now; nothing is kept, and Activity notes that you looked. Addresses keep only their domain, and phone numbers and long numbers are replaced, as the model sees them. Each part is also scored on its own: how much that part alone reads like phishing.' }));
+            if (!r) { body.append(h('div', { class: 'ai-none' }, h('b', { text: 'Not scored: the AI model reads English only.' }), h('div', { text: `This email looks like it is in ${language && language.name || 'another language'}.` }))); return; }
+            const lean = (w) => 1 / (1 + Math.exp(-w));
+            const top = new Set(r.sentences.map((x, i) => [x.weight, i]).filter(([w]) => w > 0).sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i));
+            const badge = (w) => h('span', { class: `lean ${lean(w) >= 0.5 ? 'hot' : ''}`, text: `${pct(lean(w))} on its own` });
+            body.append(h('div', { class: 'small' }, h('b', { text: `The AI now: ${pct(r.probability)}` }), ` (${r.model} ${r.version}, the whole email${m.ai && typeof m.ai.probability === 'number' && Math.abs(m.ai.probability - r.probability) >= 0.01 ? `; ${pct(m.ai.probability)} when it was checked` : ''}).`));
+            body.append(h('h3', { text: 'About the sender and links' }), h('div', { class: 'reading-line' }, h('div', { class: 'mono small', text: r.head }), badge(r.headWeight)));
+            body.append(...[h('h3', { text: `The text, sentence by sentence${top.size ? ' (what weighed most is marked)' : ''}` }),
+                r.sentences.length ? h('ol', { class: 'reading' }, r.sentences.map((x, i) => h('li', { class: top.has(i) ? 'top' : '' }, h('span', { text: x.text }), badge(x.weight))))
+                    : h('div', { class: 'empty', text: 'No text: the model read only the subject, the sender and the links.' }),
+                r.more ? h('div', { class: 'small muted', text: `…and ${num(r.more)} more sentences the model reads, not scored one by one here.` }) : null].filter(Boolean));
+        } catch (e) {
+            body.textContent = '';
+            body.append(h('div', { class: 'alert warning' }, h('div', { text: `Couldn't read it: ${e.message}` })));
+        }
+    }
+
     // One email's decision: a record (Messages), or a pasted email's answer (Check an email: m.pasted).
     // opts.inReview: the review queue shows its own buttons and title.
     function emailView(m, opts = {}) {
@@ -501,12 +580,7 @@
                         m.signals.length ? h('ul', { class: 'signals' }, m.signals.slice().sort((a, b) => b.weight - a.weight).map(sg => h('li', {}, h('span', { class: `weight ${sg.weight >= 3 ? 'high' : ''}`, text: String(sg.weight) }), h('span', { text: sg.text })))) : h('div', { class: 'empty', text: 'No signs.' })),
                     m.links && m.links.length ? h('section', { class: 'card' }, h('h2', { text: 'Flagged links' }), h('ul', { class: 'signals' }, m.links.map(l => h('li', {}, h('span', { class: `weight ${l.severity === 'danger' ? 'high' : ''}`, text: l.severity === 'danger' ? '!' : '?' }), h('span', {}, h('div', { text: l.reason || '' }), h('div', { class: 'muted small', text: l.finalUrl && l.finalUrl !== l.url ? `${l.url} → ${l.finalUrl}` : l.url })))))) : null),
                 h('div', { class: 'grid' },
-                    h('section', { class: 'card' }, h('h2', { text: 'AI opinion' }),
-                        ai === null ? h('div', { class: 'empty', text: 'The model gave no score.' }) : [
-                            h('div', { class: 'kpi' }, h('div', { class: 'value', text: pct(ai) }), h('div', { class: 'note', text: `${m.ai.model}: how likely it is phishing` })),
-                            m.rescan && m.arrival ? h('div', { class: 'small muted', text: `Re-scanned ${when(m.rescan.at)}. On arrival: ${m.arrival.ai ? `${pct(m.arrival.ai.probability)}, ${m.arrival.ai.model || 'an unknown model'}` : 'no AI score'}.` }) : null,
-                            (() => { const mt = h('div', { class: `meter ${ai >= aiThreshold ? 'hot' : ''}`, role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(ai * 100), 'aria-label': 'AI score' }, h('div')); mt.firstChild.style.width = pct(ai); return mt; })(),
-                            m.ai.reasons && m.ai.reasons.length ? [h('div', { class: 'small muted', text: 'What weighed most:' }), m.ai.reasons.map(r => h('div', { class: 'quote', text: r.facts ? 'Who sent it, the sender check and where its links go' : `“${r.sentence}”` }))] : null]),
+                    h('section', { class: 'card' }, h('h2', { text: 'AI opinion' }), aiOpinion(m, ai, opts)),
                     h('section', { class: 'card' }, h('h2', { text: 'Details' }), h('dl', { class: 'kv' },
                         h('dt', { text: 'Sender check' }), h('dd', { text: m.auth ? `DMARC ${m.auth.dmarc || '–'}, SPF ${m.auth.spf || '–'}, DKIM ${m.auth.dkim || '–'}` : 'not recorded' }),
                         h('dt', { text: 'Trigger' }), h('dd', { text: m.trigger ? ({ rules: 'Rules', ai: 'AI score', 'rules+ai': 'Rules and AI', admin: 'An admin\'s search for a campaign' })[m.trigger] || m.trigger : m.state === 'moved' && m.heldMovedBy ? `none: ${m.heldMovedBy} confirmed it as phishing` : 'none' }),
@@ -613,6 +687,7 @@
                 result.textContent = [`${pl('examples', 'example', 'examples')} in the file: ${num(n('phishing'))} phishing${fa.checked ? `, ${pl('genuine', 'false alarm', 'false alarms')}` : ''}.`,
                     n('gone') ? `${num(n('gone'))} no longer in a mailbox.` : '', n('failed') ? `${num(n('failed'))} couldn't be read.` : '',
                     n('conflicting') ? `${num(n('conflicting'))} campaigns marked both ways left out.` : '',
+                    n('not-english') ? `${num(n('not-english'))} not in English left out (the model reads English only).` : '',
                     n('not-reached') ? `${num(n('not-reached'))} more not reached: choose a shorter period for the older ones.` : ''].filter(Boolean).join(' ');
                 toast('Downloaded. Check it before it goes anywhere.');
             } catch (e) { result.textContent = `Couldn't make the file: ${e.message}`; }
@@ -705,7 +780,7 @@
     const clock = (ms) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     function inUse() {
         const v = view(), a = document.activeElement, sel = window.getSelection && window.getSelection();
-        return acting > 0 || pageBusy() || !tip().hidden || (a && a !== v && v.contains(a))
+        return acting > 0 || pageBusy() || popupOpen() || !tip().hidden || (a && a !== v && v.contains(a))
             || [...v.querySelectorAll('input, textarea')].some(i => i.value !== i.defaultValue)
             || !!(sel && !sel.isCollapsed && sel.anchorNode && v.contains(sel.anchorNode));
     }
@@ -773,50 +848,77 @@
     };
     const phishedText = (moved) => moved === 'moved' ? 'Confirmed as phishing, and moved to Spam.'
         : moved === 'gone' ? 'Confirmed as phishing. It isn\'t in the Inbox any more, so nothing was moved.' : 'Confirmed as phishing.';
+    // Each item is one email with all its copies (a campaign: the same email to many people), decided at once.
+    // "Look again" (restart) loads the queue again once, then leaves the address, so Next isn't undone.
     async function review(params) {
         const queue = params.get('queue') === 'suspicious' ? 'suspicious' : 'moved', Q = QUEUES[queue];
+        const plain = queue === 'moved' ? '#/review' : `#/review?queue=${queue}`;
         let st = reviewStates[queue];
         if (!st || params.get('restart') || st.days !== days) {
             const d = await api(`/api/review?${q({ days: String(days), queue })}`);
-            st = reviewStates[queue] = { keys: d.keys, i: 0, done: 0, days, counts: d.counts || {} };
+            const groups = d.groups || (d.keys || []).map(k => ({ keys: [k], users: [], senders: [], count: 1 }));
+            st = reviewStates[queue] = { groups, i: 0, done: 0, days, counts: d.counts || {} };
             for (const [k, other] of Object.entries(reviewStates)) if (k !== queue && other.days === days && d.counts) other.counts = d.counts;
+            if (params.get('restart')) { if (MEMORY) memRoute = plain; else history.replaceState(null, '', plain); }
         }
         reviewKeys = null;
-        const left = (k) => { const o = reviewStates[k]; return o && o.days === days && o.keys ? Math.max(0, o.keys.length - o.i) : (st.counts[k] || 0); };
+        const emailsLeft = (o) => o.groups.slice(o.i).reduce((a, g) => a + g.keys.length, 0);
+        const left = (k) => { const o = reviewStates[k]; return o && o.days === days && o.groups ? emailsLeft(o) : (st.counts[k] || 0); };
         const head = [h('h1', { text: 'Review' }),
             h('div', { class: 'queue-switch', role: 'group', 'aria-label': 'Which emails to review' }, Object.entries(QUEUES).map(([k, x]) =>
                 h('a', { class: `btn${k === queue ? ' primary' : ''}`, href: k === 'moved' ? '#/review' : `#/review?queue=${k}`, 'aria-current': k === queue ? 'page' : null }, `${x.label} (${num(left(k))})`))),
             queue === 'suspicious' ? h('p', { class: 'sub', text: `Suspicious: the checks found signs (a rules score of 3 or more) or the AI scored it at least the suspicious line, but not enough to move it, so it is still in the Inbox. Marking them is the best way to see what the move rules miss, and what retraining needs (Status → Model health).` }) : null];
-        if (st.i >= st.keys.length) {
+        if (st.i >= st.groups.length) {
             return [...head, h('div', { class: 'alert good', role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '✅' }),
                 h('div', { class: 'grow' }, h('b', { text: 'Nothing left to review.' }), ` ${num(st.done)} reviewed now; every ${Q.what} of the last ${days} days has been looked at.`)),
                 h('div', { class: 'actions' }, queue === 'moved' ? h('a', { class: 'btn', href: '#/readiness' }, 'See Readiness') : h('a', { class: 'btn', href: '#/health' }, 'See Model health'),
                     h('a', { class: 'btn', href: `#/review?${q(queue === 'moved' ? { restart: '1' } : { queue, restart: '1' })}` }, 'Look again'))];
         }
-        const key = st.keys[st.i];
-        let m, mode;
+        const g = st.groups[st.i];
         const same = new URLSearchParams(queue === 'moved' ? {} : { queue });   // (the same queue, not restarted)
-        try { ({ message: m, mode } = await api(`/api/message?${q({ key })}`)); } catch (e) { st.i++; return review(same); }
-        if (m.markedBy) { st.i++; return review(same); }   // (someone reviewed it meanwhile)
+        // The copy shown: the first one nobody has reviewed meanwhile (another admin, or Messages).
+        let m, mode;
+        while (g.keys.length) {
+            try { ({ message: m, mode } = await api(`/api/message?${q({ key: g.keys[0] })}`)); } catch (e) { g.keys.shift(); m = null; continue; }
+            if (m.markedBy) { g.keys.shift(); m = null; continue; }
+            break;
+        }
+        if (!m) { st.i++; return review(same); }
+        const key = g.keys[0], n = g.keys.length, many = n > 1;
         const moves = mode === 'enforce' && m.state === 'inbox' && m.action !== 'move';
         const decide = async (falseAlarm) => {
             acting++;
             try {
-                // Moved only when the button said so (the mode can change meanwhile, on another admin's screen).
-                const out = await api('/api/mark', { method: 'POST', body: { key, falseAlarm, move: !falseAlarm && moves } });
-                st.done++; st.i++; toast(falseAlarm ? Q.noDone : phishedText(out.moved)); render();
+                let msg;
+                if (!many) {
+                    // Moved only when the button said so (the mode can change meanwhile, on another admin's screen).
+                    const out = await api('/api/mark', { method: 'POST', body: { key, falseAlarm, move: !falseAlarm && moves } });
+                    msg = falseAlarm ? Q.noDone : phishedText(out.moved);
+                } else {
+                    const out = await api('/api/bulk', { method: 'POST', body: { keys: g.keys, action: falseAlarm ? 'false-alarm' : 'phishing' } });
+                    msg = falseAlarm ? `${Q.noDone.replace(/\.$/, '')}: ${num(out.done)} copies.`
+                        : `Confirmed as phishing: ${num(out.done)} copies${out.moved ? `, ${num(out.moved)} moved to Spam` : ''}.`;
+                    if (out.failed) msg += ` ${num(out.failed)} couldn't be marked.`;
+                }
+                st.done += n; st.i++; toast(msg); render();
             } catch (e) { toast(`Couldn't do that: ${e.message}`); } finally { acting--; }
         };
         const next = () => { st.i++; render(); };
         reviewKeys = { f: () => decide(true), p: () => decide(false), n: next, r: () => rescanEmail(key) };
+        const all = many ? ` (all ${num(n)})` : '';
+        const people = h('div', { class: 'card review-people' },
+            h('div', {}, h('b', { text: many ? `This email went to ${num(g.users.length || n)} people: ` : 'Sent to: ' }), shortList(g.users.length ? g.users : [m.user].filter(Boolean), `Who received "${m.subject || 'this email'}"`, { describe: (k) => `${num(k)} people in your organization received a copy${n > 1 ? `; ${num(n)} copies wait for review` : ''}.` })),
+            g.senders.length > 1 ? h('div', {}, h('b', { text: `From ${num(g.senders.length)} addresses: ` }), shortList(g.senders, 'Who sent it', { describe: (k) => `The copies came from ${num(k)} sender addresses.` })) : null,
+            many ? h('div', { class: 'small muted' }, `One decision covers every copy. `, g.campaign ? h('a', { href: `#/messages?${q({ campaign: g.campaign })}`, text: 'See every copy in Messages' }) : null) : null);
         return [...head,
-            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.keys.length)} ${Q.what} nobody has reviewed (last ${days} days, ${Q.order}). Keys: F ${Q.no.toLowerCase()}, P phishing${moves ? ' (moves it to Spam)' : ''}, N next, R re-scan with today's model.` }),
+            h('p', { class: 'sub', text: `${num(st.i + 1)} of ${num(st.groups.length)} to review (${num(emailsLeft(st))} ${Q.what} nobody has reviewed, last ${days} days, ${Q.order}; copies of one email together). Keys: F ${Q.no.toLowerCase()}, P phishing${moves ? ' (moves it to Spam)' : ''}, N next, R re-scan with today's model.` }),
             h('div', { class: 'review-bar card' },
-                h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ` ${Q.no}`),
-                h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), moves ? ' Phishing: move to Spam' : ' Phishing'),
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(true) }, h('kbd', { text: 'F' }), ` ${Q.no}${all}`),
+                h('button', { class: 'btn', type: 'button', onclick: () => decide(false) }, h('kbd', { text: 'P' }), moves ? ` Phishing: move to Spam${all}` : ` Phishing${all}`),
                 h('button', { class: 'btn', type: 'button', onclick: next }, h('kbd', { text: 'N' }), ' Next, undecided'),
                 rescanButton(m, 'btn review-rescan'),
                 !moves && m.state === 'inbox' && mode !== 'enforce' ? h('span', { class: 'muted small', text: 'Monitor mode: nothing is moved.' }) : null),
+            people,
             ...[].concat(emailView(m, { inReview: true, mode }))];
     }
 
@@ -1256,7 +1358,7 @@
         window.addEventListener('scroll', hideTip, { passive: true });
         // The review queue's keys (not while typing, nor with Ctrl, Alt or Cmd).
         document.addEventListener('keydown', (e) => {
-            if (!reviewKeys || !/^#\/?review/.test(currentHash()) || e.ctrlKey || e.metaKey || e.altKey || acting) return;
+            if (!reviewKeys || !/^#\/?review/.test(currentHash()) || e.ctrlKey || e.metaKey || e.altKey || acting || popupOpen()) return;
             if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
             const f = reviewKeys[String(e.key).toLowerCase()];
             if (f) { e.preventDefault(); f(); }

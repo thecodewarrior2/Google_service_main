@@ -54,6 +54,23 @@ can only read groups. It never uses that account's password.
    - nobody signs in with it.
 3. Assign it the new role: open the user, then **Admin roles and privileges → Assign roles**.
 
+### The colleague-name check (optional, recommended)
+
+The service can also recognize **an outside sender using the name of someone in your directory**, a
+common phishing trick. For that, the same directory admin reads the users' names (kept only as one-way
+hashes):
+
+1. Edit the `SPRUCE group reader` role: under **Admin API privileges**, also tick **Users → Read**.
+2. At step 5 (and on an installation already running: **Security → API controls → Manage Domain Wide
+   Delegation**, edit the service's entry), add this scope to the line:
+
+   ```
+   https://www.googleapis.com/auth/admin.directory.user.readonly
+   ```
+
+Without them the check is off and **Status** says so; nothing else changes. To turn it off on purpose,
+set `COLLEAGUE_NAMES=off` on both services (docs/DEPLOY.md, the settings table).
+
 ## 3. A Google Cloud project
 
 1. In [console.cloud.google.com](https://console.cloud.google.com), create a **new project** in your
@@ -128,6 +145,9 @@ console:
    ```
    https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/admin.directory.group.member.readonly
    ```
+
+   For the colleague-name check (step 2), add a third:
+   `,https://www.googleapis.com/auth/admin.directory.user.readonly`.
 
 4. Click **Authorize**, then go back to Cloud Shell and press Enter.
 

@@ -12,7 +12,7 @@ model, without any person's details reaching a repository or an outside service.
 **In short:**
 
 1. **Allow and download.** An admin downloads the marked emails from Status → Model health. They arrive with
-   the people already taken out.
+   the people already taken out. Emails not in English are left out (the model reads English only).
 2. **Review.** A person reads every example and decides on each word marked ⟦like this⟧.
 3. **Replace the placeholders.** [NAME] and the others become made-up names, by hand or with claude.ai
    (only if your district allows it, and only after the review).
