@@ -132,7 +132,7 @@ for(const r of D.records){for(const k of ['processedAt','receivedAt','releasedAt
 const sh=Math.round(d/86400000);if(sh)for(const s of D.stats){s.day=day(Date.parse(s.day+'T12:00:00Z')+sh*86400000);}D.now=Date.now();})();`;
     const json = JSON.stringify(data).replace(/</g, '\\u003c');
     let html = read('public/index.html');
-    html = html.replace('<title>Mail Protection Admin</title>', '<title>Mail Protection Admin</title>\n<meta name="description" content="Clickable mockup of the S.P.R.U.C.E+ Mail Protection admin dashboard, with made-up data.">');
+    html = html.replace('<title>S.P.R.U.C.E Mail Protection Service</title>', '<title>S.P.R.U.C.E Mail Protection Service</title>\n<meta name="description" content="Clickable mockup of the S.P.R.U.C.E Mail Protection Service admin dashboard, with made-up data.">');
     html = html.replace('<link rel="stylesheet" href="app.css">', `<style>\n${read('public/app.css')}\n</style>`);
     html = html.replace('<script src="app.js" defer></script>', '');
     html = html.replace('</body>', `<script>window.SPRUCE_MEMORY_ROUTER = true; window.SPRUCE_DEMO_DATA = ${json};</script>\n<script>${shift}</script>\n<script>\n${read('src/dashboard/aggregate.js')}\n</script>\n<script>${fakeApi}</script>\n<script>\n${read('public/app.js')}\n</script>\n</body>`);

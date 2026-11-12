@@ -1,6 +1,6 @@
 # Installing for a test, limited to one security group
 
-This sets up S.P.R.U.C.E+ Mail Protection in a Google Cloud project of your own. Only the mailboxes of
+This sets up S.P.R.U.C.E Mail Protection Service in a Google Cloud project of your own. Only the mailboxes of
 the members of **one security group** are watched. It starts in **monitor mode**, so nothing is moved:
 the dashboard shows what *would* have been moved. Plan on 30 to 45 minutes.
 

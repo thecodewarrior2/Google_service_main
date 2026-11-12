@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: check the installation end to end, and say what to run for each problem.
+# S.P.R.U.C.E Mail Protection Service: check the installation end to end, and say what to run for each problem.
 # In Cloud Shell, from the folder you installed from:   bash deploy/doctor.sh
 # Read-only: it changes nothing. It checks what the dashboard's Status page can't see from inside the
 # service: the Pub/Sub subscription, Gmail's permission to publish, the alert policies, recent errors.
@@ -19,7 +19,7 @@ ok() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
 no() { printf '  \033[31mFIX\033[0m  %s\n       What to do: %s\n' "$1" "$2"; bad=$((bad + 1)); }
 iap_on() { gcloud run services describe "$1" --region="$REGION" --format=json 2>/dev/null | grep -Eq '"run.googleapis.com/iap-enabled": "?true'; }
 
-echo "S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION)"
+echo "S.P.R.U.C.E Mail Protection Service in $PROJECT ($REGION)"
 [ "$(gcloud billing projects describe "$PROJECT" --format='value(billingEnabled)' 2>/dev/null)" = True ] && ok "A billing account is linked." \
     || no "No billing account is linked: Cloud Run stops." "link one in the Cloud console (Billing)."
 WIMG="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(spec.template.spec.containers[0].image)' 2>/dev/null)"
@@ -50,6 +50,7 @@ for j in spruce-renew-watches spruce-sync-feeds; do
 done
 if [ "$ALERT_EMAIL" = off ]; then ok "Alerts aren't emailed (ALERT_EMAIL=off): they show in the dashboard."
 else
+    # "SPRUCE Mail Protection" matches the policies' names before 0.5.9 and after ("… Service: …").
     n="$(gcloud monitoring policies list --filter='displayName:"SPRUCE Mail Protection"' --format='value(name)' 2>/dev/null | grep -c . || true)"
     [ "${n:-0}" -ge 2 ] && ok "The alert policies are there ($n)." || no "The alert policies are missing ($n of 2): alerts aren't emailed." "bash deploy/install.sh (step 9); it needs the Monitoring Editor role, or Owner."
 fi

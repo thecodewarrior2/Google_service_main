@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: upgrade an installed service to the version in this folder.
+# S.P.R.U.C.E Mail Protection Service: upgrade an installed service to the version in this folder.
 # In Cloud Shell, after unzipping the new version next to the old one (docs/INSTALL.md, "Upgrading"):
 #     cd spruce-mail-protection-NEW
 #     bash deploy/upgrade.sh                      # finds the settings of the version installed before
@@ -60,7 +60,7 @@ NEWMODEL="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 
 NEWMODEL_COMMIT="$(sed -n 's/.*"commit": *"\([0-9a-f]\{40\}\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
 OLDMODEL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(metadata.labels.spruce-model)' 2>/dev/null | tr '-' '.' || true)"
 echo
-echo "Upgrade S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION): $FROM -> $VERSION"
+echo "Upgrade S.P.R.U.C.E Mail Protection Service in $PROJECT ($REGION): $FROM -> $VERSION"
 echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')$( [ -n "$NEWMODEL_COMMIT" ] && echo ", downloaded from TinyPhishLLM (commit ${NEWMODEL_COMMIT:0:7}) when the image is built")"
 # The mode, and what the installer will take from the dashboard or ask about (deploy/dashboard-policy.sh).
 . deploy/dashboard-policy.sh

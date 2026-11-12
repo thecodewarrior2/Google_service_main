@@ -45,7 +45,7 @@ test('the weekly summary: off by default; Monday from 7 AM in TIME_ZONE, once a 
     assert.equal(out.sent, 2);
     assert.deepEqual(inserted[0].labels, ['INBOX', 'UNREAD']);
     const raw = inserted[0].raw;
-    assert.match(raw, /^From: "S\.P\.R\.U\.C\.E\+ Mail Protection" <spruce-directory@maple-schools\.example>$/m);
+    assert.match(raw, /^From: "S\.P\.R\.U\.C\.E Mail Protection Service" <spruce-directory@maple-schools\.example>$/m);
     assert.match(raw, /^Subject: S\.P\.R\.U\.C\.E\+ weekly summary: 0 would be moved, Nov 2 to Nov 9$/m);
     const body = Buffer.from(raw.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
     assert.match(body, /monitor mode: nothing is moved/); assert.match(body, /https:\/\/spruce-admin-1\.us-east1\.run\.app/); assert.match(body, /Turn it off there/);

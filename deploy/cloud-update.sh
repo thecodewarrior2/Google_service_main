@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: an update started on the dashboard (Settings → Update; src/update.js).
+# S.P.R.U.C.E Mail Protection Service: an update started on the dashboard (Settings → Update; src/update.js).
 # Not run by hand: the spruce-update job (deploy/install.sh) starts a Cloud Build as spruce-updater, whose
 # steps clone google_service_main into /workspace/release and run this file's phases in order:
 #

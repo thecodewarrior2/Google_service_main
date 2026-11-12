@@ -256,7 +256,7 @@ test('update.sh: fetches the newest approved version, unpacks it next to this fo
         const dest = path.join(w.home, 'spruce-mail-protection-9.9.0');
         assert.match(r.out, /Unpacked 9\.9\.0 in .*spruce-mail-protection-9\.9\.0/);
         assert.ok(fs.existsSync(path.join(dest, 'deploy', 'settings.env')), 'the settings were copied over');
-        assert.match(r.out, /Upgrade S\.P\.R\.U\.C\.E\+ Mail Protection in test-proj \(us-east1\): 0\.2\.14 -> 9\.9\.0/);
+        assert.match(r.out, /Upgrade S\.P\.R\.U\.C\.E Mail Protection Service in test-proj \(us-east1\): 0\.2\.14 -> 9\.9\.0/);
         assert.match(r.out, new RegExp(`AI model \\(phish-tiny\\): ${model.replace(/\./g, '\\.')} -> ${model.replace(/\./g, '\\.')} \\(the same\\)`));
         assert.ok(has(r.calls, /run deploy spruce-worker/));
         // From the new folder: already the newest.

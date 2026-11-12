@@ -1,11 +1,11 @@
-# S.P.R.U.C.E+ Mail Protection for Google Workspace
+# S.P.R.U.C.E Mail Protection Service for Google Workspace
 
 **Two repositories.** `google_service_testing` is where it's developed and tested.
 `google_service_main` holds only the versions the maintainer has tried and approved, each copied there
 unchanged. Which one you're reading: the repository's name on GitHub, or `git remote get-url origin`.
 The version is in `package.json` and `CHANGELOG.md`.
 
-S.P.R.U.C.E+ Mail Protection checks every new email in your Google Workspace domain with the same
+S.P.R.U.C.E Mail Protection Service checks every new email in your Google Workspace domain with the same
 checks and AI model as the S.P.R.U.C.E+ browser extension. It moves suspicious ones to Spam, or in
 monitor mode only records them. An admin dashboard shows what was moved, why, which campaigns came in
 and who was affected, and lets IT move an email back to the Inbox. Nothing is ever withheld: every email

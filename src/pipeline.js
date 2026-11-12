@@ -952,7 +952,7 @@ class Service {
         if (!to.length) return { sent: 0, to: [], failed: [], error: 'nobody to send it to (ADMIN_EMAILS, ADMIN_GROUP)' };
         const d = await this.digestContent();
         const org = this.cfg.orgDomains[0] || 'localhost';
-        const from = `"S.P.R.U.C.E+ Mail Protection" <${this.cfg.directoryAdmin || `no-reply@${org}`}>`;
+        const from = `"S.P.R.U.C.E Mail Protection Service" <${this.cfg.directoryAdmin || `no-reply@${org}`}>`;
         const out = { sent: 0, to, failed: [] };
         for (const user of to) {
             try {

@@ -1,6 +1,6 @@
 # Rules for AI assistants working in this repository
 
-This file is in two repositories of S.P.R.U.C.E+ Mail Protection, because each approved version is
+This file is in two repositories of S.P.R.U.C.E Mail Protection Service, because each approved version is
 copied unchanged from one to the other:
 
 - **`google_service_testing`**: the TESTING repository. All work happens here, on its default branch.

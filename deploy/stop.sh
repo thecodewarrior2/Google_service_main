@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: stop watching every mailbox (docs/INSTALL.md, "Turning it off").
+# S.P.R.U.C.E Mail Protection Service: stop watching every mailbox (docs/INSTALL.md, "Turning it off").
 # Run in Cloud Shell from the unzipped folder:  bash deploy/stop.sh
 # Gmail stops sending notifications, so no email is read from then on. Records stay in Firestore.
 # Running deploy/install.sh again starts watching again.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: go back to the build that ran before the current one.
+# S.P.R.U.C.E Mail Protection Service: go back to the build that ran before the current one.
 # In Cloud Shell, from the folder with your deploy/settings.env:   bash deploy/rollback.sh
 # Cloud Run keeps every earlier build (a "revision", with the settings it had). This sends all traffic,
 # on both services, back to the one before the build serving now. Firestore records are kept. Run it

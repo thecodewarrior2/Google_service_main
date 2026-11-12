@@ -1,6 +1,6 @@
 # What it costs
 
-What S.P.R.U.C.E+ Mail Protection (0.5.0) costs to run in your own Google Cloud project, by district
+What S.P.R.U.C.E Mail Protection Service (0.5.0) costs to run in your own Google Cloud project, by district
 size. These are estimates at Google's list prices as checked in November 2026 (US dollars, before tax).
 Check them against Google's pricing pages before you budget. How the numbers were measured is in
 `docs/SCALING.md`.

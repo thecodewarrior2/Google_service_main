@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.9: The name is now S.P.R.U.C.E Mail Protection Service
+
+Nothing in how emails are judged changes: only the name.
+
+- **S.P.R.U.C.E Mail Protection Service** everywhere the service names itself: the dashboard's header and
+  browser tab, the weekly summary's subject, the sender name on the notices it puts in mailboxes ("From:"),
+  the install, update, upgrade and check scripts, and the documentation.
+- **In Google Cloud,** new installations name the service accounts, the budget, the alert channel and the
+  alert policies "SPRUCE Mail Protection Service …". `deploy/install.sh` finds an existing budget or alert
+  policy under its old name too and renames it, so none is made twice; `deploy/doctor.sh` counts the alert
+  policies under either name. Service accounts and the alert channel keep the name they were made with.
+- Unchanged, so installations keep working: the services' and jobs' identifiers (`spruce-worker`,
+  `spruce-admin`, `spruce-…`), the image (`mail-protection`), the install zip's name, the GitHub
+  repositories, and Gmail's labels.
+- `installLevel` is unchanged: nothing new to install.
+
+
 ## 0.5.8: The AI model comes from TinyPhishLLM, downloaded when the service is built
 
 Nothing in how emails are judged changes: the model is still phish-tiny 0.13.0, byte for byte. It now

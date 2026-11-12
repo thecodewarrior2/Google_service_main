@@ -1,4 +1,4 @@
-// Mail Protection Admin: the dashboard page. Plain JavaScript, no libraries, no build step.
+// S.P.R.U.C.E Mail Protection Service: the admin dashboard page. Plain JavaScript, no libraries, no build step.
 // Every value from an email (senders, subjects, reasons) is put on the page as TEXT (textContent,
 // createTextNode), never as HTML: email content is written by attackers.
 (function () {
@@ -1150,7 +1150,7 @@
         pendingAt = Date.now();
         try {
             const p = await api('/api/pending');
-            document.title = p.total ? `(${p.total}) Mail Protection Admin` : 'Mail Protection Admin';
+            document.title = p.total ? `(${p.total}) S.P.R.U.C.E Mail Protection Service` : 'S.P.R.U.C.E Mail Protection Service';
             unreviewed = p.unreviewed || 0;
             showUnreviewed();
         } catch (e) { /* the next tick tries again */ }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: clear what the dashboard shows, and start counting again
+# S.P.R.U.C.E Mail Protection Service: clear what the dashboard shows, and start counting again
 # (docs/INSTALL.md, "Clearing the dashboard's data"). Run in Cloud Shell from the folder you installed
 # or last upgraded from:
 #     bash deploy/clear-data.sh                    # asks you to type the project ID first

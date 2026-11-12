@@ -1,4 +1,4 @@
-# S.P.R.U.C.E+ Mail Protection (Cloud Run). One image, two services: ROLE=worker and ROLE=admin
+# S.P.R.U.C.E Mail Protection Service (Cloud Run). One image, two services: ROLE=worker and ROLE=admin
 # (docs/DEPLOY.md).
 FROM node:22-slim
 ENV NODE_ENV=production

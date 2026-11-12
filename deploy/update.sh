@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: upgrade to the newest approved version, without uploading a zip.
+# S.P.R.U.C.E Mail Protection Service: upgrade to the newest approved version, without uploading a zip.
 # In Cloud Shell, from the folder you installed or last upgraded from:
 #     bash deploy/update.sh
 # It downloads the repository of approved releases (google_service_main: only versions the maintainer

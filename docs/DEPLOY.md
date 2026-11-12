@@ -93,15 +93,15 @@ It also adds a fifth, `spruce-updater`, for the dashboard's Settings → Update 
 dashboard" below). It never touches mail either.
 
 ```bash
-gcloud iam service-accounts create spruce-run --display-name="SPRUCE Mail Protection (Cloud Run)"
+gcloud iam service-accounts create spruce-run --display-name="SPRUCE Mail Protection Service (Cloud Run)"
 ```
 
 ```bash
-gcloud iam service-accounts create spruce-delegate --display-name="SPRUCE Mail Protection (Gmail delegation)"
+gcloud iam service-accounts create spruce-delegate --display-name="SPRUCE Mail Protection Service (Gmail delegation)"
 ```
 
 ```bash
-gcloud iam service-accounts create spruce-invoker --display-name="SPRUCE Mail Protection (Pub/Sub and Scheduler)"
+gcloud iam service-accounts create spruce-invoker --display-name="SPRUCE Mail Protection Service (Pub/Sub and Scheduler)"
 ```
 
 ```bash

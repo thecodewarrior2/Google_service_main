@@ -1,4 +1,4 @@
-/* Mail Protection Admin. Tokens on :root; dark mode is its own set of steps (not an automatic flip). */
+/* S.P.R.U.C.E Mail Protection Service, the admin dashboard. Tokens on :root; dark mode is its own set of steps (not an automatic flip). */
 :root {
   color-scheme: light;
   --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee; --raised: #ffffff;

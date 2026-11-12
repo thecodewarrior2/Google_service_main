@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S.P.R.U.C.E+ Mail Protection: install, or update, in your own Google Cloud project.
+# S.P.R.U.C.E Mail Protection Service: install, or update, in your own Google Cloud project.
 # Run it in Cloud Shell, from the folder you unzipped (docs/INSTALL.md):
 #     bash deploy/install.sh
 # Settings come from deploy/settings.env (copy deploy/settings.example.env). Safe to run again: it
@@ -62,7 +62,7 @@ INSTALL_LEVEL="$(sed -n 's/^ *"installLevel": *\([0-9]*\).*/\1/p' package.json |
 TOPIC=gmail-spruce
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-step "Project $PROJECT ($REGION), S.P.R.U.C.E+ Mail Protection $VERSION, mode $MODE"
+step "Project $PROJECT ($REGION), S.P.R.U.C.E Mail Protection Service $VERSION, mode $MODE"
 gcloud config set project "$PROJECT" --quiet >/dev/null
 # The policy settings changed on the dashboard (Settings → Policy): taken where settings.env doesn't set
 # them, asked about where the two differ, and written into settings.env (deploy/dashboard-policy.sh).
@@ -87,11 +87,12 @@ gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleap
 # A budget alert: Google emails the billing account's admins as soon as this project is charged at all
 # (1% of the amount), and again at half and all of it. It warns; it doesn't stop the service.
 budget() {
-    local name="SPRUCE Mail Protection ($PROJECT)" cur id
+    # (Named "SPRUCE Mail Protection (…)" before 0.5.9: found under either name, and renamed.)
+    local name="SPRUCE Mail Protection Service ($PROJECT)" old="SPRUCE Mail Protection ($PROJECT)" cur id
     cur="$(gcloud billing accounts describe "$BILLING_ACCOUNT" --format='value(currencyCode)' 2>/dev/null || true)"; cur="${cur:-USD}"
-    id="$(gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --filter="displayName=\"$name\"" --format='value(name)' 2>/dev/null | head -1)" || return 1
+    id="$(gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --filter="displayName=\"$name\" OR displayName=\"$old\"" --format='value(name)' 2>/dev/null | head -1)" || return 1
     if [ -n "$id" ]; then
-        gcloud billing budgets update "$id" --billing-account="$BILLING_ACCOUNT" --budget-amount="$BUDGET_ALERT$cur" --clear-threshold-rules \
+        gcloud billing budgets update "$id" --billing-account="$BILLING_ACCOUNT" --display-name="$name" --budget-amount="$BUDGET_ALERT$cur" --clear-threshold-rules \
             --add-threshold-rule=percent=0.01 --add-threshold-rule=percent=0.5 --add-threshold-rule=percent=1.0 --quiet >/dev/null || return 1
     else
         gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" --display-name="$name" --budget-amount="$BUDGET_ALERT$cur" \
@@ -121,11 +122,11 @@ else echo "  Old documents expire by themselves (Firestore TTL policies)."; fi
 
 step "3/9 Service accounts (no keys)"
 mk_sa() { gcloud iam service-accounts describe "$1@$PROJECT.iam.gserviceaccount.com" >/dev/null 2>&1 || gcloud iam service-accounts create "$1" --display-name="$2" --quiet; }
-mk_sa spruce-run "SPRUCE Mail Protection (Cloud Run)"
-mk_sa spruce-delegate "SPRUCE Mail Protection (Gmail delegation)"
-mk_sa spruce-invoker "SPRUCE Mail Protection (Pub/Sub and Scheduler)"
-mk_sa spruce-build "SPRUCE Mail Protection (Cloud Build)"
-mk_sa spruce-updater "SPRUCE Mail Protection (updates from the dashboard)"
+mk_sa spruce-run "SPRUCE Mail Protection Service (Cloud Run)"
+mk_sa spruce-delegate "SPRUCE Mail Protection Service (Gmail delegation)"
+mk_sa spruce-invoker "SPRUCE Mail Protection Service (Pub/Sub and Scheduler)"
+mk_sa spruce-build "SPRUCE Mail Protection Service (Cloud Build)"
+mk_sa spruce-updater "SPRUCE Mail Protection Service (updates from the dashboard)"
 retry gcloud iam service-accounts add-iam-policy-binding "$SA_DELEGATE" --member="serviceAccount:$SA_RUN" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/datastore.user --condition=None --quiet >/dev/null
 # Pub/Sub signs its push requests as spruce-invoker (needed explicitly in older projects).
@@ -170,7 +171,7 @@ gcloud pubsub topics add-iam-policy-binding "$TOPIC" --member=serviceAccount:gma
 
 step "6/9 Build the image"
 gcloud artifacts repositories describe spruce --location="$REGION" >/dev/null 2>&1 \
-    || gcloud artifacts repositories create spruce --repository-format=docker --location="$REGION" --description="S.P.R.U.C.E+ Mail Protection" --quiet
+    || gcloud artifacts repositories create spruce --repository-format=docker --location="$REGION" --description="S.P.R.U.C.E Mail Protection Service" --quiet
 # (Settings → Update stores its builds here too, as spruce-updater.)
 retry gcloud artifacts repositories add-iam-policy-binding spruce --location="$REGION" --member="serviceAccount:$SA_UPDATER" --role=roles/artifactregistry.writer --quiet >/dev/null
 # Keep only the newest builds, so stored images stay within the free 0.5 GB (Google applies it about daily).
@@ -360,19 +361,21 @@ policy() { # display name, log filter (JSON-escaped), label extractors (JSON), w
         '  "alertStrategy": { "notificationRateLimit": { "period": "300s" }, "autoClose": "1800s" },' \
         "  \"notificationChannels\": [ \"$5\" ]" \
         '}' > "$f"
-    id="$(gcloud monitoring policies list --filter="displayName=\"$1\"" --format='value(name)' 2>/dev/null | head -1)"
+    # (Named "SPRUCE Mail Protection: …" before 0.5.9: found under either name; the update renames it.)
+    local old="${1/SPRUCE Mail Protection Service/SPRUCE Mail Protection}"
+    id="$(gcloud monitoring policies list --filter="displayName=\"$1\" OR displayName=\"$old\"" --format='value(name)' 2>/dev/null | head -1)"
     if [ -n "$id" ]; then gcloud monitoring policies update "$id" --policy-from-file="$f" --quiet >/dev/null
     else gcloud monitoring policies create --policy-from-file="$f" --quiet >/dev/null; fi
 }
 alerts() {
     local channel
     channel="$(gcloud beta monitoring channels list --filter="type=\"email\" AND labels.email_address=\"$ALERT_TO\"" --format='value(name)' 2>/dev/null | head -1)"
-    [ -n "$channel" ] || channel="$(gcloud beta monitoring channels create --display-name="SPRUCE Mail Protection alerts" --type=email --channel-labels=email_address="$ALERT_TO" --format='value(name)' --quiet)" || return 1
+    [ -n "$channel" ] || channel="$(gcloud beta monitoring channels create --display-name="SPRUCE Mail Protection Service alerts" --type=email --channel-labels=email_address="$ALERT_TO" --format='value(name)' --quiet)" || return 1
     [ -n "$channel" ] || return 1
-    policy "SPRUCE Mail Protection: an alert from the service" 'resource.type=\"cloud_run_revision\" AND jsonPayload.spruceAlert:*' \
+    policy "SPRUCE Mail Protection Service: an alert from the service" 'resource.type=\"cloud_run_revision\" AND jsonPayload.spruceAlert:*' \
         '{ "alert": "EXTRACT(jsonPayload.spruceAlert)", "message": "EXTRACT(jsonPayload.message)" }' \
         "The service reported something to look at: the message says what. Open the dashboard (Overview, Activity)." "$channel" || return 1
-    policy "SPRUCE Mail Protection: a scheduled job failed" 'resource.type=\"cloud_scheduler_job\" AND severity>=ERROR AND resource.labels.job_id:\"spruce-\"' \
+    policy "SPRUCE Mail Protection Service: a scheduled job failed" 'resource.type=\"cloud_scheduler_job\" AND severity>=ERROR AND resource.labels.job_id:\"spruce-\"' \
         '{ "job": "EXTRACT(resource.labels.job_id)", "why": "EXTRACT(jsonPayload.debugInfo)" }' \
         "A scheduled job couldn't reach the worker. If it says 401 or 403, see docs/INSTALL.md, Troubleshooting, The jobs and notifications are refused." "$channel" || return 1
 }
