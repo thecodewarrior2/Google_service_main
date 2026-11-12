@@ -80,6 +80,18 @@ class MemoryStore {
         if (!this.senders.has(hash)) this.senders.set(hash, now);
         return this.senders.get(hash);
     }
+    // How many people the same outside account shared with this hour (see store/firestore.js).
+    async shareReach(key, userKey, now, threshold) {
+        this.shares = this.shares || new Map();
+        const id = `${key}~${Math.floor(now / 3600000)}`;
+        const s = this.shares.get(id) || { users: new Set(), alerted: false, at: now };
+        s.users.add(userKey);
+        const crossed = !s.alerted && s.users.size >= threshold;
+        if (crossed) s.alerted = true;
+        this.shares.set(id, s);
+        if (this.shares.size > 10000) this.shares.delete(this.shares.keys().next().value);
+        return { count: s.users.size, crossed };
+    }
     // The brakes' counters (see store/firestore.js; here each call is atomic by itself).
     async reserveMove(bucket, limit, now = Date.now()) {
         const c = this.moveCounts.get(bucket) || { count: 0, at: now };

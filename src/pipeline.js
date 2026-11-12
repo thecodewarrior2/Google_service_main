@@ -12,7 +12,8 @@
 // listed message is done, the mailbox's sync position stays where it was, and it only ever moves forward.
 const crypto = require('crypto');
 const { readMessage } = require('./engine/mime');
-const { analyze, aiReading, senderVerified } = require('./engine/analyze');
+const { analyze, aiReading, senderVerified, platformNotification, shareSource } = require('./engine/analyze');
+const { MASS_SHARE } = require('./engine/notifications');
 const { decide, isAllowed } = require('./policy');
 const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds, movesForward } = require('./store/history');
@@ -417,6 +418,25 @@ class Service {
         return out;
     }
 
+    // A share from outside (a platform's notification for a person outside, or an outside email linking a
+    // document, form or signature request: notifications.js shareSource): how many of the organization's
+    // people the same outside account reached this hour (store.shareReach, by hashes). Reaching MASS_SHARE
+    // is the usual sign of an account taken over elsewhere: an alert, once per account and hour.
+    async countShare(facts, user, now) {
+        const src = shareSource(facts, this.cfg.orgDomains);
+        if (!src) return 0;
+        try {
+            const r = await this.store.shareReach(senderHash(src.address), senderHash(user), now, MASS_SHARE);
+            if (r.crossed) {
+                await this.alert('mass-share', `${src.address} (outside your organization) sent the same ${src.relay ? `${src.relay.via} share` : 'share or signature request'} to ${r.count} of your people within the hour. If it's phishing, Email → Campaigns → open it → Confirm phishing moves every copy.`);
+            }
+            return r.count;
+        } catch (e) {
+            this.log.error(JSON.stringify({ message: `Couldn't count an outside share: ${String(e && e.message || e).slice(0, 200)}` }));
+            return 0;
+        }
+    }
+
     // "Check an email" (dashboard): an email an admin pasted (its original, from Gmail's "Show original")
     // or uploaded, judged as on arrival with the same lookups, in the current mode, brakes aside.
     // Nothing is stored, moved or counted. The answer has a record's shape, for the same view.
@@ -425,7 +445,7 @@ class Service {
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
         // Judged for the recipient in the organization, if the email names one; else for the admin.
         const mailbox = (facts.to || []).find(a => this.cfg.orgDomains.includes(a.split('@')[1])) || by;
-        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames(), aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(mailbox), aiInside: this.aiReadsInside() });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
         const domain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
@@ -461,12 +481,15 @@ class Service {
             try {
                 const E = require('./engine/spruce').load();
                 const names = await this.gmail.userNames(this.cfg.directoryAdmin);
-                const hashes = new Set(names.map(n => E.colleagueNameHash(n)).filter(Boolean));
-                this.colleagues = { hashes, at: now, error: null };
+                // Each { name, email } (or a name alone): only one-way hashes are kept, in memory.
+                const people = names.map(n => (typeof n === 'string' ? { name: n, email: '' } : n || {}));
+                const hashes = new Set(people.map(p => E.colleagueNameHash(p.name)).filter(Boolean));
+                const byEmail = new Map(people.filter(p => p.email).map(p => [String(p.email).toLowerCase(), E.colleagueNameHash(p.name)]).filter(([, h]) => h));
+                this.colleagues = { hashes, byEmail, at: now, error: null };
                 await this.store.setState('colleagueNames', { at: now, names: hashes.size, error: null }).catch(() => {});
             } catch (e) {
                 const error = String(e && e.message || e).slice(0, 300);
-                this.colleagues = { hashes: c ? c.hashes : null, at: now, error };
+                this.colleagues = { hashes: c ? c.hashes : null, byEmail: c ? c.byEmail : null, at: now, error };
                 await this.store.setState('colleagueNames', { at: now, names: c && c.hashes ? c.hashes.size : 0, error }).catch(() => {});
                 if (!c || !c.error) this.log.warn(JSON.stringify({ message: `Couldn't read the directory's names for the colleague-name check: ${error}` }));
             } finally { this.colleaguesLoading = null; }
@@ -474,6 +497,9 @@ class Service {
         })();
         return this.colleaguesLoading;
     }
+
+    // The recipient's own name's hash (colleagueNames), or ''.
+    selfNameHash(user) { const c = this.colleagues; return (c && c.byEmail && c.byEmail.get(String(user || '').toLowerCase())) || ''; }
 
     // Whether the AI model reads mail from inside the organization (verified: your domains, DMARC passing):
     // AI_SCANS_INSIDE (Settings → Policy), off by default; AI_MOVES_INSIDE needs it, so it counts too.
@@ -514,7 +540,7 @@ class Service {
         // The sender counts as new if it was on arrival (by now it isn't, and that would change the rules'
         // score, not the model or the checks): from the arrival's signs, kept with them after a re-scan.
         const firstTime = rec.arrival ? !!rec.arrival.firstTime : (rec.signals || []).some(x => x && x.kind === 'first-time');
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(rec.user), aiInside: this.aiReadsInside() });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
         const ai = aiRecord(result.ai, this.cfg);
@@ -600,11 +626,17 @@ class Service {
         // Both never change once set, so each instance asks Firestore once: when the service was installed,
         // and when each sender was first seen (a campaign's 10,000 copies cost one look, not 10,000).
         const installedAt = this.installedAt || (this.installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now));
-        const first = facts.senderAddress ? await this.firstSeen(senderHash(facts.senderAddress), now) : now;
+        // A platform's notification for a person (a Drive share, DocuSign…) is first seen by the person's own
+        // address, not the platform's, which every share comes from (0.5.16).
+        const relay = platformNotification(facts, this.cfg.orgDomains);
+        const who = relay ? relay.address : facts.senderAddress;
+        const first = who ? await this.firstSeen(senderHash(who), now) : now;
         const learning = now - installedAt < this.cfg.firstSeenLearningDays * DAY;
+        const shareReach = alreadyMoved ? 0 : await this.countShare(facts, user, now);
         // Allowlisted only with DMARC passing for the address (policy.js).
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
-        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !learning && now - first < DAY, intel: this.intel, colleagues: await this.colleagueNames(), aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !!who && !learning && now - first < DAY, intel: this.intel,
+            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), shareReach, aiInside: this.aiReadsInside() });
         result.allowlistedUnverified = allowlisted && !verified;
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });

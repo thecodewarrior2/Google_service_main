@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.16: Shares and notifications judged by the person behind them; compromised-district campaigns
+
+- **Fixed: a colleague's own Classroom post, Drive share or DocuSign envelope was "suspicious".** A
+  platform sends these from its own address: "Jordan Rivera (Classroom)" <no-reply@classroom.google.com>,
+  "Dana Morales (via Google Docs)" <drive-shares-dm-noreply@google.com>. The colleague-name check (0.5.10)
+  took that for a colleague's name on an outside address (3) and added "from outside" (1): 4, suspicious;
+  with "first email from" Google's address, 5.5 and moved. Every Classroom notification from a teacher or
+  student in the directory went to Review.
+- **Platform notifications are judged by the person's own address** (`src/engine/notifications.js`):
+  Google (Classroom, Drive, Docs, Sheets, Slides, Forms, Calendar), DocuSign, Dropbox, Adobe Acrobat Sign,
+  SharePoint. Only when Gmail's sender check (DMARC) passed for the platform's own domain and the sender
+  is one of its notification mailboxes; a forged one is judged like any email. The person's address: the
+  Reply-To the platform sets from their account, or the "Name (address)" it writes in the text; neither
+  (Classroom): unknown, and nothing comes of the name. "Outside" and "first email" go by that address. The
+  routing rule's `[EXTERNAL]` tag, `header.i` and `dara=` can't tell: they are the platform's (or the
+  recipient's) for every share.
+- **Outside shares** (a notification for a person outside, or an outside email linking a document, form,
+  folder or signature request):
+  - an account under a colleague's name: at another organization 5 (flagged), at a personal provider 3;
+  - a colleague named in the subject or text ("… asked me to share", a signature): 2; not a greeting, the
+    reader's own name (the directory's primary addresses, read with the names, say whose), the sender's
+    own name, or a quotation of the colleague's own email ("Dana Morales <dana@your-district> wrote:");
+  - asking to sign in, verify an account or confirm details to see it: 1;
+  - the same outside account reaching 10 of your people within the hour: 2, and an alert once per account
+    and hour (`store.shareReach`: in `moveCounts`, as hashes, deleted after 2 days; no new install step).
+  A notification's note, which Gmail can set apart as a quotation, is read by the text checks too.
+- "Name via Docusign" (Dropbox, Adobe Sign…) matches the directory's name, as "(via Google Docs)" did.
+- Tests: `test/notifications.test.js` (made-up mail only: a Classroom post and shares from inside, an
+  account under a colleague's name, the compromised-district share, a partner's share, the exclusions, a
+  forged notification, the mass share).
+- `installLevel` is unchanged: no new permission or install step (the directory read adds each user's
+  primary address to the same request).
+
+
 ## 0.5.15: Links on Settings → Update; Copy for Vault
 
 - **Settings → Update links to the repositories.** Each AI model ("phish-tiny 0.13.0, from

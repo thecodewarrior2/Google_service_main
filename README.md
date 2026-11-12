@@ -113,7 +113,29 @@ hours) and kept only as one-way hashes, in memory; an outside sender whose displ
 other signs, since staff sometimes write from a personal address). The same names are looked for in the
 other address lines: **Reply-To** under a colleague's name going to an outside address (3: replies would
 go to someone else), and a colleague **copied in** (Cc or To) at an outside address (1) or at an address
-that imitates your domain (3: "I've copied our superintendent"). It needs the **Users → Read**
+that imitates your domain (3: "I've copied our superintendent").
+
+**Shares and notifications sent through a platform** (Google Classroom, Drive, Docs, Forms, Calendar;
+DocuSign; Dropbox; Adobe Acrobat Sign; SharePoint): the sender's address, the sender check and your
+routing rule's `[EXTERNAL]` tag are the platform's, for a colleague's share as much as for a stranger's.
+Once Gmail's sender check proves the platform sent it, the email is judged by the **person's own address**:
+the Reply-To the platform sets from their account (Drive shares, DocuSign), or the "Name (address)" it
+writes in the text (Classroom gives neither: the person is then unknown, and their name counts for nothing
+either way). A colleague's own share or Classroom post gets no mark. For a share from outside:
+- **an account under a colleague's name**: at another organization 5 (flagged: moved in enforce mode), at a
+  personal provider such as gmail.com 3;
+- **a colleague named in its subject or text** ("Dana Morales asked me to share…", a signature in their
+  name): 2. Not a greeting ("Hi Dana Morales"), not the reader's own name, not a quotation of the colleague's
+  own email;
+- **asking to sign in, verify an account or confirm details** (payroll, direct deposit) to see it: 1;
+- **the same outside account reaching 10 or more of your people within the hour**: 2, and an alert (Status
+  → Activity, emailed), once per account and hour.
+
+With "outside" (1) and a first share from that person (1.5), the compromised-district campaign (a real
+account elsewhere sharing a document "from" your colleague and asking to sign in) reaches 5.5: moved. A
+partner you know sharing a document that mentions a colleague stays at 3: suspicious, not moved. An
+outside email that links a document, form or signature request itself (not a notification) gets the same
+three checks. The colleague-name checks need the **Users → Read**
 privilege and one more delegation scope (docs/INSTALL.md, "The colleague-name check"); without them it is
 off, and Status says how to turn it on. `COLLEAGUE_NAMES=off` (a setting of both services, docs/DEPLOY.md)
 turns it off.
@@ -323,7 +345,7 @@ training examples, and a better AI model.
 
 | Path | What |
 |---|---|
-| `src/engine/` | MIME and HTML reading, the checks and the model (`spruce.js` loads `vendor/spruce/`; `model.js` runs the model in ONNX Runtime); `network.js` applies the lookups |
+| `src/engine/` | MIME and HTML reading, the checks and the model (`spruce.js` loads `vendor/spruce/`; `model.js` runs the model in ONNX Runtime); `network.js` applies the lookups; `notifications.js` judges the person behind a platform's notification, and outside shares |
 | `src/intel/` | Cloudflare Security DNS, Google Safe Browsing, the phishing lists, registry dates; request limits |
 | `src/policy.js` | What happens to an analyzed email |
 | `src/pipeline.js` | Notifications → messages → decisions → actions → records; moving back, brake, watches, retention |

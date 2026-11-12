@@ -109,8 +109,9 @@ class GmailClient {
         let pageToken;
         do {
             const r = await this.call(admin, 'GET', '', { scope: SCOPES.directory, base: DIRECTORY,
-                query: Object.assign({ customer: 'my_customer', maxResults: '500', projection: 'basic', fields: 'users(name/fullName),nextPageToken' }, pageToken ? { pageToken } : {}) });
-            for (const u of r.users || []) if (u.name && u.name.fullName) out.push(String(u.name.fullName));
+                query: Object.assign({ customer: 'my_customer', maxResults: '500', projection: 'basic', fields: 'users(name/fullName,primaryEmail),nextPageToken' }, pageToken ? { pageToken } : {}) });
+            // (the address only to know each person's own name: their own name in their mail is no "colleague named")
+            for (const u of r.users || []) if (u.name && u.name.fullName) out.push({ name: String(u.name.fullName), email: String(u.primaryEmail || '').toLowerCase() });
             pageToken = r.nextPageToken;
         } while (pageToken);
         return out;

@@ -98,7 +98,8 @@ function campaignTemplates() {
 // The made-up principal whose name the 'colleague' campaign borrows: one of the demo directory's names.
 const PRINCIPAL = 'Jordan Whitfield';
 // The demo directory's full names (the colleague-name check reads them as one-way hashes).
-const directoryNames = (staff) => [PRINCIPAL, ...staff.map(u => u.split('@')[0].split('.').map(w => w[0].toUpperCase() + w.slice(1)).join(' '))];
+// The demo directory, as the Admin SDK gives it (gmail/client.js userNames): each person's name and address.
+const directoryNames = (staff) => [{ name: PRINCIPAL, email: '' }, ...staff.map(u => ({ name: u.split('@')[0].split('.').map(w => w[0].toUpperCase() + w.slice(1)).join(' '), email: u }))];
 const fakeGmail = { labelId: async (u, n) => `Label_${n}`, modify: async () => ({}) };
 
 async function buildDemo({ now = Date.now(), cfg }) {

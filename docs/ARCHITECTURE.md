@@ -140,6 +140,17 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
 
+## Platform notifications and outside shares
+
+A share or notification that a platform sends for a person (Google Classroom, Drive, Docs, Forms, Calendar;
+DocuSign; Dropbox; Adobe Acrobat Sign; SharePoint) carries the platform's address and passes the
+platform's sender check, whoever the person is. `src/engine/notifications.js` recognizes one only when
+Gmail's DMARC check passed for the platform's own domain and the sender is a notification mailbox, then
+judges it by the person's own address: the Reply-To the platform set, or the "Name (address)" in its text
+(none for Classroom: unknown). An outside share (such a notification for a person outside, or an outside
+email linking a document, form or signature request) gets the colleague-name, sign-in and mass-share checks;
+`pipeline.js` counts each outside account's reach per hour (`store.shareReach`) and alerts at 10.
+
 ## Throughput
 
 The model doesn't read mail from inside the organization (your domains, DMARC passing) unless

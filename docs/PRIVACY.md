@@ -27,8 +27,12 @@ protect.
 - **The directory's full names** (the colleague-name check, when its permission is given): read through
   the Admin SDK every 12 hours, turned at once into one-way hashes (the extension's fingerprint: "Smith,
   John" and "John Smith" give the same one) and kept only in the service's memory, then compared with the
-  names in an email's From, Reply-To, Cc and To lines (hashed the same way). No name is stored;
-  Firestore keeps only how many there are and when they were read (`state/colleagueNames`).
+  names in an email's From, Reply-To, Cc and To lines, and in the subject and text of a share from outside
+  (hashed the same way). Each person's primary address is read with their name, only to know their own
+  name's hash (their own name in their own mail is not "a colleague named"); kept in memory with it. No
+  name is stored; Firestore keeps only how many there are and when they were read (`state/colleagueNames`).
+- **Shares from outside, counted:** for the mass-share sign and alert, one counter per outside account and
+  hour (in `moveCounts`, deleted after 2 days), holding only one-way hashes of the recipients' addresses.
 - **An email again, when an admin asks:** Re-scan, and **…show more** on an email's AI opinion, read that
   one email from Gmail again. "…show more" shows the admin what the AI model reads of it (addresses
   reduced to their domain, phone numbers and long numbers replaced), sentence by sentence, with each

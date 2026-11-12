@@ -49,6 +49,7 @@ function load() {
         nameAddressSigns: fn('nameAddressSigns'),
         colleagueNameHash: fn('colleagueNameHash'),
         colleagueLineSigns: fn('colleagueLineSigns'),
+        isPersonalMailDomain: fn('isPersonalMailDomain'),
         ownNameSigns: fn('ownNameSigns'),
         subjectScamSigns: fn('subjectScamSigns'),
         bodyScamSigns: fn('bodyScamSigns'),

@@ -9,6 +9,7 @@
 // unshorten.me or similar service): a short link is judged by its own host and what decodes offline.
 const spruce = require('./spruce');
 const { detectLanguage } = require('./language');
+const N = require('./notifications');
 const { networkChecks } = require('./network');
 
 const MAX_LINKS = 300;
@@ -56,6 +57,8 @@ function senderVerified(facts) {
 }
 
 // facts: from mime.readMessage. ctx: { mailbox (the recipient's address), orgDomains: [..], trusted: bool,
+// selfNameHash: the recipient's own name's colleagueNameHash (never counted as a colleague named), shareReach:
+// how many of the organization's people the same outside account shared with this hour (pipeline.js),
 // firstTime: bool (first email from this address anywhere in the organization, after the learning period),
 // keepAiFacts: bool (the answer also has what the model read, for the retraining export),
 // colleagues: Set of colleagueNameHash values (the organization's people), or null,
@@ -70,6 +73,11 @@ async function analyze(facts, ctx = {}) {
     const ownAddress = !!senderDomain && (ctx.orgDomains || []).some(d => E.isOwnDomain(senderDomain, d));
     const verified = senderVerified(facts);
     const inside = ownAddress && verified;
+    // A platform's notification for a person, and a share from outside (notifications.js).
+    const relay = N.platformNotification(facts, ctx.orgDomains || []);
+    const share = N.shareSource(facts, ctx.orgDomains || []);
+    // A notification's note (the sharer's own message) can be set apart as a quotation: the text checks read it.
+    const bodyText = relay ? `${facts.visibleText}\n${facts.quotedText || ''}` : facts.visibleText;
     const judged = await judgeLinks(E, facts.links || []);
     // The network checks (they may flag links, so they come before the link signs are counted).
     // Allowlisted senders are never moved, so their mail costs no lookups.
@@ -82,18 +90,27 @@ async function analyze(facts, ctx = {}) {
         ...headerSigns,
         ...safe(() => E.displayNameAnomalies(facts.senderName)),
         // ctx.colleagues: one-way hashes of the organization's people's names (Service.colleagueNames).
-        ...safe(() => E.nameAddressSigns(facts.senderName, facts.senderAddress, org, ctx.colleagues || null, null)),
+        // A platform's notification for a person (Classroom, a Drive share, DocuSign…: notifications.js) is
+        // judged by the person's own address, never by the platform's (0.5.16); any other email by its own.
+        ...safe(() => (relay ? N.relaySigns(E, relay, ctx.colleagues || null) : E.nameAddressSigns(facts.senderName, facts.senderAddress, org, ctx.colleagues || null, null))),
         // The same names in the other address lines: replies going to an outside address under a
-        // colleague's name, a colleague copied in at an outside or look-alike address (0.5.14).
-        ...safe(() => E.colleagueLineSigns(addressLinePeople(facts), ctx.orgDomains || [], ctx.colleagues || null, facts.senderAddress)),
+        // colleague's name, a colleague copied in at an outside or look-alike address (0.5.14). A
+        // notification's Reply-To is the person themselves.
+        ...safe(() => E.colleagueLineSigns(addressLinePeople(facts), ctx.orgDomains || [], ctx.colleagues || null, (relay && relay.address) || facts.senderAddress)),
+        // A colleague named in an outside share's subject or text ("Dana Morales asked me to share…").
+        ...safe(() => (share ? N.colleagueMentionSigns(E, { subject: facts.subject, text: bodyText,
+            colleagues: ctx.colleagues || null, selfHash: ctx.selfNameHash || '', exclude: [relay ? relay.name : facts.senderName], orgDomains: ctx.orgDomains || [] }) : [])),
+        ...(share ? N.shareLureSigns(`${facts.subject}\n${bodyText}`) : []),
+        ...N.massShareSigns(share ? Number(ctx.shareReach) || 0 : 0),
         ...safe(() => E.ownNameSigns(facts.senderName, facts.senderAddress, mailbox)),
         ...insideSpoofSigns(E, facts, ctx.orgDomains || [], ownAddress, verified),
         ...safe(() => E.subjectScamSigns(facts.subject)),
-        ...safe(() => E.bodyScamSigns(facts.visibleText)),
+        ...safe(() => E.bodyScamSigns(bodyText)),
         ...safe(() => E.selfVouchingSigns(allText)),
         ...safe(() => E.layoutSigns(facts.layout)),
-        ...safe(() => E.highRiskRequestSigns(facts.visibleText)),
-        ...safe(() => E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime)),
+        ...safe(() => E.highRiskRequestSigns(bodyText)),
+        // Outside, and first time: for a notification, the person's (none when the notification doesn't say who).
+        ...safe(() => (relay ? (relay.address ? E.senderContextSigns(relay.address, org, !!ctx.firstTime) : []) : E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime))),
         ...linkSignals(judged),
         ...net.signals
     ];
@@ -190,4 +207,4 @@ async function aiReading(aiFacts, max = 40) {
     return spruce.load().model.reading(aiFacts, max);
 }
 
-module.exports = { analyze, aiReading, judgeLinks, linkSignals, senderVerified };
+module.exports = { analyze, aiReading, judgeLinks, linkSignals, senderVerified, platformNotification: N.platformNotification, shareSource: N.shareSource };

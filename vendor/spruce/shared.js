@@ -1889,8 +1889,11 @@ function senderDomainOwnedBy(brand, domain) {
 // --- Name and address don't match (checked on every inbox row; nothing has to be opened) ---------
 // A display name is reduced to its words, in order of the alphabet (so "Smith, John" = "John Smith"),
 // without anything in brackets; kept only as a hash (colleagueNameHash), never as the name itself.
+// (0.5.16) "Name via Docusign", "Name via Dropbox": the platform a person sent it through is not their name,
+// as "(via Google Docs)" in brackets isn't.
+const VIA_PLATFORM_RE = /\s+via\s+(docusign|dropbox(\s+sign)?|adobe(\s+acrobat)?(\s+sign)?|acrobat\s+sign|google(\s+(docs|drive|sheets|slides|forms|classroom|calendar))?|sharepoint(\s+online)?|onedrive|box|zoom|canva|smartsheet|jotform|pandadoc|hellosign)\s*$/i;
 function colleagueNameKey(name) {
-    const words = String(name || '').normalize('NFKC').toLowerCase().replace(/[([{].*?[)\]}]/g, ' ')
+    const words = String(name || '').normalize('NFKC').replace(VIA_PLATFORM_RE, '').toLowerCase().replace(/[([{].*?[)\]}]/g, ' ')
         .replace(/[^\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter(Boolean);
     return words.length >= 2 ? words.sort().join(' ') : '';
 }

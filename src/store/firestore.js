@@ -149,6 +149,21 @@ class FirestoreStore {
         const d = await ref.get();
         return d.exists ? d.data().firstSeen : now;
     }
+    // How many of the organization's people the same outside account shared with this hour (0.5.16): one
+    // document per account and hour, in moveCounts (which expire after 2 days, as the brake's counters: no
+    // new collection to set up), with the recipients as hashes; crossed: the threshold reached now, once.
+    async shareReach(key, userKey, now, threshold) {
+        const ref = this.col('moveCounts').doc(safeId(`share~${key}~${Math.floor(now / 3600000)}`));
+        return this.db.runTransaction(async (t) => {
+            const d = await t.get(ref);
+            const v = d.exists ? d.data() : {};
+            const users = Array.isArray(v.users) ? v.users : [];
+            if (!users.includes(userKey) && users.length < 5000) users.push(userKey);
+            const crossed = !v.alerted && users.length >= threshold;
+            t.set(ref, { users, alerted: !!v.alerted || crossed, at: now, expireAt: this.expiry(now, 2 * DAY) }, { merge: true });
+            return { count: users.length, crossed };
+        });
+    }
     // The domain-wide brake: a slot is reserved before each move, in one transaction on one of up to 32
     // shards (tried in random order), each with its share of the limit, so the shares add up to the limit
     // exactly and instances moving at the same moment rarely wait for each other.
