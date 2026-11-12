@@ -25,8 +25,14 @@ mode).
   the same answers.
 - **Careful by default:**
   - **Monitor mode** (records, moves nothing) until you switch to enforce mode.
-  - **The AI score alone never moves mail from inside the organization.** The rules still can, for
-    example when a staff account is compromised.
+  - **The AI doesn't read mail from inside the organization** (your domains, DMARC passing) unless
+    you turn it on (Settings → Policy, "AI on inside mail"; `AI_SCANS_INSIDE`). The rule checks read it
+    as any email (its links, its headers and the rest), and can move it, for example when a staff
+    account is compromised and sends dangerous links. Even when the AI reads it, its score alone never
+    moves inside mail.
+  - **Mail dressed up as inside is outside mail:** a staff address that fails Gmail's DMARC check is read
+    by the AI and gets a sign of its own ("claims to come from inside your organization"), and so does an
+    outside sender whose name shows one of your addresses ("it@your-district.org" <x@elsewhere>).
   - **Allowlisted senders and domains** are never moved (Settings → Allowlist, or `ALLOW_DOMAINS` and
     `ALLOW_ADDRESSES`). Your own domains can't be allowlisted, so a staff account taken over can still be
     caught.
@@ -78,7 +84,7 @@ For each new Inbox message:
 | Same, in monitor mode, or while moving is paused (a campaign on weaker evidence, or the domain-wide brake) | Left in the Inbox, recorded as "would move" (a paused one can be moved later) |
 | An admin dismissed the campaign as a false alarm | Recorded as suspicious, not moved |
 | The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
-| The AI scores 90% or more, sender inside (your domains, DMARC passing), and the rules don't flag it | Recorded as suspicious, not moved (the AI score alone never moves inside mail) |
+| Sender inside (your domains, DMARC passing), and the rules don't flag it | Nothing: the AI doesn't read it (with "AI on inside mail" on: a score of 90% or more is recorded as suspicious, never moved by the AI alone) |
 | A rules score of 3 or more, or an AI score of **65%** or more (`AI_SUSPICIOUS_THRESHOLD`), below what moves it | Recorded as suspicious, not moved |
 | Allowlisted sender, DMARC passing | Nothing |
 

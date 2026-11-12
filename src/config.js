@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -45,6 +45,11 @@ function loadConfig(env = process.env) {
         // From this AI score an email is recorded as suspicious (when it isn't moved): at most the threshold.
         aiSuspicious: num(env.AI_SUSPICIOUS_THRESHOLD, 0.65),
         aiMovesInside: bool(env.AI_MOVES_INSIDE, false),
+        // Whether the AI model reads mail from inside the organization (your domains, Gmail's DMARC check
+        // passing): off by default; the rule checks (links, headers, the rest) read it either way, and a
+        // forged inside address (DMARC not passing) is outside mail, read by the AI. Settings → Policy too.
+        // AI_MOVES_INSIDE needs the AI to read it, so it turns this on as well.
+        aiScansInside: bool(env.AI_SCANS_INSIDE, false),
         // Never moved, whatever the checks say.
         allowDomains: list(env.ALLOW_DOMAINS),
         allowAddresses: list(env.ALLOW_ADDRESSES),

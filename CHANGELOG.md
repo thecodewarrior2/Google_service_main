@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.11: The AI doesn't read mail from inside by default; signs for mail dressed up as inside
+
+- **AI on inside mail: off by default.** Mail from inside the organization (from your domains, with
+  Gmail's DMARC check passing) is no longer read by the AI model. The rule checks still read it as any
+  email (its links, through the link checks and lookups; its headers; the rest) and can still move it, as
+  for a staff account taken over that sends dangerous links. An email's page says why there is no AI
+  score ("Not scored: the sender is inside your organization"). **Settings → Policy → "AI on inside
+  mail"** turns it on (or `AI_SCANS_INSIDE=on`), noted in Activity; then the AI reads inside mail too and
+  its score can make one suspicious, but its score alone still never moves it (`AI_MOVES_INSIDE` aside,
+  which turns the reading on too).
+- **Mail dressed up as inside is outside mail**, read by the AI as before, now with signs of its own:
+  - its From address is in your domains, but Gmail's DMARC check **failed** for it: "It claims to come
+    from inside your organization …, but Gmail's sender check (DMARC) failed" (2, on top of the DMARC
+    failure's own sign: together they flag it). Without any DMARC result (a domain that publishes none)
+    there is no such sign;
+  - an outside sender whose name shows one of your addresses ("it-support@your-district.org"
+    <notices@elsewhere.example>): 3 (amber).
+- Tests: `test/inside-mail.test.js`; `test/pipeline.test.js` (staff mail with DMARC passing is no longer
+  scored by the AI by default; with `AI_SCANS_INSIDE` on, it is, and still isn't moved by it).
+- `installLevel` is unchanged: nothing new to install (the setting is on the dashboard).
+
+
 ## 0.5.10: Review decides a campaign at once; Next works; more of the AI's reasoning; colleague names; English only
 
 - **Review: the copies of one email are one item.** A campaign (the same email to many people) used to be

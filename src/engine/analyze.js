@@ -58,7 +58,8 @@ function senderVerified(facts) {
 // facts: from mime.readMessage. ctx: { mailbox (the recipient's address), orgDomains: [..], trusted: bool,
 // firstTime: bool (first email from this address anywhere in the organization, after the learning period),
 // keepAiFacts: bool (the answer also has what the model read, for the retraining export),
-// colleagues: Set of colleagueNameHash values (the organization's people), or null }
+// colleagues: Set of colleagueNameHash values (the organization's people), or null,
+// aiInside: bool (the AI model also reads mail from inside the organization; off: the rules alone do) }
 async function analyze(facts, ctx = {}) {
     const E = spruce.load();
     const mailbox = String(ctx.mailbox || '').toLowerCase();
@@ -83,6 +84,7 @@ async function analyze(facts, ctx = {}) {
         // ctx.colleagues: one-way hashes of the organization's people's names (Service.colleagueNames).
         ...safe(() => E.nameAddressSigns(facts.senderName, facts.senderAddress, org, ctx.colleagues || null, null)),
         ...safe(() => E.ownNameSigns(facts.senderName, facts.senderAddress, mailbox)),
+        ...insideSpoofSigns(E, facts, ctx.orgDomains || [], ownAddress, verified),
         ...safe(() => E.subjectScamSigns(facts.subject)),
         ...safe(() => E.bodyScamSigns(facts.visibleText)),
         ...safe(() => E.selfVouchingSigns(allText)),
@@ -119,7 +121,11 @@ async function analyze(facts, ctx = {}) {
     // so it gives none, and says why (the rule checks above don't depend on the language).
     const language = detectLanguage(`${facts.subject}\n${facts.visibleText}`);
     let ai = null;
-    if (!language.english) {
+    if (inside && !ctx.aiInside) {
+        // Mail from inside the organization (your domains, DMARC passing) isn't read by the AI unless the
+        // policy says so (AI_SCANS_INSIDE): the rules above (its links, headers and the rest) read it.
+        ai = { probability: null, skipped: 'inside', model: `${E.modelInfo.name} ${E.modelInfo.version}` };
+    } else if (!language.english) {
         ai = { probability: null, skipped: 'language', language: language.name, model: `${E.modelInfo.name} ${E.modelInfo.version}` };
     } else {
         try {
@@ -146,6 +152,26 @@ async function analyze(facts, ctx = {}) {
         // Only for the retraining export (src/training.js), which takes the people out: never stored.
         aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
+}
+
+// Signs of mail dressed up as coming from inside the organization:
+//   - its From address is in your domains, but Gmail's DMARC check failed for it: someone else wrote it
+//     (the DMARC failure is a sign of its own too; this one says it imitates a colleague's address);
+//   - the sender's name shows an address of yours ("it@district.org" <x@elsewhere.example>) on an outside
+//     address.
+// Mail from inside that passed DMARC gets neither.
+function insideSpoofSigns(E, facts, orgDomains, ownAddress, verified) {
+    if (!orgDomains.length) return [];
+    const out = [];
+    const isOwn = (d) => orgDomains.some(o => E.isOwnDomain(String(d || '').toLowerCase(), o));
+    if (ownAddress && !verified && facts.auth && facts.auth.dmarc === 'fail') {
+        out.push({ weight: 2, kind: 'spoofed-inside', text: `It claims to come from inside your organization (${facts.senderAddress}), but Gmail's sender check (DMARC) failed: it wasn't sent by your domain.` });
+    }
+    const named = (String(facts.senderName || '').match(/[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g) || []).filter(a => isOwn(a.split('@')[1]));
+    if (named.length && !ownAddress) {
+        out.push({ weight: 3, kind: 'inside-name-outside-address', text: `The sender's name shows an address of your organization (${named[0].toLowerCase()}), but it comes from outside (${facts.senderAddress}).` });
+    }
+    return out;
 }
 
 // What the model read of an email (analyze's aiFacts), sentence by sentence (Model.reading).

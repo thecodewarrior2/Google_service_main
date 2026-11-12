@@ -85,12 +85,18 @@ test('DMARC must pass: a forged allowlisted or staff address is judged like mail
     assert.equal(await rec('allowOk'), null, 'allowlisted with DMARC passing: nothing');
     const forged = await rec('allowForged');
     assert.equal(forged.action, 'move'); assert.match(forged.why, /allowlisted sender, but DMARC didn't pass/);
-    assert.equal((await rec('insideOk')).action, 'flag', 'staff mail with DMARC passing: the AI alone never moves it');
+    assert.equal(await rec('insideOk'), null, 'staff mail with DMARC passing: the AI doesn\'t read it (AI_SCANS_INSIDE off), the rules find nothing');
     for (const id of ['insideForged', 'insideNoResult']) {
         const r = await rec(id);
         assert.equal(r.action, 'move', id); assert.match(r.trigger, /ai/); assert.match(r.why, /isn't treated as inside/);
     }
     assert.deepEqual(gmail.modified.map(m => m.id).sort(), ['allowForged', 'insideForged', 'insideNoResult']);
+    // With AI_SCANS_INSIDE on, the AI reads staff mail too, and its score alone still never moves it.
+    const on = await setup({ MODE: 'enforce', ALLOW_DOMAINS: 'vendor.example', AI_MOVE_THRESHOLD: '0.0001', AI_SCANS_INSIDE: 'on' }, { insideOk: msgs.insideOk });
+    await on.store.putUser(USER, { historyId: '1' });
+    on.gmail.history = { ids: ['insideOk'], historyId: '2' };
+    await on.svc.handleNotification({ emailAddress: USER, historyId: '2' });
+    assert.equal((await on.store.getRecord(`${USER}|insideOk`)).action, 'flag', 'AI_SCANS_INSIDE on: read, but the AI alone never moves it');
     // DMARC for another domain than the one in From doesn't count.
     assert.equal(senderVerified({ senderAddress: 'a@vendor.example', auth: { dmarc: 'pass', headerFrom: 'other.example' } }), false);
     assert.equal(senderVerified({ senderAddress: 'a@vendor.example', auth: { dmarc: 'pass', headerFrom: 'vendor.example' } }), true);
