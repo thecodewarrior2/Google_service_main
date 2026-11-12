@@ -111,19 +111,41 @@ class Model {
     // What the model read, sentence by sentence, for a person deciding (the dashboard's "show more"): the
     // facts line (subject, sender, sender check, links, layout) and each sentence of the text, each scored on
     // its own as in analyze (a margin above 0 leans toward phishing), up to max sentences, in order.
+    // Filler (blank lines of invisible characters, lone punctuation, a word of one or two letters) is
+    // read by the model as it comes, but marked filler: not shown, never what weighed most, and skipped
+    // when finding the sentence before and after one that did (weighed: up to 3, in the text's order).
     async reading(facts, max = 40) {
         const parts = this.parts(facts);
         const [m] = await this.margins_([`${parts.head} text: ${parts.sentences.join(' ')}`]);
         const sentences = parts.sentences.slice(0, max);
         const ws = await this.margins_([...sentences.map(s => `text: ${s}`), `${parts.head} text:`]);
+        const all = parts.sentences.map(s => ({ text: shownText(s), filler: !hasText(s) }));
+        const near = (i, step) => { for (let j = i + step; j >= 0 && j < all.length; j += step) if (!all[j].filler) return { index: j, text: all[j].text }; return null; };
+        const weighed = sentences.map((s, i) => [ws[i], i]).filter(([w, i]) => w > 0 && !all[i].filler)
+            .sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i).sort((a, b) => a - b)
+            .map(i => ({ index: i, before: near(i, -1), after: near(i, 1) }));
         return { probability: 1 / (1 + Math.exp(-m)), model: this.meta.name, version: this.meta.version,
-                 head: parts.head, headWeight: ws[sentences.length], sentences: sentences.map((s, i) => ({ text: s, weight: ws[i] })),
-                 more: Math.max(0, parts.sentences.length - sentences.length) };
+                 head: parts.head, headWeight: ws[sentences.length],
+                 sentences: sentences.map((s, i) => ({ text: all[i].text, weight: ws[i], filler: all[i].filler })),
+                 weighed, more: Math.max(0, parts.sentences.length - sentences.length) };
     }
+}
+
+// Characters that show as nothing: zero-width and joiners, the grapheme joiner, soft hyphens, Hangul fillers,
+// byte-order marks (mailing lists pad their preview text with them).
+const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u3164\uFFA0\u2800]/gu;
+// A sentence as a person would read it: without the invisible characters, spaces collapsed.
+function shownText(s) { return String(s || '').replace(INVISIBLE, '').replace(/\s+/g, ' ').trim(); }
+// Real text: at least 3 letters or digits, and a word of 2 letters or more (not blank, not lone
+// punctuation, dashes or bullets, not a stray letter or number, not only what replaced an address or a
+// number: "phone number.").
+function hasText(s) {
+    const t = shownText(s).replace(/\b(?:address at [a-z0-9.-]+|phone number|number)\b/gi, '');
+    return (t.match(/[\p{L}\p{N}]/gu) || []).length >= 3 && /\p{L}{2}/u.test(t);
 }
 
 function loadModel({ dir, manifest, tokenizer, modelInputParts }) {
     return new Model({ file: path.join(dir, 'model.onnx'), manifest, tokenizer, modelInputParts });
 }
 
-module.exports = { Model, loadModel, MARGINS_KEPT, CHECK_PHISHING, CHECK_GENUINE };
+module.exports = { Model, loadModel, hasText, shownText, MARGINS_KEPT, CHECK_PHISHING, CHECK_GENUINE };

@@ -143,7 +143,8 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 ## Throughput
 
 The model doesn't read mail from inside the organization (your domains, DMARC passing) unless
-`AI_SCANS_INSIDE` (Settings → Policy) is on: the rules alone judge it (`src/engine/analyze.js`). The model reads English only: `src/engine/language.js` finds an email clearly in another language (its
+`AI_SCANS_INSIDE` (Settings → Policy) is on, or `AI_MOVES_INSIDE` ("AI alone moves inside mail", which
+needs it): the rules alone judge it (`src/engine/analyze.js`). The model reads English only: `src/engine/language.js` finds an email clearly in another language (its
 writing system, or the commonest words of other languages), and then the model isn't run and the AI
 gives no score, saying why (the rules run as always).
 

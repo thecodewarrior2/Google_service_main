@@ -18,12 +18,14 @@
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         return data;
     }
-    // The AI move threshold and suspicious line in force (every answer says them; 90% and 65% until the first one).
-    let aiThreshold = 0.9, aiSuspicious = 0.65;
+    // The AI move threshold and suspicious line in force, and whether the AI alone moves inside mail (every
+    // answer says them; 90%, 65% and off until the first one).
+    let aiThreshold = 0.9, aiSuspicious = 0.65, aiMovesInside = false;
     const api = async (path, opts) => {
         const data = await (window.SPRUCE_API || realApi)(path, opts);
         if (data && typeof data.aiThreshold === 'number') aiThreshold = data.aiThreshold;
         if (data && typeof data.aiSuspicious === 'number') aiSuspicious = data.aiSuspicious;
+        if (data && typeof data.aiMovesInside === 'boolean') aiMovesInside = data.aiMovesInside;
         return data;
     };
     // A POST whose answer is a file (the retraining export): saved by the browser; its headers returned.
@@ -502,10 +504,11 @@
             return h('div', { class: 'empty', text: m.ai && m.ai.error ? `The model gave no score (${m.ai.error}).` : 'The model gave no score.' });
         }
         const inside = !!m.inside;
-        const where = ai >= aiThreshold ? (inside ? `at or over the move line (${pct(aiThreshold)}), but the sender is inside your organization, so the AI score alone doesn't move it` : `at or over the move line (${pct(aiThreshold)}): the AI score alone moves an outside email`)
+        const where = ai >= aiThreshold ? (inside ? (aiMovesInside ? `at or over the move line (${pct(aiThreshold)}): the AI score alone moves it, though the sender is inside your organization ("AI alone moves inside mail" is on)`
+                : `at or over the move line (${pct(aiThreshold)}), but the sender is inside your organization, so the AI score alone doesn't move it ("AI alone moves inside mail" is off)`) : `at or over the move line (${pct(aiThreshold)}): the AI score alone moves an outside email`)
             : ai >= aiSuspicious ? `over the suspicious line (${pct(aiSuspicious)}), under the move line (${pct(aiThreshold)}): recorded as suspicious, not moved`
-            : ai >= 0.5 ? `leans toward phishing, but under the suspicious line (${pct(aiSuspicious)}): the AI alone does nothing`
-            : `reads as genuine (under 50%)`;
+            : ai >= 0.5 ? `50% or more, so it leans toward phishing, but under the suspicious line (${pct(aiSuspicious)}): the AI alone does nothing`
+            : `under 50%: the AI reads it as genuine`;
         const canRead = !m.pasted && !!m.key;
         const more = canRead ? h('button', { class: 'linkbtn', type: 'button', text: '…show more' }) : null;
         if (more) more.addEventListener('click', () => showAiReading(m));
@@ -531,13 +534,30 @@
             body.append(h('p', { class: 'sub', text: 'Read from Gmail just now; nothing is kept, and Activity notes that you looked. Addresses keep only their domain, and phone numbers and long numbers are replaced, as the model sees them. Each part is also scored on its own: how much that part alone reads like phishing.' }));
             if (!r) { body.append(h('div', { class: 'ai-none' }, h('b', { text: 'Not scored: the AI model reads English only.' }), h('div', { text: `This email looks like it is in ${language && language.name || 'another language'}.` }))); return; }
             const lean = (w) => 1 / (1 + Math.exp(-w));
-            const top = new Set(r.sentences.map((x, i) => [x.weight, i]).filter(([w]) => w > 0).sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i));
-            const badge = (w) => h('span', { class: `lean ${lean(w) >= 0.5 ? 'hot' : ''}`, text: `${pct(lean(w))} on its own` });
+            // The whole email's score is the AI's opinion. A part scored alone, out of context, can read
+            // more like phishing than the email does ("click here to accept" is in invitations too): when
+            // the whole email reads as genuine (under 50%), nothing is marked or shown in red.
+            const calm = r.probability < 0.5;
+            const weighed = calm ? new Set() : new Set(r.sentences.map((x, i) => [x.weight, i]).filter(([w]) => w > 0).sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i));
+            const badge = (w) => h('span', { class: `lean ${!calm && lean(w) >= 0.5 ? 'hot' : ''}`, text: `${pct(lean(w))} on its own` });
+            const partsHigher = calm && [r.headWeight, ...r.sentences.map(x => x.weight)].some(w => lean(w) >= 0.5);
             body.append(h('div', { class: 'small' }, h('b', { text: `The AI now: ${pct(r.probability)}` }), ` (${r.model} ${r.version}, the whole email${m.ai && typeof m.ai.probability === 'number' && Math.abs(m.ai.probability - r.probability) >= 0.01 ? `; ${pct(m.ai.probability)} when it was checked` : ''}).`));
+            if (partsHigher) body.append(h('div', { class: 'alert info' }, h('div', { text: `The whole email reads as genuine to the AI (${pct(r.probability)}): that is its opinion. Some parts score higher on their own, because without the rest of the email a single line (a link, "click here to accept") reads like many phishing emails; together, the AI doesn't find it phishing.` })));
+            // What weighed most, each with the nearest sentence of real text before and after it (blank
+            // lines, lone punctuation and invisible padding skipped: reading() marks them filler).
+            const inContext = calm ? [] : (r.weighed || []).filter(c => r.sentences[c.index]);
+            if (inContext.length) body.append(h('h3', { text: 'What weighed most, with the sentence before and after' }),
+                ...inContext.map(c => h('div', { class: 'in-context' },
+                    h('div', { class: 'ctx muted', text: c.before ? c.before.text : '(the start of the text)' }),
+                    h('div', { class: 'ctx weighed' }, h('span', { text: r.sentences[c.index].text }), badge(r.sentences[c.index].weight)),
+                    h('div', { class: 'ctx muted', text: c.after ? c.after.text : '(the end of the text)' }))));
             body.append(h('h3', { text: 'About the sender and links' }), h('div', { class: 'reading-line' }, h('div', { class: 'mono small', text: r.head }), badge(r.headWeight)));
-            body.append(...[h('h3', { text: `The text, sentence by sentence${top.size ? ' (what weighed most is marked)' : ''}` }),
-                r.sentences.length ? h('ol', { class: 'reading' }, r.sentences.map((x, i) => h('li', { class: top.has(i) ? 'top' : '' }, h('span', { text: x.text }), badge(x.weight))))
+            const shown = r.sentences.map((x, i) => [x, i]).filter(([x]) => !x.filler);
+            const left = r.sentences.length - shown.length;
+            body.append(...[h('h3', { text: `The whole text, sentence by sentence${weighed.size ? ' (what weighed most is marked)' : ''}` }),
+                shown.length ? h('ol', { class: 'reading' }, shown.map(([x, i]) => h('li', { class: weighed.has(i) ? 'weighed' : '' }, h('span', { text: x.text }), badge(x.weight))))
                     : h('div', { class: 'empty', text: 'No text: the model read only the subject, the sender and the links.' }),
+                left ? h('div', { class: 'small muted', text: `${num(left)} blank or filler line${left === 1 ? '' : 's'} (spaces, lone punctuation, invisible characters) left out.` }) : null,
                 r.more ? h('div', { class: 'small muted', text: `…and ${num(r.more)} more sentences the model reads, not scored one by one here.` }) : null].filter(Boolean));
         } catch (e) {
             body.textContent = '';
@@ -714,11 +734,12 @@
             h('section', { class: 'card spaced' }, h('h2', { text: 'How it decides' }), h('dl', { class: 'kv' },
                 kvRow('Moved: sender outside', d.moveOnRules ? `either one is enough: the AI scores ${pct(d.aiThreshold)} or more, or the rules flag it (a rules score of 5 or more). The AI score needs no rule, link check or other sign to agree.`
                     : `when the AI scores ${pct(d.aiThreshold)} or more (MOVE_ON_RULES is off: the rules alone don't move mail).`),
-                kvRow('Moved: sender inside', d.aiMovesInside ? `as for outside senders: the AI score (${pct(d.aiThreshold)} or more) or the rules (5 or more), either one (AI_MOVES_INSIDE is on).`
-                    : d.moveOnRules ? `only when the rules flag it (a rules score of 5 or more: its links, its headers and the rest), as they do for a staff account taken over. ${d.aiScansInside ? `The AI reads it too (Settings → Policy), but its score alone never moves it, even at ${pct(d.aiThreshold)} or more: it is recorded as suspicious.` : 'The AI doesn\'t read it (Settings → Policy, "AI on inside mail": off).'}`
-                    : 'never (the AI score alone doesn\'t move inside mail, and MOVE_ON_RULES is off).'),
+                kvRow('Moved: sender inside', d.aiMovesInside ? (d.moveOnRules ? `as for outside senders, either one is enough: the AI scores ${pct(d.aiThreshold)} or more, or the rules flag it (5 or more). "AI alone moves inside mail" is on (Settings → Policy): the AI score alone moves a colleague's email too.`
+                        : `when the AI scores ${pct(d.aiThreshold)} or more ("AI alone moves inside mail" is on; MOVE_ON_RULES is off: the rules alone don't move mail).`)
+                    : d.moveOnRules ? `only when the rules flag it (a rules score of 5 or more: its links, its headers and the rest), as they do for a staff account taken over. ${d.aiScansInside ? `The AI reads it too (Settings → Policy), but its score alone doesn't move it, even at ${pct(d.aiThreshold)} or more ("AI alone moves inside mail" is off): it is recorded as suspicious.` : 'The AI doesn\'t read it (Settings → Policy, "AI on inside mail": off).'}`
+                    : 'never (the AI score alone doesn\'t move inside mail: "AI alone moves inside mail" is off; and MOVE_ON_RULES is off).'),
                 kvRow('Inside or outside', `inside: the From address is in your own domains (${(d.orgDomains || []).join(', ') || 'ORG_DOMAINS'}) and Gmail's DMARC check passed for it. Anything else is outside, a forged staff address too. DMARC only decides this (and whether an allowlisted sender counts): an outside sender doesn't have to pass or fail it. A failed DMARC check is also one of the rules' signs (2 or 3 points), never required.`),
-                kvRow('Suspicious, not moved', `a rules score of 3 or more, or an AI score of ${pct(d.aiSuspicious || 0.65)} or more, that doesn't move it (an inside sender's high AI score included): recorded for review (Email → Review → Suspicious, not moved).`),
+                kvRow('Suspicious, not moved', `a rules score of 3 or more, or an AI score of ${pct(d.aiSuspicious || 0.65)} or more, that doesn't move it${d.aiMovesInside ? '' : ' (an inside sender\'s high AI score included)'}: recorded for review (Email → Review → Suspicious, not moved).`),
                 kvRow('The rules', 'the rule checks add up signs: dangerous or brand-new links, a look-alike or impersonated sender, forged headers, a failed sender check, requests for passwords, codes or money, a new outside sender. 3 is amber, 5 is flagged. The AI score is separate.'),
                 kvRow('Campaign pause', `After ${num(d.campaignHoldAfter)} copies of one campaign are moved on weaker evidence, moving its other copies pauses until you confirm it as phishing or dismiss it as a false alarm; until then they stay in the Inbox, like any email not moved. Strong evidence never pauses (CAMPAIGN_HOLD_AFTER)`),
                 kvRow('Alerts', d.alertEmail ? `Emailed to ${d.alertEmail} by Cloud Monitoring` : 'Shown in Status → Activity; not emailed (ALERT_EMAIL, deploy/install.sh)'),
@@ -1084,11 +1105,13 @@
     // is open. deploy/install.sh asks which to keep when settings.env says otherwise (deploy/dashboard-policy.sh).
     const POLICY_ROWS = [
         { key: 'mode', label: 'Mode', show: (v) => (v === 'enforce' ? 'Enforce: emails the policy flags are moved to Spam' : 'Monitor: emails are checked and recorded, nothing is moved') },
-        { key: 'aiThreshold', label: 'AI move threshold', show: (v, d) => (d.aiMovesInside ? `${pct(v)}: an email the AI scores this high or higher is moved on the AI score alone, from any sender (AI_MOVES_INSIDE is on)`
-            : `${pct(v)}: an email from outside the organization that the AI scores this high or higher is moved on the AI score alone, whatever the rules find. From inside (your domains, DMARC passing), the AI score alone never moves it: it is recorded as suspicious, and only the rules can move it`) },
+        { key: 'aiThreshold', label: 'AI move threshold', show: (v, d) => (d.aiMovesInside ? `${pct(v)}: an email the AI scores this high or higher is moved on the AI score alone, whatever the rules find, from any sender, inside the organization too ("AI alone moves inside mail" is on)`
+            : `${pct(v)}: an email from outside the organization that the AI scores this high or higher is moved on the AI score alone, whatever the rules find. From inside (your domains, DMARC passing), the AI score alone doesn't move it ("AI alone moves inside mail" is off): it is recorded as suspicious, and only the rules can move it`) },
         { key: 'aiSuspicious', label: 'AI suspicious line', show: (v) => `${pct(v)}: an email the AI scores this high or higher, but not moved, is recorded as suspicious for review` },
-        { key: 'aiScansInside', label: 'AI on inside mail', show: (v, d) => (v || d.aiMovesInside ? `On: the AI also reads mail from inside the organization (your domains, Gmail's DMARC check passing)${d.aiMovesInside && !v ? ' (AI_MOVES_INSIDE is on, which needs it)' : ''}`
+        { key: 'aiScansInside', label: 'AI on inside mail', show: (v, d) => (v || d.aiMovesInside ? `On: the AI also reads mail from inside the organization (your domains, Gmail's DMARC check passing)${d.aiMovesInside && !v ? ', because "AI alone moves inside mail" is on and needs it' : d.aiMovesInside ? '; its score alone can move it ("AI alone moves inside mail" is on)' : '; its score can make it suspicious, never move it on its own'}`
             : 'Off: mail from inside the organization (your domains, Gmail\'s DMARC check passing) isn\'t read by the AI. The rule checks read it as any email: its links, its headers and the rest; a forged inside address (DMARC not passing) is outside mail, and the AI reads it') },
+        { key: 'aiMovesInside', label: 'AI alone moves inside mail', show: (v, d) => (v ? `On: an email from inside the organization that the AI scores ${pct(d.aiThreshold)} or more is ${d.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode)'} on the AI score alone, as outside mail is, whatever the rules find. The AI reads inside mail for it`
+            : 'Off: the AI score alone never moves mail from inside the organization (your domains, Gmail\'s DMARC check passing); the rules still can (a staff account taken over), and a forged inside address is outside mail') },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
         { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` },
         { key: 'retentionDays', label: 'Records kept', show: (v) => `${num(v)} days: each email's record is deleted ${num(v)} days after it arrived, the oldest first` }
@@ -1102,17 +1125,19 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
         pageBusy = () => !!openKey;
         const short = (key, v) => (Array.isArray(v) ? (v.length ? `${num(v.length)} entr${v.length === 1 ? 'y' : 'ies'}` : 'none')
-            : key === 'mode' ? v : key === 'aiScansInside' ? (v ? 'on' : 'off') : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : key === 'retentionDays' ? `${num(v)} days` : v);
+            : key === 'mode' ? v : key === 'aiScansInside' || key === 'aiMovesInside' ? (v ? 'on' : 'off') : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : key === 'retentionDays' ? `${num(v)} days` : v);
         const source = (key) => {
             const p = P[key] || {};
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
             if (p.replaced) return `From settings.env (${ENV_NAME[key]}). It replaced ${short(key, p.replaced.value)}, set here by ${p.replaced.by}.`;
+            // (install.sh doesn't pass these two: off unless changed here, or set in the services' environment)
+            if (key === 'aiScansInside' || key === 'aiMovesInside') return p.env ? `On in the services' environment (${ENV_NAME[key]}).` : `Off: the default (${ENV_NAME[key]}).`;
             return `From settings.env (${ENV_NAME[key]}).`;
         };
         const rows = ROWS.map(r => {
@@ -1178,7 +1203,16 @@
             const radio = (v, label) => h('label', { class: 'choice' }, h('input', { type: 'radio', name: 'policy-inside', value: v ? 'on' : 'off', checked: !!value === v }), h('span', { text: label }));
             const choices = h('div', { class: 'choices' }, radio(false, 'Off: the rule checks alone read inside mail (links, headers, the rest)'), radio(true, 'On: the AI reads inside mail too'));
             read = () => choices.querySelector('input:checked').value === 'on';
-            extra = [choices, h('div', { class: 'small muted', text: `Inside: your domains, with Gmail's DMARC check passing. On, the AI's score of an inside email is shown and can make it suspicious; ${d.aiMovesInside ? 'and it can move it (AI_MOVES_INSIDE is on)' : 'it still never moves it on its own'}.` })];
+            extra = [choices, h('div', { class: 'small muted', text: `Inside: your domains, with Gmail's DMARC check passing. On, the AI's score of an inside email is shown and can make it suspicious; ${d.aiMovesInside ? 'and it can move it ("AI alone moves inside mail" is on). Off has no effect while that is on: it needs the AI to read inside mail' : 'it doesn\'t move it on its own ("AI alone moves inside mail", below, is off)'}.` })];
+        } else if (key === 'aiMovesInside') {
+            const radio = (v, label) => h('label', { class: 'choice' }, h('input', { type: 'radio', name: 'policy-moves-inside', value: v ? 'on' : 'off', checked: !!value === v }), h('span', { text: label }));
+            const choices = h('div', { class: 'choices' }, radio(false, 'Off: only the rules move mail from inside (the cautious default)'), radio(true, `On: the AI score alone (${pct(d.aiThreshold)} or more) moves mail from inside too`));
+            agreeBox = h('div', { class: 'agree', hidden: true },
+                h('div', { class: 'alert warning' }, h('div', {}, h('b', { text: 'The AI alone would move your colleagues\' email. ' }), `From the moment you save, an email from inside the organization that the AI scores ${pct(d.aiThreshold)} or more is ${d.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode: moved once you switch to enforce)'}, even when no rule, link check or other sign agrees. A false alarm by the AI on genuine staff mail (a payroll notice, a password reminder from IT) moves it out of the Inbox. The rules already move inside mail that shows real signs (a staff account taken over). The AI reads inside mail for this.`)),
+                h('label', { class: 'choice' }, h('input', { type: 'checkbox', onchange: update }), h('span', { text: 'I agree: let the AI score alone move mail from inside the organization.' })));
+            choices.addEventListener('change', () => { agreeBox.hidden = !(choices.querySelector('input:checked').value === 'on' && !value); update(); });
+            read = () => choices.querySelector('input:checked').value === 'on';
+            extra = [choices, agreeBox, h('div', { class: 'small muted', text: 'Inside: your domains, with Gmail\'s DMARC check passing; a forged staff address is outside mail, and the AI can move it either way. Off by default (AI_MOVES_INSIDE).' })];
         } else if (key === 'brakePerHour') {
             const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
             const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });

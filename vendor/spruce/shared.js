@@ -2615,11 +2615,23 @@ function headerAnomalies(raw, accountAddress, receiver = {}) {
     const parsed = parseSenderAddress(fm ? fm[1] : (from.match(EMAIL_IN_TEXT_RE) || [''])[0] || from);
     if (parsed) out.push(...parsed.malformed);
     if (fm) out.push(...displayNameAnomalies(decodeEncodedWords(from.slice(0, fm.index))));
-    // To: a display name that is an email address other than the real one, or a broken address.
+    // To: a display name that is an email address other than the real one, or a broken address. The
+    // address shown is read out of the name as a mail program writes it: in single quotes (Outlook:
+    // 'ann@x.org' <ann@x.org>), after "mailto:", next to a name ("Ann (ann@x.org)"), encoded, with a
+    // +tag (ann+news@x.org is ann@x.org's). Another address in the same domain, or the same name in another
+    // domain, is what an alias, a group or a domain change shows too: a weak sign. Another address in
+    // another domain is the trick (the reader's own address shown on a mass mailing): a sign.
     for (const to of get('to').slice(0, 3)) {
         const tm = /^\s*"?([^"<]*?)"?\s*<([^>]*)>/.exec(to);
-        if (tm && /@/.test(tm[1]) && tm[1].trim().toLowerCase() !== tm[2].trim().toLowerCase()) {
-            out.push({ weight: 2, text: 'Its “To” line shows one address but is really addressed to another.' });
+        const name = tm ? decodeEncodedWords(tm[1]).trim().replace(/^['"\s]+|['"\s]+$/g, '').replace(/^mailto:/i, '') : '';
+        const shown = ((name.match(EMAIL_IN_TEXT_RE) || [])[0] || '').toLowerCase().replace(/^'+|'+$/g, '');
+        const real = tm ? tm[2].trim().replace(/^mailto:/i, '').toLowerCase() : '';
+        const box = (a) => { const [local, domain = ''] = a.split('@'); return [local.replace(/\+.*$/, ''), domain]; };
+        if (shown && real && box(shown).join('@') !== box(real).join('@')) {
+            const [sl, sd] = box(shown), [rl, rd] = box(real);
+            out.push(sd === rd || sl === rl
+                ? { weight: 1, text: 'Its “To” line shows one address but is addressed to another of the same domain or name (an alias, a group or a domain change can do that too).' }
+                : { weight: 2, text: `Its “To” line shows an address at ${sd} but is really addressed to one at ${rd}.` });
             break;
         }
         if (tm && (tm[2].match(/@/g) || []).length > 1) { out.push({ weight: 3, kind: 'broken-to', text: 'Its “To” address is broken (two “@”).' }); break; }

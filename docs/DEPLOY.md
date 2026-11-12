@@ -350,7 +350,7 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `AI_SUSPICIOUS_THRESHOLD` | `0.65` | AI score from which an email not moved is recorded as suspicious (for review); from `0.5` to `AI_MOVE_THRESHOLD` |
 | `MOVE_ON_RULES` | `true` | the extension's "flagged" verdict moves |
 | `AI_SCANS_INSIDE` | `false` | the AI model also reads mail from inside the organization (your domains, DMARC passing); off, the rule checks alone read it (links, headers, the rest). Also on the dashboard: Settings → Policy, "AI on inside mail" |
-| `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside); it needs the AI to read inside mail, so it turns `AI_SCANS_INSIDE` on too |
+| `AI_MOVES_INSIDE` | `false` | let the AI score alone move mail from inside the organization (only mail from your domains with DMARC passing counts as inside); it needs the AI to read inside mail, so it turns `AI_SCANS_INSIDE` on too. Also on the dashboard: Settings → Policy, "AI alone moves inside mail" (turning it on needs a ticked agreement) |
 | `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain (also on the dashboard: Settings → Allowlist). Your own domains can't be allowlisted |
 | `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
 | `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before moving the rest pauses for an admin's decision (they stay in the Inbox meanwhile); strong evidence never pauses |

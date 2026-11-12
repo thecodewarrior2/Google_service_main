@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.12: Suspicious says why; "…show more" in context; "AI alone moves inside mail" on the dashboard; a To-line false alarm
+
+- **A suspicious email says what made it suspicious.** "Because suspicious, below the move rules" named
+  no cause, so an email with an AI score of 0% looked like an AI mistake. The reason now names it: "the
+  rule checks scored it 3 (suspicious from 3, moved from 5)", "the AI scored it 72% (suspicious from 65%,
+  moved from 90%)", both, or "a link check found a suspicious link". Records from before 0.5.12 are shown
+  the same way (from their own scores, with today's thresholds; the record itself is left as it was).
+- **"…show more" no longer reads as if the AI flagged a genuine email.** Each part of an email is also
+  scored on its own, out of context, and a part alone can read more like phishing than the whole email
+  ("click here to accept" is in invitations too). When the whole email scores under 50%, nothing is marked
+  as what weighed most and no part is shown in red; a note says the whole email's score is the AI's
+  opinion. Fixed too: the marked sentences took the page header's layout (the class `top`), lost their
+  numbers and looked like separate boxes.
+- **"…show more" gives context.** Each sentence that weighed most (up to 3) is shown between the sentence
+  before it and the one after it, and those are always real text: blank lines, invisible padding
+  (mailing lists fill their preview text with zero-width characters), lone punctuation, dashes, bullets
+  and a stray letter or number are skipped, and left out of the sentence-by-sentence list too (it says
+  how many). The model still reads the email exactly as before; only what is shown changed
+  (`src/engine/model.js` `reading()`: `filler`, `weighed` with `before` and `after`).
+- **Settings → Policy → "AI alone moves inside mail"** (`AI_MOVES_INSIDE`): off by default. On, an email
+  from inside the organization that the AI scores at the move threshold (90%) or more is moved on the AI
+  score alone, as outside mail is (in monitor mode: recorded as "would move"). Turning it on needs the
+  project ID and a ticked agreement (it moves colleagues' mail on the AI alone); it is noted in Activity
+  and emailed as an alert. It needs the AI to read inside mail, so it turns that on too. The dashboard
+  says which way it is set wherever it matters: the AI opinion's "Where it stands", How it decides, the
+  AI move threshold and "AI on inside mail" rows, and an email's reason ("…, but the sender is inside the
+  organization and "AI alone moves inside mail" is off" or "AI 95% ≥ 90% (the sender is inside the
+  organization; "AI alone moves inside mail" is on)").
+- **The "To" line check misfired on ordinary To lines.** It counted any name holding an address other
+  than the real one, character for character, so Outlook's `'ann@x.org' <ann@x.org>`, a name with the
+  address in it ("Ann (ann@x.org)"), a +tag, or "mailto:" counted as a disguised To line (2 points: with
+  a new outside sender, enough for "suspicious"). Now the address in the name is read as written and
+  compared as a mailbox. Another address of the same domain, or the same name in another domain (an
+  alias, a group, a domain change), is a weak sign (1); another address in another domain is still a sign
+  (2), and says both domains. (The extension has the same check; this is the service's own copy.)
+- Tests: `test/explain.test.js` (made-up mail only).
+- `installLevel` is unchanged: nothing new to install (the setting is on the dashboard).
+
+
 ## 0.5.11: The AI doesn't read mail from inside by default; signs for mail dressed up as inside
 
 - **AI on inside mail: off by default.** Mail from inside the organization (from your domains, with

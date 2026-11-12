@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -44,6 +44,9 @@ function loadConfig(env = process.env) {
         aiThreshold: num(env.AI_MOVE_THRESHOLD, 0.9),
         // From this AI score an email is recorded as suspicious (when it isn't moved): at most the threshold.
         aiSuspicious: num(env.AI_SUSPICIOUS_THRESHOLD, 0.65),
+        // Whether the AI score alone can move mail from inside the organization (as it moves outside mail at
+        // the threshold): off by default, and then only the rules move inside mail (a staff account taken
+        // over trips them). Settings → Policy too ("AI alone moves inside mail", with an agreement).
         aiMovesInside: bool(env.AI_MOVES_INSIDE, false),
         // Whether the AI model reads mail from inside the organization (your domains, Gmail's DMARC check
         // passing): off by default; the rule checks (links, headers, the rest) read it either way, and a

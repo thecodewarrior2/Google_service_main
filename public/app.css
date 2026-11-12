@@ -325,4 +325,8 @@ ul.plain-list li { break-inside: avoid; overflow-wrap: anywhere; padding: 1px 0;
 ol.reading { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
 ol.reading li > span:first-child { margin-right: 8px; }
 ol.reading li { overflow-wrap: anywhere; }
-ol.reading li.top > span:first-child { background: var(--warning-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+ol.reading li.weighed > span:first-child { background: var(--warning-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+/* "…show more": what weighed most, each between the sentence before and after it. */
+.in-context { border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.in-context .ctx.muted { color: var(--muted); font-size: 13px; }
+.in-context .ctx.weighed > span:first-child { background: var(--warning-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; margin-right: 8px; }

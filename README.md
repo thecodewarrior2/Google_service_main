@@ -28,8 +28,9 @@ mode).
   - **The AI doesn't read mail from inside the organization** (your domains, DMARC passing) unless
     you turn it on (Settings → Policy, "AI on inside mail"; `AI_SCANS_INSIDE`). The rule checks read it
     as any email (its links, its headers and the rest), and can move it, for example when a staff
-    account is compromised and sends dangerous links. Even when the AI reads it, its score alone never
-    moves inside mail.
+    account is compromised and sends dangerous links. Even when the AI reads it, its score alone doesn't
+    move inside mail unless you turn on **"AI alone moves inside mail"** (Settings → Policy, with a ticked
+    agreement; `AI_MOVES_INSIDE`), off by default.
   - **Mail dressed up as inside is outside mail:** a staff address that fails Gmail's DMARC check is read
     by the AI and gets a sign of its own ("claims to come from inside your organization"), and so does an
     outside sender whose name shows one of your addresses ("it@your-district.org" <x@elsewhere>).
@@ -84,7 +85,7 @@ For each new Inbox message:
 | Same, in monitor mode, or while moving is paused (a campaign on weaker evidence, or the domain-wide brake) | Left in the Inbox, recorded as "would move" (a paused one can be moved later) |
 | An admin dismissed the campaign as a false alarm | Recorded as suspicious, not moved |
 | The user moved it into the Inbox themselves, and the service hadn't checked it | Checked and recorded, never moved (an alert if flagged) |
-| Sender inside (your domains, DMARC passing), and the rules don't flag it | Nothing: the AI doesn't read it (with "AI on inside mail" on: a score of 90% or more is recorded as suspicious, never moved by the AI alone) |
+| Sender inside (your domains, DMARC passing), and the rules don't flag it | Nothing: the AI doesn't read it (with "AI on inside mail" on: a score of 90% or more is recorded as suspicious, not moved by the AI alone; with "AI alone moves inside mail" on: moved, as from outside) |
 | A rules score of 3 or more, or an AI score of **65%** or more (`AI_SUSPICIOUS_THRESHOLD`), below what moves it | Recorded as suspicious, not moved |
 | Allowlisted sender, DMARC passing | Nothing |
 
@@ -134,7 +135,12 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - **Suspicious, not moved**, newest first: emails the checks found suspicious (a rules score of 3 or
       more, or an AI score from the suspicious line) but not enough to move, still in the Inbox. **F**
       not phishing, **P** phishing, **N** next. Marking them shows what the move rules miss, and gives
-      the retraining export its best examples.
+      the retraining export its best examples. Each says what made it suspicious: the rule checks'
+      score, the AI's, or a link check.
+    - **The AI opinion** says where its score stands against the lines in force; **…show more** shows
+      what the model reads of the email, sentence by sentence, and each sentence that weighed most
+      between the sentence of real text before and after it (blank lines, invisible padding and lone
+      punctuation skipped). When the whole email reads as genuine (under 50%), nothing is marked.
     - **R re-scans** the email: it is read again from the mailbox and judged with today's checks and AI
       model (after a model update, say). Its scores, AI opinion, model and signs become the re-scan's,
       beside what they were on arrival; what happened to it (moved, flagged) stays. A re-scan never moves

@@ -30,8 +30,9 @@ protect.
   Firestore keeps only how many there are and when they were read (`state/colleagueNames`).
 - **An email again, when an admin asks:** Re-scan, and **…show more** on an email's AI opinion, read that
   one email from Gmail again. "…show more" shows the admin what the AI model reads of it (addresses
-  reduced to their domain, phone numbers and long numbers replaced), sentence by sentence; nothing of it
-  is stored, and Activity notes who looked at which email.
+  reduced to their domain, phone numbers and long numbers replaced), sentence by sentence, with each
+  sentence that weighed most between the one before and after it; nothing of it is stored, and Activity
+  notes who looked at which email.
 
 ## What it keeps (Firestore, in your own project and region)
 

@@ -23,6 +23,7 @@ const spruce = require('./engine/spruce');
 const training = require('./training');
 const { createReleases, parseChangelog, modelSourceOf } = require('./releases');
 const { updateInfo, startUpdate } = require('./update');
+const { suspiciousWhy } = require('./policy');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
@@ -49,6 +50,14 @@ const STATS_TODAY_MS = 15 * 1000;
 const MAILBOXES_KEPT_MS = 60 * 1000;
 const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign,
     status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
+
+// Records from before 0.5.12 said only "suspicious, below the move rules": shown with what made them
+// suspicious (the rule checks' score, the AI's), from the record itself, with today's thresholds.
+const OLD_WHY = 'suspicious, below the move rules';
+function withPlainWhy(r, cfg) {
+    if (typeof r.why !== 'string' || !r.why.startsWith(OLD_WHY)) return r;
+    return Object.assign({}, r, { why: suspiciousWhy(r, cfg) + r.why.slice(OLD_WHY.length) });
+}
 
 // The group re-read from the dashboard: at most once a minute, and its last run remembered for 15 s
 // (Settings is fetched every 30 s by each open dashboard).
@@ -272,7 +281,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             return { total: list.length, messages: list.slice(0, 500).map(brief) };
         },
         // An email's record, with the mode now (whether confirming it as phishing also moves it).
-        'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: r, mode: cfg.mode } : { error: 'not found', status: 404 }; },
+        'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: withPlainWhy(r, cfg), mode: cfg.mode } : { error: 'not found', status: 404 }; },
         'GET /api/health': async (q) => {
             const { records } = await load(q);
             const tx = (await store.getState('trainingExport')) || {};
@@ -409,7 +418,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         },
         // A policy setting changed on the dashboard (POLICY_KEYS: the mode, the AI lines, the brake, the time
         // zone, the allowlists). Needs the
-        // project ID typed in; switching to enforce mode also needs the agreement ticked.
+        // project ID typed in; switching to enforce mode, or letting the AI alone move inside mail, also needs
+        // the agreement ticked.
         'POST /api/policy': async (q, body, admin) => {
             const key = String(body.key || '');
             if (!POLICY_KEYS.includes(key)) return { error: 'Choose a setting to change.', status: 400 };
@@ -422,6 +432,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             }
             wrong.clear(admin.email);
             if (key === 'mode' && body.value === 'enforce' && cfg.mode !== 'enforce' && body.agree !== true) return { error: 'Tick "I agree" to switch to enforce mode. Nothing was changed.', status: 400 };
+            // The AI alone moving colleagues' mail is a step away from the cautious default: agreed to, too.
+            if (key === 'aiMovesInside' && /^(true|on|yes|1)$/i.test(String(body.value)) && !cfg.aiMovesInside && body.agree !== true) return { error: 'Tick "I agree" to let the AI alone move mail from inside. Nothing was changed.', status: 400 };
             try { return { changed: await service.setPolicy(key, body.value, admin.email), policy: service.policyInfo() }; }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw e; }
         },
@@ -517,7 +529,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                 // A route's status is the HTTP status code only when it is one (a field of that name holding
                 // anything else, such as an update's progress, broke Settings → Update in 0.3.9 to 0.3.11).
                 const code = out && Number.isInteger(out.status) && out.status >= 100 && out.status <= 599 ? out.status : (out && out.error ? 400 : 200);
-                return send(res, code, Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious }, out));
+                return send(res, code, Object.assign({ admin: admin.email, demo: cfg.demo, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, aiMovesInside: cfg.aiMovesInside }, out));
             }
             if (req.method === 'GET') {
                 const rel = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
