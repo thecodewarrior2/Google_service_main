@@ -1970,6 +1970,24 @@ function parseRawHeaders(raw) {
 }
 
 const EMAIL_IN_TEXT_RE = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+// The entries of an address line ("ann@x.org, Bob Lee <bob@y.org>, \"Lee, Bob\" <bob@y.org>"), one by one:
+// split at the commas outside quotes and outside <…>.
+function addressList(value) {
+    const out = [];
+    let cur = '', quoted = false, angle = false;
+    const s = String(value || '');
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === '\\' && quoted) { cur += ch + (s[i + 1] || ''); i++; continue; }
+        if (ch === '"') quoted = !quoted;
+        else if (!quoted && ch === '<') angle = true;
+        else if (!quoted && ch === '>') angle = false;
+        if (ch === ',' && !quoted && !angle) { out.push(cur); cur = ''; } else cur += ch;
+    }
+    out.push(cur);
+    return out.map(x => x.trim()).filter(Boolean);
+}
 const domainOfAddress = (a) => String(a || '').toLowerCase().replace(/^.*@/, '').replace(/[>\s]+$/, '');
 
 // Reads the receiver's verdict. Only the topmost Authentication-Results written by the receiving mail
@@ -2615,13 +2633,16 @@ function headerAnomalies(raw, accountAddress, receiver = {}) {
     const parsed = parseSenderAddress(fm ? fm[1] : (from.match(EMAIL_IN_TEXT_RE) || [''])[0] || from);
     if (parsed) out.push(...parsed.malformed);
     if (fm) out.push(...displayNameAnomalies(decodeEncodedWords(from.slice(0, fm.index))));
-    // To: a display name that is an email address other than the real one, or a broken address. The
+    // To: a display name that is an email address other than the real one, or a broken address, for each
+    // person on the line (a line with several, as a calendar invitation writes it: "ann@x.org, Bob Lee
+    // <bob@y.org>", is read entry by entry; read whole, "ann@x.org, Bob Lee" looked like a name showing an
+    // address that wasn't Bob's). The
     // address shown is read out of the name as a mail program writes it: in single quotes (Outlook:
     // 'ann@x.org' <ann@x.org>), after "mailto:", next to a name ("Ann (ann@x.org)"), encoded, with a
     // +tag (ann+news@x.org is ann@x.org's). Another address in the same domain, or the same name in another
     // domain, is what an alias, a group or a domain change shows too: a weak sign. Another address in
     // another domain is the trick (the reader's own address shown on a mass mailing): a sign.
-    for (const to of get('to').slice(0, 3)) {
+    for (const to of get('to').flatMap(addressList).slice(0, 20)) {
         const tm = /^\s*"?([^"<]*?)"?\s*<([^>]*)>/.exec(to);
         const name = tm ? decodeEncodedWords(tm[1]).trim().replace(/^['"\s]+|['"\s]+$/g, '').replace(/^mailto:/i, '') : '';
         const shown = ((name.match(EMAIL_IN_TEXT_RE) || [])[0] || '').toLowerCase().replace(/^'+|'+$/g, '');

@@ -122,6 +122,29 @@ test('the To-line check: the address in the name read as written; another of the
     assert.ok(E.headerAnomalies(raw(`"Sam" <sam@@${ORG}>`), USER).some(x => x.kind === 'broken-to'));
 });
 
+test('0.5.13: a To line with several people is read person by person (a calendar invitation: the guest bare, the organizer with a name)', async () => {
+    const E = spruce.load();
+    const raw = (to) => ['From: "Front Office" <office@lakeview-events.example>', `To: ${to}`, 'Subject: Spring open house', 'Message-ID: <x1@lakeview-events.example>', '', 'Hello.'].join('\r\n');
+    const toSign = (to) => E.headerAnomalies(raw(to), USER).find(s => /“To” line/.test(s.text));
+    // As Google Calendar writes an invitation (folded onto a second line): read whole, "sam.okafor@…, Jordan
+    // Lee" looked like a name showing an address that wasn't Jordan's (2 points).
+    assert.equal(toSign(`${USER},\r\n\tJordan Lee <jordan.lee@lakeview-events.example>`), undefined);
+    assert.equal(toSign(`${USER}, Jordan Lee <jordan.lee@lakeview-events.example>, "Lee, Pat" <pat.lee@lakeview-events.example>`), undefined);
+    assert.equal(toSign(`"Okafor, Sam" <${USER}>, "Lee, Jordan (jordan.lee@lakeview-events.example)" <jordan.lee@lakeview-events.example>`), undefined, 'commas inside quotes');
+    // The trick on any entry of the list is still found.
+    const s = toSign(`Jordan Lee <jordan.lee@lakeview-events.example>, "${USER}" <list-7781@bulk-sender.example>`);
+    assert.equal(s && s.weight, 2);
+    // The whole invitation, as on arrival: from outside (1), nothing else: not suspicious.
+    const invite = Buffer.from(['From: Jordan Lee <jordan.lee@lakeview-events.example>', 'Sender: Google Calendar <calendar-notification@google.com>',
+        'Reply-To: Jordan Lee <jordan.lee@lakeview-events.example>', `To: ${USER}, \r\n\tJordan Lee <jordan.lee@lakeview-events.example>`,
+        'Subject: Planning call', 'Message-ID: <calendar-0b1c2d3e-0000-4000-8000-000000000001@google.com>', 'MIME-Version: 1.0',
+        'Authentication-Results: mx.google.com; dkim=pass header.i=@lakeview-events.example; spf=pass; dmarc=pass (p=QUARANTINE) header.from=lakeview-events.example',
+        'Content-Type: text/plain; charset=utf-8', '', 'Hi Sam! I am away next week. Would you like to move our call, or wait until the next one? Thanks, Jordan'].join('\r\n'));
+    const r = await analyze(await readMessage(invite), { mailbox: USER, orgDomains: [ORG] });
+    assert.ok(!r.signals.some(x => /“To” line/.test(x.text)), JSON.stringify(r.signals));
+    assert.ok(r.status !== 'caution' && r.status !== 'flagged', `${r.status} ${r.score}`);
+});
+
 test('"…show more": each sentence that weighed most comes with the sentence of real text before and after it; filler is marked and skipped', async () => {
     assert.equal(hasText('Hello there.'), true);
     for (const f of ['', '   ', '.', '--', '* .', '‌ ͏ ‌ .', 'OK.', '1 2', '•', 'phone number.', '|  |']) assert.equal(hasText(f), false, JSON.stringify(f));

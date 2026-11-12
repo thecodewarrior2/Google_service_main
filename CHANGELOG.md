@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.13: The To line with several people (the calendar invitation false alarm)
+
+- **The cause of the reported false alarm.** A Google Calendar invitation was marked suspicious (the AI
+  at 0%) because of the To-line check: 2 points, and with "from outside" (1), 3. Its To line lists two
+  people, the guest bare and the organizer with a name (`guest@district.org, Organizer Name
+  <organizer@vendor.example>`). The check read the line whole, so it took "guest@district.org,
+  Organizer Name" for the organizer's name, a name showing another address: the disguised-To trick. The
+  line is now read person by person (split at the commas outside quotes and `<…>`), and each is judged
+  alone; the trick on any one of them is still found. 0.5.12's change to the check (quotes, +tags) didn't
+  cover this: with it, the invitation still got its 2 points. The same invitation now scores 1 (from
+  outside): not suspicious.
+- Tests: `test/explain.test.js` (a made-up invitation with the same To line).
+
+
 ## 0.5.12: Suspicious says why; "…show more" in context; "AI alone moves inside mail" on the dashboard; a To-line false alarm
 
 - **A suspicious email says what made it suspicious.** "Because suspicious, below the move rules" named
