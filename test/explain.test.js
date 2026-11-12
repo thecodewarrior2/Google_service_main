@@ -170,3 +170,46 @@ test('"…show more": each sentence that weighed most comes with the sentence of
     // Invisible characters aren't shown.
     assert.ok(reading.sentences.every(x => !/[‌͏⠀]/.test(x.text)));
 });
+
+test('0.5.14: the directory\'s names in Reply-To, Cc and To: replies to an outside address under a colleague\'s name; a colleague copied in at an outside or look-alike address', async () => {
+    const E = spruce.load();
+    const colleagues = new Set(['Dana Morales', 'Okafor, Sam'].map(n => E.colleagueNameHash(n)));
+    const mail = (lines, from = 'Accounts Payable <ap@harbor-supply-invoices.example>') => Buffer.from([`From: ${from}`, ...lines, 'Subject: Invoice 4471 approval',
+        'Message-ID: <x3@harbor-supply-invoices.example>', 'Authentication-Results: mx.google.com; spf=pass; dmarc=pass header.from=harbor-supply-invoices.example',
+        'Content-Type: text/plain; charset=utf-8', '', 'Please see the invoice below and confirm today.'].join('\r\n'));
+    const judge = async (raw, ctx = {}) => analyze(await readMessage(raw), Object.assign({ mailbox: USER, orgDomains: [ORG], colleagues }, ctx));
+    const signs = (r) => r.signals.filter(s => /^colleague-/.test(s.kind || ''));
+    // Reply-To: a colleague's name on an outside address.
+    let r = await judge(mail([`To: ${USER}`, 'Reply-To: Dana Morales <dana.morales.office@freemail.example>']));
+    assert.deepEqual(signs(r).map(s => [s.kind, s.weight]), [['colleague-reply-to', 3]]);
+    assert.equal(signs(r)[0].text, 'Replies go to an outside address (dana.morales.office@freemail.example) under the name of someone in your organization.');
+    // ... at a look-alike of the organization's domain: said so.
+    r = await judge(mail([`To: ${USER}`, 'Reply-To: "Morales, Dana" <dana.morales@maple-schools-k12.example>']));
+    assert.match(signs(r)[0].text, /at a domain that imitates yours \(maple-schools\.example\)\.$/);
+    // Cc: a colleague at a personal address: weak (1); at a look-alike domain: 3.
+    r = await judge(mail([`To: ${USER}`, 'Cc: Dana Morales <dana.m@freemail.example>']));
+    assert.deepEqual(signs(r).map(s => [s.kind, s.weight]), [['colleague-copied-outside', 1]]);
+    r = await judge(mail([`To: ${USER}, Dana Morales <dana.morales@mapleschools.example>`]));
+    assert.deepEqual(signs(r).map(s => [s.kind, s.weight]), [['colleague-copied-lookalike', 3]]);
+    assert.equal(signs(r)[0].text, 'It copies in someone of your organization at an address that imitates your domain (dana.morales@mapleschools.example, not maple-schools.example).');
+    // Not: colleagues at their own addresses; strangers' names; the sender's own address in Reply-To (the
+    // From checks cover it); without the directory's names.
+    for (const lines of [[`To: Sam Okafor <${USER}>`, `Cc: Dana Morales <dana.morales@${ORG}>`, `Reply-To: Dana Morales <dana.morales@${ORG}>`],
+        [`To: ${USER}`, 'Cc: Jordan Lee <jordan.lee@freemail.example>', 'Reply-To: Jordan Lee <jordan.lee@freemail.example>']]) {
+        assert.deepEqual(signs(await judge(mail(lines))), [], lines.join(' | '));
+    }
+    assert.deepEqual(signs(await judge(mail([`To: ${USER}`, 'Reply-To: Dana Morales <dana.morales@freemail.example>'], 'Dana Morales <dana.morales@freemail.example>'))), []);
+    assert.deepEqual(signs(await judge(mail([`To: ${USER}`, 'Reply-To: Dana Morales <dana.morales.office@freemail.example>']), { colleagues: null })), []);
+    // One sign per kind, the look-alike one first.
+    r = await judge(mail([`To: ${USER}`, 'Cc: Dana Morales <dana.m@freemail.example>, Sam Okafor <sam.okafor@maple-schools.org>']));
+    assert.deepEqual(signs(r).map(s => [s.kind, s.weight]), [['colleague-copied-lookalike', 3]]);
+    // What imitates the organization's domain, and what doesn't.
+    const copiedAt = (domain) => (E.colleagueLineSigns([{ line: 'cc', name: 'Dana Morales', address: `dana@${domain}` }], [ORG], colleagues, '')[0] || {}).kind;
+    for (const d of ['maple-schools.org', 'mapleschools.example', 'maple-schools-k12.example', 'maple-schoo1s.example', 'mail.maple-school.example']) assert.equal(copiedAt(d), 'colleague-copied-lookalike', d);
+    for (const d of ['freemail.example', 'harbor-supply-invoices.example', 'maple.example']) assert.equal(copiedAt(d), 'colleague-copied-outside', d);
+    assert.equal(copiedAt(`sub.${ORG}`), undefined, 'the organization\'s own (sub)domain');
+    // The extension's form: a name's hash and a domain only (no address kept).
+    assert.equal(E.colleagueLineSigns([{ line: 'reply-to', h: E.colleagueNameHash('Sam Okafor'), domain: 'freemail.example' }], ORG, colleagues, '')[0].text,
+        'Replies go to an outside address (an address at freemail.example) under the name of someone in your organization.');
+    assert.deepEqual(E.colleagueLineSigns([{ line: 'reply-to', h: E.colleagueNameHash('Sam Okafor'), domain: 'freemail.example', fromSame: true }], ORG, colleagues, ''), []);
+});

@@ -1,6 +1,6 @@
 {
   "name": "spruce-gmail-service",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "installLevel": 3,
   "private": true,
   "description": "S.P.R.U.C.E+ for a whole Google Workspace domain: checks every new email with the extension's own checks and AI model, and moves suspicious ones to Spam (or only records them, in monitor mode), with an admin dashboard.",

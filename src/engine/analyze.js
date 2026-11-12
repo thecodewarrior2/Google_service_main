@@ -83,6 +83,9 @@ async function analyze(facts, ctx = {}) {
         ...safe(() => E.displayNameAnomalies(facts.senderName)),
         // ctx.colleagues: one-way hashes of the organization's people's names (Service.colleagueNames).
         ...safe(() => E.nameAddressSigns(facts.senderName, facts.senderAddress, org, ctx.colleagues || null, null)),
+        // The same names in the other address lines: replies going to an outside address under a
+        // colleague's name, a colleague copied in at an outside or look-alike address (0.5.14).
+        ...safe(() => E.colleagueLineSigns(addressLinePeople(facts), ctx.orgDomains || [], ctx.colleagues || null, facts.senderAddress)),
         ...safe(() => E.ownNameSigns(facts.senderName, facts.senderAddress, mailbox)),
         ...insideSpoofSigns(E, facts, ctx.orgDomains || [], ownAddress, verified),
         ...safe(() => E.subjectScamSigns(facts.subject)),
@@ -152,6 +155,14 @@ async function analyze(facts, ctx = {}) {
         // Only for the retraining export (src/training.js), which takes the people out: never stored.
         aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
+}
+
+// The people in an email's Reply-To, Cc and To lines (name and address each, as the mail parser read
+// them, a list person by person), for colleagueLineSigns.
+function addressLinePeople(facts) {
+    const p = facts.people || {};
+    const line = (name, list) => (list || []).slice(0, 30).map(x => ({ line: name, name: x.name, address: x.address }));
+    return [...line('reply-to', p.replyTo), ...line('cc', p.cc), ...line('to', p.to)];
 }
 
 // Signs of mail dressed up as coming from inside the organization:

@@ -48,6 +48,7 @@ function load() {
         displayNameAnomalies: fn('displayNameAnomalies'),
         nameAddressSigns: fn('nameAddressSigns'),
         colleagueNameHash: fn('colleagueNameHash'),
+        colleagueLineSigns: fn('colleagueLineSigns'),
         ownNameSigns: fn('ownNameSigns'),
         subjectScamSigns: fn('subjectScamSigns'),
         bodyScamSigns: fn('bodyScamSigns'),

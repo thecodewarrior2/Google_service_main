@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.14: The directory's names in Reply-To, Cc and To
+
+- The colleague-name check (the directory's names, as one-way hashes) looked only at the sender's name.
+  It now looks at the other address lines too (each person on a line on their own, as 0.5.13 reads them):
+  - **Reply-To** under the name of someone in your organization going to an outside address: replies
+    would go to someone else. 3 (amber); the sign says when the domain imitates yours.
+  - **A colleague copied in** (Cc or To) at an outside address: 1, since staff are sometimes copied at a
+    personal address. At an address that imitates your organization's domain (its name under another
+    ending, a hyphen more or less, one letter away, look-alike characters, or something added:
+    `maple-schools-k12.example`), the "I've copied our superintendent" trick: 3.
+  - Never for your own domains' addresses, nor for the sender's own address (the From check covers it).
+  The names are hashed the same way as the directory's; nothing more is read or kept
+  (`colleagueLineSigns`, `ownDomainLookalike` in `vendor/spruce/shared.js`; `addressLinePeople` in
+  `src/engine/analyze.js`).
+- Tests: `test/explain.test.js` (made-up mail only).
+- `installLevel` is unchanged: no new permission (the same directory names).
+
+
 ## 0.5.13: The To line with several people (the calendar invitation false alarm)
 
 - **The cause of the reported false alarm.** A Google Calendar invitation was marked suspicious (the AI

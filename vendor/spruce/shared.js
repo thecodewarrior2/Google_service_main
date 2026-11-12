@@ -1932,6 +1932,54 @@ function nameAddressSigns(name, address, own, colleagues, ownership) {
     return out;
 }
 
+// A domain that imitates the organization's own (asked only together with a colleague's name, in
+// colleagueLineSigns): its name under another ending (maple-schools.org for maple-schools.example), with
+// a hyphen more or less, one letter away, written with look-alike characters, or with something added
+// (maple-schools-k12.example).
+function ownDomainLookalike(domain, own) {
+    const reg = registrableDomain(String(domain || '').toLowerCase()) || '', ownReg = registrableDomain(String(own || '').toLowerCase()) || '';
+    if (!reg || !ownReg || reg === ownReg) return false;
+    const label = reg.split('.')[0], ownLabel = ownReg.split('.')[0];
+    const flat = (s) => s.replace(/[-_]/g, '');
+    if (label === ownLabel || flat(label) === flat(ownLabel)) return true;
+    if (ownLabel.length < 4) return false;
+    return confusableSkeleton(unicodeLabel(label)) === ownLabel || (ownLabel.length >= 5 && editDistanceAtMost1(label, ownLabel))
+        || flat(label).includes(flat(ownLabel));
+}
+
+// Signs in the other address lines (Reply-To, Cc, To) that use the name of someone in the user's own
+// organization (colleagues: Set of colleagueNameHash values) on an address outside it:
+//   - replies under a colleague's name go to an outside address: 3 (amber);
+//   - a colleague copied in (Cc or To) at an outside address: 1, since staff are sometimes copied at a
+//     personal address; at an address that imitates the organization's domain (the "I've copied our
+//     superintendent" trick): 3.
+// Never for the organization's own addresses, nor for the sender's own address (the From checks cover
+// it). people: entries { line: 'reply-to' | 'cc' | 'to', name or h (colleagueNameHash of it), address or
+// domain, fromSame: it is the sender's own address }; own: the organization's domain, or a list of them.
+function colleagueLineSigns(people, own, colleagues, fromAddress) {
+    const owns = [].concat(own || []).map(d => String(d).toLowerCase()).filter(Boolean);
+    if (!colleagues || !colleagues.size || !owns.length) return [];
+    const from = String(fromAddress || '').toLowerCase();
+    let reply = null, copied = null;
+    for (const p of [].concat(people || []).slice(0, 60)) {
+        if (!p) continue;
+        const address = String(p.address || '').toLowerCase();
+        const domain = String(p.domain || (address.includes('@') ? address.slice(address.lastIndexOf('@') + 1) : '')).toLowerCase();
+        if (!domain || owns.some(o => isOwnDomain(domain, o)) || p.fromSame || (address && address === from)) continue;
+        const h = p.h || colleagueNameHash(p.name);
+        if (!h || !colleagues.has(h)) continue;
+        const look = owns.find(o => ownDomainLookalike(domain, o)) || '';
+        const where = address || `an address at ${domain}`;
+        if (p.line === 'reply-to') { if (!reply) reply = { look, where }; } else if (!copied || (look && !copied.look)) copied = { look, where };
+    }
+    const out = [];
+    if (reply) out.push({ weight: 3, kind: 'colleague-reply-to', text: `Replies go to an outside address (${reply.where}) under the name of someone in your organization${reply.look ? `, at a domain that imitates yours (${reply.look})` : ''}.` });
+    if (copied) out.push(copied.look
+        ? { weight: 3, kind: 'colleague-copied-lookalike', text: `It copies in someone of your organization at an address that imitates your domain (${copied.where}, not ${copied.look}).` }
+        : { weight: 1, kind: 'colleague-copied-outside', text: `It copies in someone of your organization at an outside address (${copied.where}).` });
+    return out;
+}
+
 // Signs that a sender borrows the reader's own name: a display name that is the reader's own email
 // address, or its mailbox name (the part before the @) written exactly as in the address, on someone
 // else's address, so the email looks like a notice about the reader's own account ("patdoe"

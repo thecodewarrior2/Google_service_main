@@ -370,5 +370,5 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `WORKER_MAX_INSTANCES` (installer) | `30` | the most worker instances at once (1 to 100); they cost only while they work |
 | `BUDGET_ALERT` (installer only) | `1` | budget alert amount for the project, in the billing account's currency; `off` for none |
 | `STORE_SUBJECTS`, `STORE_AI_QUOTES` | `true` | keep subjects and the model's short quotes in records |
-| `COLLEAGUE_NAMES` | `true` | the colleague-name check: the directory's names (one-way hashes, in memory) against outside senders' names; needs `DIRECTORY_ADMIN` with Users → Read and the `admin.directory.user.readonly` scope (off, and said on Status, without them) |
+| `COLLEAGUE_NAMES` | `true` | the colleague-name check: the directory's names (one-way hashes, in memory) against the names on outside addresses (From, Reply-To, Cc, To); needs `DIRECTORY_ADMIN` with Users → Read and the `admin.directory.user.readonly` scope (off, and said on Status, without them) |
 | `FIRST_SEEN_LEARNING_DAYS` | `14` | "first email from this sender" only counts after this |

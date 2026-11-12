@@ -110,7 +110,10 @@ retraining export leaves it out. A bilingual email with a real English part is r
 **The colleague-name check:** the full names in your directory are read (by `DIRECTORY_ADMIN`, every 12
 hours) and kept only as one-way hashes, in memory; an outside sender whose display name is one of them
 ("Jordan Whitfield" <jordan.whitfield.office@gmail.com>) gets a sign (3: amber; it moves mail only with
-other signs, since staff sometimes write from a personal address). It needs the **Users → Read**
+other signs, since staff sometimes write from a personal address). The same names are looked for in the
+other address lines: **Reply-To** under a colleague's name going to an outside address (3: replies would
+go to someone else), and a colleague **copied in** (Cc or To) at an outside address (1) or at an address
+that imitates your domain (3: "I've copied our superintendent"). It needs the **Users → Read**
 privilege and one more delegation scope (docs/INSTALL.md, "The colleague-name check"); without them it is
 off, and Status says how to turn it on. `COLLEAGUE_NAMES=off` (a setting of both services, docs/DEPLOY.md)
 turns it off.
