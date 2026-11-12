@@ -438,6 +438,8 @@ Details).
 - In the Admin console, go to **Reporting → Email log search** and paste it into **Message ID**: you see
   every delivery of that email in the domain.
 - Or use the **security investigation tool** (Gmail log events, Message ID), where your edition has it.
+- In **Google Vault**, press **Copy for Vault** (next to Copy) and paste it into a Gmail search's terms: it
+  copies `rfc822msgid:<Message-ID>`, which finds that email in every mailbox the search covers.
 - For an email someone reported but the service didn't record: **Email → Messages → Check an email**. Paste its
   original (in Gmail: ⋮ → Show original → Copy to clipboard). You see what the service would decide, and
   its Message-ID.

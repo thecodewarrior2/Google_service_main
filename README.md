@@ -164,7 +164,7 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
       phishing: move to Spam** for one still in the Inbox, in enforce mode).
     - Each email also shows its **Message-ID** and Gmail ID, each with a **Copy** button. The Message-ID
       is what Google Workspace's Email log search and the security investigation tool look an email
-      up by.
+      up by. **Copy for Vault** copies it as Google Vault's search writes it: `rfc822msgid:<Message-ID>`.
     - **Check an email:** paste a reported email's original (Gmail: Show original), or an `.eml` file, to
       see what the service would decide and why. Nothing is stored, moved or counted.
   - **Users:** everyone who had mail moved, would have had it moved, or got suspicious mail; each opens
@@ -296,7 +296,8 @@ The last command writes `build/mockup.html`, a single file to share the look and
 - **`deploy/update.sh`** upgrades to the newest approved version (from `google_service_main`), with no
   zip to upload. Each version brings its own AI model; the upgrade says when the model changes. Most
   versions can also be installed from the dashboard (Settings → Update), which runs
-  `deploy/cloud-update.sh` in Cloud Build.
+  `deploy/cloud-update.sh` in Cloud Build. The page links each AI model to its TinyPhishLLM repository
+  (and the pinned commit) and the approved versions to `google_service_main`.
 - **`deploy/upgrade.sh`** installs a version you unzipped over the installed one.
 - **`deploy/rollback.sh`** goes back to the previous build.
 - **`deploy/stop.sh`** stops it.

@@ -440,8 +440,8 @@
         return emailView(m, { mode });
     }
     // A Copy button: the text goes to the clipboard (or, where the browser doesn't allow it, by a hidden
-    // field), and a message says so.
-    function copyButton(text, what) {
+    // field), and a message says so. label: the button's text ("Copy").
+    function copyButton(text, what, label = 'Copy') {
         return h('button', { class: 'linkbtn copy', type: 'button', 'aria-label': `Copy the ${what}`, onclick: async () => {
             try { await navigator.clipboard.writeText(text); }
             catch (e) {
@@ -451,12 +451,14 @@
                 try { document.execCommand('copy'); } finally { t.remove(); }
             }
             toast(`${what} copied.`);
-        } }, 'Copy');
+        } }, label);
     }
-    // A row with an identifier, its Copy button, and what it is for.
-    const idRow = (label, value, note) => [h('dt', { text: label }),
-        h('dd', {}, value ? [h('code', { class: 'mid', text: value }), ' ', copyButton(value, label), note ? h('div', { class: 'muted small', text: note }) : null]
+    // A row with an identifier, its Copy button (and any others: extra), and what it is for.
+    const idRow = (label, value, note, extra = []) => [h('dt', { text: label }),
+        h('dd', {}, value ? [h('code', { class: 'mid', text: value }), ' ', copyButton(value, label), ...extra.flatMap(b => [' ', b]), note ? h('div', { class: 'muted small', text: note }) : null]
             : h('span', { class: 'muted', text: 'not recorded (emails before 0.3.1)' }))];
+    // Google Vault's search finds an email by its Message-ID written as rfc822msgid:<id> (no angle brackets).
+    const vaultQuery = (id) => `rfc822msgid:${String(id || '').replace(/^<|>$/g, '')}`;
     const PASTED = { move: 'Would be moved to Spam', 'would-move': 'Would be recorded as "would move" (monitor mode: nothing is moved)', flag: 'Would be recorded as suspicious, not moved', none: 'Nothing would happen: the checks find nothing to act on' };
 
     // Re-scan (Review, Messages): the email read again from its mailbox and judged now, with today's checks
@@ -611,7 +613,8 @@
                         h('dt', { text: 'Mode' }), h('dd', { text: m.mode }),
                         h('dt', { text: 'Looked up' }), h('dd', { text: m.checks ? [m.checks.cloudflare ? `Cloudflare: ${m.checks.cloudflare} site${m.checks.cloudflare === 1 ? '' : 's'}` : '', m.checks.safeBrowsing ? `Safe Browsing: ${m.checks.safeBrowsing} link${m.checks.safeBrowsing === 1 ? '' : 's'}` : '', m.checks.lists ? 'phishing lists' : '', m.checks.ages ? `site age: ${m.checks.ages}` : '', m.checks.notChecked ? `${m.checks.notChecked} not checked` : ''].filter(Boolean).join(' · ') || 'nothing to look up' : 'offline checks only' }),
                         h('dt', { text: 'Attachments' }), h('dd', { text: m.attachments && m.attachments.length ? m.attachments.map(a => a.name || a.type).join(', ') : 'none' }),
-                        idRow('Message-ID', m.rfc822MessageId, 'To look it up in Google Workspace: Admin console → Reporting → Email log search (Message ID), or the security investigation tool.'),
+                        idRow('Message-ID', m.rfc822MessageId, 'To look it up in Google Workspace: Admin console → Reporting → Email log search (Message ID), or the security investigation tool. Copy for Vault gives Google Vault\'s search for it (rfc822msgid:…).',
+                            m.rfc822MessageId ? [copyButton(vaultQuery(m.rfc822MessageId), 'Vault search', 'Copy for Vault')] : []),
                         pasted ? null : idRow('Gmail ID', m.messageId, 'The Gmail API\'s id of this copy, in this mailbox.'),
                         h('dt', { text: 'Checked' }), h('dd', { text: when(m.processedAt) })))))];
     }
@@ -995,13 +998,24 @@
         const out = [h('h1', { text: 'Update' }), h('p', { class: 'sub', text: 'The approved versions, from google_service_main, and what changed in them. A version that changes only the service is installed from here; one that changes the installation itself (permissions, jobs, settings) from Cloud Shell, with bash deploy/update.sh. Each version names its AI model: the update downloads that model from TinyPhishLLM, the model\'s own repository, and uses it only if every file matches.' })];
         // The AI model: each version pins one commit of TinyPhishLLM (its own public repository), which the
         // image build downloads and checks (SHA-256).
-        const modelText = (v) => v && v.model ? `phish-tiny ${v.model}${v.modelSource ? `, from ${v.modelSource.repository.replace(/^https:\/\/github\.com\//, '')} (commit ${v.modelSource.commit.slice(0, 7)})` : ''}` : 'unknown';
+        // The repositories are links (a new tab): the model's to TinyPhishLLM (its commit to that commit), the
+        // approved versions' to google_service_main. Only GitHub addresses of the expected shape are linked.
+        const ghLink = (url, text) => (/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\/commit\/[0-9a-f]{40})?$/.test(String(url || ''))
+            ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text }) : text);
+        const modelText = (v) => {
+            if (!v || !v.model) return 'unknown';
+            const s = v.modelSource;
+            if (!s) return `phish-tiny ${v.model}`;
+            return [ghLink(s.repository, `phish-tiny ${v.model}, from ${s.repository.replace(/^https:\/\/github\.com\//, '')}`),
+                ' (commit ', ghLink(`${s.repository}/commit/${s.commit}`, s.commit.slice(0, 7)), ')'];
+        };
+        const kvNode = (k, v) => [h('dt', { text: k }), h('dd', {}, v)];
         out.push(h('section', { class: 'card' }, h('dl', { class: 'kv' },
             kvRow('Installed', d.installed.version),
-            kvRow('Its AI model', modelText(d.installed)),
+            kvNode('Its AI model', modelText(d.installed)),
             kvRow('Newest approved', n ? `${n.version}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
-            kvRow('Its AI model', n ? modelText(n) : '–'),
-            kvRow('From', n ? n.repo : '–'))));
+            kvNode('Its AI model', n ? modelText(n) : '–'),
+            kvNode('From', n && /^[\w.-]+\/[\w.-]+$/.test(String(n.repo || '')) ? ghLink(`https://github.com/${n.repo}`, n.repo) : (n ? n.repo : '–')))));
         const st = d.progress;
         if (st && st.phase) {
             const at = st.at ? when(st.at) : '';

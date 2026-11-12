@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.15: Links on Settings → Update; Copy for Vault
+
+- **Settings → Update links to the repositories.** Each AI model ("phish-tiny 0.13.0, from
+  thecodewarrior2/TinyPhishLLM") opens the model's repository, and its commit opens that commit; "From"
+  opens `google_service_main`, where the approved versions come from. In a new tab; only GitHub addresses
+  of the expected shape are made links.
+- **Copy for Vault** beside an email's Message-ID copies it as Google Vault's search writes it:
+  `rfc822msgid:<Message-ID>` (no angle brackets), ready to paste into a Vault search.
+- Dashboard only: nothing in how mail is judged changes.
+
+
 ## 0.5.14: The directory's names in Reply-To, Cc and To
 
 - The colleague-name check (the directory's names, as one-way hashes) looked only at the sender's name.
