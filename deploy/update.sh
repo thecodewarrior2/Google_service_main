@@ -5,8 +5,9 @@
 # It downloads the repository of approved releases (google_service_main: only versions the maintainer
 # tried and approved), unpacks the newest next to this folder, and runs its deploy/upgrade.sh. That
 # copies your settings, shows what changes (the version, the AI model's version, what's new) and asks
-# before changing anything. The AI model (phish-tiny) comes with each version: it changes only when an
-# approved version brings a new one.
+# before changing anything. Each version pins its AI model (phish-tiny): one commit of TinyPhishLLM, the
+# model's own public repository, and each file's SHA-256 (vendor/spruce/VENDOR.json). Building the image
+# downloads it from there and checks it, so the model changes only when an approved version pins a new one.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HERE="$(pwd -P)"

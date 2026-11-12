@@ -95,8 +95,8 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 - **The retraining export** (`src/training.js`; off until an admin allows it in Settings → Retraining). The emails an
   admin marked are read from Gmail when an admin downloads them: one per campaign, the newest copy still
   in a mailbox. Each is judged again as on arrival, with `analyze(..., { keepAiFacts: true })`, to get
-  what the model read. It is then written in the extension's training format (`{ name, label, note, facts }`,
-  as in `tools/ai/data/extra/`), with the people taken out:
+  what the model read. It is then written in the model's training format (`{ name, label, note, facts }`,
+  as in TinyPhishLLM_Private_Training's `training/data/extra/`), with the people taken out:
   - the headers' names (`mime.readMessage`'s `people`);
   - titles, greetings and sign-offs;
   - the organization's domains;

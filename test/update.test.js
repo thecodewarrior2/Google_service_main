@@ -13,7 +13,7 @@ const { loadConfig } = require('../src/config');
 const { Service } = require('../src/pipeline');
 const { MemoryStore } = require('../src/store/memory');
 const { createApp, expectedProject } = require('../src/server');
-const { createReleases, parseChangelog, compareVersions } = require('../src/releases');
+const { createReleases, parseChangelog, compareVersions, modelSourceOf } = require('../src/releases');
 const { updateInfo, startUpdate } = require('../src/update');
 
 const ROOT = path.join(__dirname, '..');
@@ -32,7 +32,7 @@ function fakeGitHub({ version = '9.9.9', installLevel = PKG.installLevel, fail =
         const body = url.endsWith('/commits/main') ? { sha: SHA, commit: { committer: { date: '2026-11-10T12:00:00Z' } } }
             : url.endsWith('/package.json') ? JSON.stringify({ version, installLevel })
             : url.endsWith('/CHANGELOG.md') ? CHANGELOG
-            : url.endsWith('/VENDOR.json') ? JSON.stringify({ model: '0.12.0' }) : null;
+            : url.endsWith('/VENDOR.json') ? JSON.stringify({ model: '0.12.0', modelSource: { repository: 'https://github.com/thecodewarrior2/TinyPhishLLM', commit: 'c'.repeat(40), files: {} } }) : null;
         if (body === null) return { ok: false, status: 404 };
         return { ok: true, status: 200, json: async () => body, text: async () => body };
     };
@@ -47,6 +47,9 @@ test('the approved versions: read from google_service_main\'s newest commit, kep
     const r = createReleases({ repo: 'district/releases', fetch: gh.f, now: () => t });
     const n = await r.newest();
     assert.deepEqual([n.version, n.commit, n.installLevel, n.model, n.changelog.length], ['9.9.9', SHA, PKG.installLevel, '0.12.0', 3]);
+    assert.deepEqual(n.modelSource, { repository: 'https://github.com/thecodewarrior2/TinyPhishLLM', commit: 'c'.repeat(40) }, 'where its image build downloads the model');
+    assert.equal(modelSourceOf({ model: '0.11.0' }), null, 'a version from before 0.5.8 had its model inside');
+    assert.equal(modelSourceOf({ modelSource: { repository: 'https://example.com/x/y', commit: 'c'.repeat(40) } }), null);
     assert.equal(gh.calls[0], 'https://api.github.com/repos/district/releases/commits/main');
     assert.ok(gh.calls.slice(1).every(u => u.startsWith(`https://raw.githubusercontent.com/district/releases/${SHA}/`)), 'the files of that exact commit');
     await r.newest(); assert.equal(gh.calls.length, 4, 'kept');
@@ -73,6 +76,10 @@ const OK = { agree: true, projectId: 'maple-mail-protection', email: `IT.Head@${
 test('the button: the agreement, the project ID and the admin\'s own address; then the request (with the exact commit) and the job, alerted', async () => {
     const s = setup();
     const info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases });
+    // Both versions' AI models, and where each comes from (TinyPhishLLM, at the commit the version pins).
+    const vendor = require('../vendor/spruce/VENDOR.json');
+    assert.deepEqual([info.installed.model, info.installed.modelSource], [vendor.model, { repository: vendor.modelSource.repository, commit: vendor.modelSource.commit }]);
+    assert.equal(info.newest.modelSource.commit, 'c'.repeat(40));
     assert.equal(info.canUpdate, true, info.why);
     assert.deepEqual(info.newer.map(c => c.version), ['9.9.9'], 'only what is newer than the version installed');
     assert.equal((await s.press(Object.assign({}, OK, { agree: false }))).status, 400);
@@ -209,7 +216,7 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
     const origin = path.join(sb.home, 'origin');
     fs.mkdirSync(path.join(origin, 'deploy'), { recursive: true }); fs.mkdirSync(path.join(origin, 'vendor', 'spruce'), { recursive: true });
     fs.copyFileSync(path.join(ROOT, 'deploy', 'cloud-update.sh'), path.join(origin, 'deploy', 'cloud-update.sh'));
-    fs.writeFileSync(path.join(origin, 'vendor', 'spruce', 'VENDOR.json'), JSON.stringify({ model: '0.12.0' }));
+    fs.writeFileSync(path.join(origin, 'vendor', 'spruce', 'VENDOR.json'), JSON.stringify({ model: '0.12.0', modelSource: { repository: 'https://github.com/thecodewarrior2/TinyPhishLLM', commit: 'd'.repeat(40), files: {} } }, null, 2));
     const write = (v, level) => fs.writeFileSync(path.join(origin, 'package.json'), `{\n  "version": "${v}",\n  "installLevel": ${level}\n}\n`);
     git(sb.home, 'init', '-q', '-b', 'main', origin);
     write('9.9.9', 1); git(origin, 'add', '-A'); git(origin, 'commit', '-q', '-m', '9.9.9');
@@ -256,7 +263,7 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
         for (const s of ['spruce-worker', 'spruce-admin']) assert.match(r.calls, new RegExp(`run deploy ${s} --image=${image.replace(/[.]/g, '\\.')} --region=us-east1 --update-labels=spruce-version=9-9-9,spruce-model=0-12-0,spruce-install-level=1`));
         assert.deepEqual(r.states.map(s => s.phase), ['building', 'done']);
         assert.equal(r.event.kind.stringValue, 'update');
-        assert.equal(r.event.text.stringValue, `The update from 0.3.8 to 9.9.9 finished: both services run 9.9.9 (started by it.head@${ORG} on the dashboard).`);
+        assert.equal(r.event.text.stringValue, `The update from 0.3.8 to 9.9.9 finished: both services run 9.9.9, with the AI model phish-tiny 0.12.0 from TinyPhishLLM (ddddddd) (started by it.head@${ORG} on the dashboard).`);
         assert.match(r.calls, /curl .*-X DELETE .*\/state\/updateRequest/);
         assert.doesNotMatch(r.calls, /--min-instances/, 'how many mailboxes are watched unknown: the dashboard left as it is');
         // 0.5.0: the dashboard always on from 10,000 watched mailboxes (state/watchedCount), else not; the

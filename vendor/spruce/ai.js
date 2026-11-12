@@ -2,7 +2,8 @@
 // email and gives its opinion on whether it is phishing, and which sentences made it think so.
 //
 // The model (models/phish-tiny/) is a BERT-tiny classifier (2 layers, 4.4 million parameters, about
-// 4.5 MB with 8-bit weights) that WE train: tools/ai/ generates the training emails, fine-tunes the
+// 4.5 MB with 8-bit weights) that WE train, in TinyPhishLLM (the model's own repository, shared with the
+// extension; tools/sync-model.js brings it here): its training/ generates the training emails, fine-tunes the
 // model and exports it. In this service it runs in the native engine (src/engine/model.js, ONNX Runtime,
 // nothing sent anywhere); this file builds its input and splits it into tokens.
 //
@@ -18,7 +19,7 @@
 // Loaded after shared.js (registrableDomain, selfVouchingSigns, isSharedMailbox).
 
 // ---------------------------------------------------------------------------------------------------
-// The model's input: one text built from the email's facts. tools/ai/make-dataset.js builds its
+// The model's input: one text built from the email's facts. TinyPhishLLM's training/make-dataset.js builds its
 // training emails with this same function, so training and use always see the same format.
 // facts: { subject, senderName, senderAddress, auth: { dmarc } | null,
 //          links: [{ text, host, destHost, finding }], bodyText,
@@ -168,7 +169,7 @@ class WordPiece {
 
 // ---------------------------------------------------------------------------------------------------
 // The network itself runs in the native engine since 0.5.0 (src/engine/model.js: ONNX Runtime, the model
-// file models/phish-tiny/model.onnx made by tools/export-onnx.py). This file keeps what comes before it:
+// file models/phish-tiny/model.onnx made by TinyPhishLLM's training/export-onnx.py). This file keeps what comes before it:
 // the input text (modelInputParts) and the tokenizer (WordPiece), the same as in training.
 // ---------------------------------------------------------------------------------------------------
 

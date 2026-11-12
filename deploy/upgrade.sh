@@ -54,12 +54,14 @@ gcloud config set project "$PROJECT" --quiet >/dev/null
 IMG="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(spec.template.spec.containers[0].image)' 2>/dev/null || true)"
 [ -n "$IMG" ] || fail "no spruce-worker in $PROJECT ($REGION): nothing to upgrade. For a first install: bash deploy/install.sh"
 FROM="${IMG##*:}"; FROM="${FROM%%-*}"
-# The AI model (phish-tiny) comes with each version: the one installed (a label since 0.3.1) and this one.
+# The AI model (phish-tiny): each version pins one (VENDOR.json), which the build downloads from TinyPhishLLM.
+# The one installed (a label since 0.3.1) and this one.
 NEWMODEL="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
+NEWMODEL_COMMIT="$(sed -n 's/.*"commit": *"\([0-9a-f]\{40\}\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
 OLDMODEL="$(gcloud run services describe spruce-worker --region="$REGION" --format='value(metadata.labels.spruce-model)' 2>/dev/null | tr '-' '.' || true)"
 echo
 echo "Upgrade S.P.R.U.C.E+ Mail Protection in $PROJECT ($REGION): $FROM -> $VERSION"
-echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')"
+echo "AI model (phish-tiny): ${OLDMODEL:-the one installed} -> ${NEWMODEL:-unknown}$( [ -n "$OLDMODEL" ] && [ "$OLDMODEL" = "$NEWMODEL" ] && echo ' (the same)')$( [ -n "$NEWMODEL_COMMIT" ] && echo ", downloaded from TinyPhishLLM (commit ${NEWMODEL_COMMIT:0:7}) when the image is built")"
 # The mode, and what the installer will take from the dashboard or ask about (deploy/dashboard-policy.sh).
 . deploy/dashboard-policy.sh
 dashboard_policy_read "$PROJECT" "$(get MODE)" "$(get AI_MOVE_THRESHOLD)" "$(get BRAKE_PER_HOUR)" "$(get TIME_ZONE)" "$(get ALLOW_DOMAINS)" "$(get ALLOW_ADDRESSES)" "$(get AI_SUSPICIOUS_THRESHOLD)" "$(get RETENTION_DAYS)"

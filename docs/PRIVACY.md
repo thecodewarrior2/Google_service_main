@@ -99,8 +99,8 @@ To delete what the dashboard shows sooner, all at once: `bash deploy/clear-data.
     the file is read by a person before it goes anywhere (`docs/RETRAINING.md`).
   - Nothing of these emails is stored by the service: the file is the only copy. Keep it on one computer
     and delete it when done.
-  - The examples are used for training only in the extension's `tools/ai/data/extra/`, which is never
-    committed. Whether they may go to an outside AI service to be reworded is your district's decision.
+  - The examples are used for training only in TinyPhishLLM_Private_Training's `training/data/extra/` (the
+    model's private training repository), which is never committed. Whether they may go to an outside AI service to be reworded is your district's decision.
 
 ## What is sent elsewhere
 
@@ -131,6 +131,14 @@ that commit's `package.json`, `CHANGELOG.md` and `VENDOR.json`. Only the dashboa
 opened (kept 10 minutes). It is read anonymously: no token, a plain User-Agent
 (`spruce-mail-protection`), nothing about your installation, users or mail. An update's build downloads
 the same repository from Cloud Build.
+
+**The AI model** is downloaded when the image is built (install, `deploy/update.sh`, `deploy/upgrade.sh`,
+Settings → Update; not while the service runs): its files come from `raw.githubusercontent.com`, the
+public TinyPhishLLM repository, at the commit the version pins (`vendor/spruce/VENDOR.json`), and are
+used only if each file's SHA-256 matches the pinned one (`tools/fetch-model.js`). The same anonymous
+request: no token, nothing about your installation. TinyPhishLLM holds only the model and made-up
+references; the training and its examples are in a private repository, and examples from your mail are
+never committed anywhere.
 
 The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM,
 Cloud Scheduler, Cloud Build).

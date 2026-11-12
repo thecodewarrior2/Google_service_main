@@ -21,7 +21,7 @@ const VERSION = require('../package.json').version;
 const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
 const training = require('./training');
-const { createReleases, parseChangelog } = require('./releases');
+const { createReleases, parseChangelog, modelSourceOf } = require('./releases');
 const { updateInfo, startUpdate } = require('./update');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
@@ -74,8 +74,9 @@ function demoReleases() {
     const file = path.resolve(__dirname, '..', 'CHANGELOG.md');
     const own = fs.existsSync(file) ? parseChangelog(fs.readFileSync(file, 'utf8')) : [];
     const PKG = require('../package.json');
-    let model = null; try { model = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')).model; } catch (e) { /* none */ }
-    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: Number(PKG.installLevel) || 0, model,
+    let model = null, modelSource = null;
+    try { const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')); model = v.model; modelSource = modelSourceOf(v); } catch (e) { /* none */ }
+    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: Number(PKG.installLevel) || 0, model, modelSource,
         changelog: [{ version: '9.9.9', title: 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
 }
 

@@ -2,7 +2,7 @@
 // The retraining export (Status → Model health → "Download for retraining"; off until an admin allows it in
 // Settings). The emails an admin marked (confirmed as phishing; with a tick, false alarms too) are read
 // from Gmail at the moment of the download, one per campaign, and each becomes one line of the
-// extension's own training format (tools/ai/data/extra/*.jsonl: { facts, label }): the facts phish-tiny
+// model's own training format (TinyPhishLLM's training/data/extra/*.jsonl: { facts, label }): the facts phish-tiny
 // read, with the people taken out. The download is the only copy: nothing of the emails is stored.
 // docs/RETRAINING.md says how to check the file and train with it.
 //

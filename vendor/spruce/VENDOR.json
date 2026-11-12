@@ -6,13 +6,40 @@
   "files": [
     "shared.js",
     "decoders.js",
-    "ai.js",
-    "models/phish-tiny/model.bin",
-    "models/phish-tiny/model.onnx",
-    "models/phish-tiny/model.json",
-    "models/phish-tiny/vocab.txt",
-    "models/phish-tiny/MODEL_CARD.md"
+    "ai.js"
   ],
   "synced": "2026-11-10",
-  "note": "Since 0.4.0 this project's own code (changed here, with tests). The files began as the extension's at the commit above. Since 0.5.0 the model runs from model.onnx (made from model.bin by tools/export-onnx.py). phish-tiny 0.13.0 (0.5.2) was trained here with the extension's tools/ai at that commit, plus a district's own de-identified examples (docs/RETRAINING.md), which are not in any repository."
+  "note": "The checks and the code that run the model (shared.js, decoders.js, ai.js) began as the extension's files at the commit above and are this project's own code since 0.4.0 (changed here, with tests). The AI model (phish-tiny) comes from TinyPhishLLM, the model's own public repository: modelSource pins the commit and each file's SHA-256 (tools/sync-model.js), and tools/fetch-model.js downloads the files when the image is built or the tests run. phish-tiny 0.13.0 was trained with the extension's training tools at 9292388 plus a district's own de-identified examples (docs/RETRAINING.md), which are not in any repository.",
+  "modelSource": {
+    "repository": "https://github.com/thecodewarrior2/TinyPhishLLM",
+    "commit": "68f8dd69dd854e6cedfdd893a4dfbd87251d26f6",
+    "synced": "2026-11-12",
+    "note": "The files under vendor/ are downloaded from the repository at this commit when the image is built or the tests run (tools/fetch-model.js) and used only with these SHA-256; they are not in this repository. The test/fixtures references are copied here.",
+    "files": {
+      "vendor/spruce/models/phish-tiny/model.onnx": {
+        "from": "model/phish-tiny/model.onnx",
+        "sha256": "e6ce8940516383f0d38dcde076ad96189d9bbe8e6946f03ca8e3ea255e82ea7d"
+      },
+      "vendor/spruce/models/phish-tiny/model.json": {
+        "from": "model/phish-tiny/model.json",
+        "sha256": "867c90883a905f33b2268ebc3d73fdc301533be17e9196022b8c8d2e9338ea35"
+      },
+      "vendor/spruce/models/phish-tiny/vocab.txt": {
+        "from": "model/phish-tiny/vocab.txt",
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      },
+      "vendor/spruce/models/phish-tiny/MODEL_CARD.md": {
+        "from": "model/phish-tiny/MODEL_CARD.md",
+        "sha256": "e5381b3714d3e96470045b1169fb8f073f427188c9cf3874e40700e21b150d7b"
+      },
+      "test/fixtures/model-reference.json": {
+        "from": "model/reference/model-reference.json",
+        "sha256": "a81db9de4e61101540785952abbaee52982b58f73fd67044ea93794d16b2098b"
+      },
+      "test/fixtures/model-input-format.jsonl": {
+        "from": "model/reference/input-format.jsonl",
+        "sha256": "607d8126ff3c238ee727464d41cd561a234d6201f773f96449138a4ec24d56df"
+      }
+    }
+  }
 }

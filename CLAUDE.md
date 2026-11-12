@@ -27,10 +27,25 @@ in `Google_service_main`). Then follow its section below.
   and Scheduler calls only with verified OIDC tokens, no service-account key files.
 - Never put real people, addresses, email content or district data in the repository: tests and demo data
   are made up (the `maple-schools.example` district). Reported emails are paraphrased with made-up names.
-- The engine in `vendor/spruce/` (the checks and the AI model) began as a copy of the S.P.R.U.C.E+
-  browser extension's files. Since 0.4.0 it is this project's own code: change it here, with tests. A
-  change to the model's arithmetic must keep its answers (compare them on many made-up emails before and
-  after), unless it is a new model, which gets a new version in `models/phish-tiny/model.json`.
+- The engine in `vendor/spruce/` (the checks and the code that runs the AI model) began as a copy of the
+  S.P.R.U.C.E+ browser extension's files. Since 0.4.0 it is this project's own code: change it here, with
+  tests. A change to the model's arithmetic must keep its answers (compare them on many made-up emails
+  before and after).
+- **The AI model comes from TinyPhishLLM**, the model's own public repository, which the extension uses
+  too; its training (scripts, examples, check sets) is in the private TinyPhishLLM_Private_Training.
+  `vendor/spruce/VENDOR.json` (`modelSource`) pins one TinyPhishLLM commit and each file's SHA-256, and
+  `tools/fetch-model.js` downloads the model at that commit whenever the image is built (Dockerfile:
+  install, update, upgrade, Settings → Update) or the tests run (`npm test`), and stops on any other
+  bytes. **Never commit the model's files** (`vendor/spruce/models/` is ignored) and never build the
+  image some other way. Don't train, edit or replace the model here: change it in
+  TinyPhishLLM_Private_Training, publish it to TinyPhishLLM, then `node tools/sync-model.js <TinyPhishLLM
+  folder>` (its commit must be on TinyPhishLLM's main branch). The references in `test/fixtures/`
+  (`model-reference.json`, `model-input-format.jsonl`) come with it; the tests fail on any other change.
+  The model's input format (`modelInputParts` in `vendor/spruce/ai.js`) must stay exactly the model's:
+  change it only together with a new model whose TinyPhishLLM changelog says so. A new model is a
+  behavior change like any other.
+- **No training material here:** no examples, check sets or regression cases (they live in the private
+  training repository), and the retraining export's files never go into any repository.
 - Every behavior change gets a version bump in `package.json` and an entry in `CHANGELOG.md`, and
   matching updates to `README.md` and `docs/`.
 - When `deploy/install.sh` sets up something new or different (a role, a service account, a job, an

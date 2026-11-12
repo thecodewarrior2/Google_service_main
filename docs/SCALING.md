@@ -153,8 +153,8 @@ region at twice the price.
 1. ~~**Run the model natively.**~~ Done in 0.5.0 (ONNX Runtime, measured above): about 10 ms of
    processor time per email, 28 emails a second per instance, one instance for the district outside
    campaigns. The JavaScript pass was removed; its answers stay in the tests
-   (`test/fixtures/model-reference.json`), and `tools/export-onnx.py` computes a new model's on its own
-   (numpy, from `model.bin`).
+   (`test/fixtures/model-reference.json`), and TinyPhishLLM_Private_Training's `training/export-onnx.py` computes a new
+   model's on its own (numpy, from `model.bin`).
 2. **Dashboard rollups instead of every record in memory.** Today the dashboard reads every record of the
    last 32 days when it starts (since 0.5.0; about 96,000 reads, perhaps 10–20 seconds, at 3,000 a
    day), older ones when a page shows them. Instead:

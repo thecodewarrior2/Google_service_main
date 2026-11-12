@@ -1,6 +1,6 @@
 'use strict';
 // 0.3.2: the retraining export. The emails an admin marked, read from Gmail at the moment of the
-// download, turned into the extension's training format with the people taken out; nothing stored.
+// download, turned into the model's training format with the people taken out; nothing stored.
 // Every person, address and email here is made up.
 const test = require('node:test');
 const assert = require('node:assert');

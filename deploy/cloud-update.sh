@@ -10,7 +10,8 @@
 #                           and doesn't change the installation itself (installLevel); its files are put
 #                           in /workspace/build (release stays as downloaded, so every phase runs this
 #                           file from main's newest commit)
-#   image   (docker image)  /workspace/build built and stored in Artifact Registry
+#   image   (docker image)  /workspace/build built and stored in Artifact Registry; the build downloads the
+#                           AI model from TinyPhishLLM at the commit VENDOR.json pins, checking each SHA-256
 #   deploy  (gcloud image)  both services deployed with it, their settings as they are (the dashboard always
 #                           on from 10,000 watched mailboxes, as install.sh does); all traffic to it
 #   finish  (gcloud image)  "done" or "failed" (state/update), and a line in Activity
@@ -94,13 +95,16 @@ pick)
     lvl="$(sed -n 's/^ *"installLevel": *\([0-9]*\).*/\1/p' package.json | head -1)"
     [ "${lvl:-0}" -le "${LEVEL:-0}" ] || failed "$VERSION changes the installation itself (installLevel ${lvl}): install it from Cloud Shell with bash deploy/update.sh"
     model="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1)"
-    printf 'IMAGE=%q\nMODEL=%q\nNEWLEVEL=%q\n' "$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-c${COMMIT:0:12}" "${model:-unknown}" "${lvl:-0}" >> "$W/request.env"
+    # The AI model: the image build downloads it from TinyPhishLLM at this commit (Dockerfile, tools/fetch-model.js).
+    mcommit="$(sed -n 's/.*"commit": *"\([0-9a-f]\{40\}\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1)"
+    printf 'IMAGE=%q\nMODEL=%q\nMODEL_COMMIT=%q\nNEWLEVEL=%q\n' "$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-c${COMMIT:0:12}" "${model:-unknown}" "${mcommit:-}" "${lvl:-0}" >> "$W/request.env"
     touch "$W/picked"
     ;;
 image)
     [ -f "$W/picked" ] || exit 0
     . "$W/request.env"
-    docker build -t "$IMAGE" "$B" || failed "the image didn't build"
+    echo "The AI model, phish-tiny $MODEL, comes from TinyPhishLLM at ${MODEL_COMMIT:-?} (downloaded and checked by the build)."
+    docker build -t "$IMAGE" "$B" || failed "the image didn't build (it downloads the AI model from TinyPhishLLM on GitHub: the build's log says if that failed)"
     docker push "$IMAGE" || failed "the image couldn't be stored in Artifact Registry"
     touch "$W/built"
     ;;
@@ -128,7 +132,7 @@ finish)
     . "$W/request.env"
     if [ -f "$W/deployed" ]; then
         set_state update phase=done "version=$VERSION" "from=$FROM" "by=$BY" "at=$(now_ms)" "build=${BUILD:-}"
-        text="The update from $FROM to $VERSION finished: both services run $VERSION (started by $BY on the dashboard)."
+        text="The update from $FROM to $VERSION finished: both services run $VERSION, with the AI model phish-tiny ${MODEL:-unknown} from TinyPhishLLM${MODEL_COMMIT:+ (${MODEL_COMMIT:0:7})} (started by $BY on the dashboard)."
         alert=false
     else
         why="$(cat "$W/failed" 2>/dev/null || echo 'it stopped')"

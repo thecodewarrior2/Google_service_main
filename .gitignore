@@ -5,3 +5,6 @@ service-account*.json
 coverage/
 build/
 deploy/settings.env
+# The AI model: downloaded from TinyPhishLLM at the commit vendor/spruce/VENDOR.json pins (tools/fetch-model.js),
+# never committed here.
+vendor/spruce/models/

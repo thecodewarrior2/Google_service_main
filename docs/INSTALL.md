@@ -232,7 +232,10 @@ bash deploy/update.sh
 
 It downloads the newest approved version from `google_service_main`, unpacks it next to your folder, and
 runs its `upgrade.sh` (below). That shows what changes, including the AI model's version, and asks first.
-The AI model (phish-tiny) comes with each version, so a new model arrives only with an approved version.
+The AI model (phish-tiny) is pinned by each version (one commit of TinyPhishLLM, the model's public
+repository, and every file's SHA-256): building the image downloads it from there and checks it, so a new
+model arrives only with an approved version. The build needs to reach `raw.githubusercontent.com`, as it
+does `github.com` for the update itself.
 
 **From the dashboard: Settings → Update.** It shows the newest approved version and its changelog,
 and **Update to …** installs it like `update.sh` does, without Cloud Shell:

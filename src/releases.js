@@ -25,6 +25,14 @@ function parseChangelog(text) {
     return out;
 }
 
+// Where a version's AI model comes from (VENDOR.json modelSource: TinyPhishLLM and the commit its image
+// build downloads), or null for a version from before 0.5.8 (its model was inside it).
+function modelSourceOf(vendor) {
+    const s = vendor && vendor.modelSource;
+    if (!s || !/^[0-9a-f]{40}$/.test(String(s.commit || '')) || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(String(s.repository || ''))) return null;
+    return { repository: s.repository, commit: s.commit };
+}
+
 function createReleases({ repo = 'thecodewarrior2/Google_service_main', fetch: f = fetch, now = () => Date.now() } = {}) {
     let cached = null, cachedAt = 0;
     const get = async (url, json) => {
@@ -40,11 +48,11 @@ function createReleases({ repo = 'thecodewarrior2/Google_service_main', fetch: f
         const raw = (p) => get(`https://raw.githubusercontent.com/${repo}/${sha}/${p}`, false);
         const [pkg, changelog, vendor] = await Promise.all([raw('package.json').then(JSON.parse), raw('CHANGELOG.md'), raw('vendor/spruce/VENDOR.json').then(JSON.parse).catch(() => ({}))]);
         cached = { repo, commit: sha, date: (c.commit && c.commit.committer && c.commit.committer.date) || null, version: String(pkg.version || ''),
-            installLevel: Number(pkg.installLevel) || 0, model: vendor.model || null, changelog: parseChangelog(changelog) };
+            installLevel: Number(pkg.installLevel) || 0, model: vendor.model || null, modelSource: modelSourceOf(vendor), changelog: parseChangelog(changelog) };
         cachedAt = now();
         return cached;
     }
     return { newest };
 }
 
-module.exports = { createReleases, parseChangelog, compareVersions };
+module.exports = { createReleases, parseChangelog, compareVersions, modelSourceOf };

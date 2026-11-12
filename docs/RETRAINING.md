@@ -1,9 +1,10 @@
 # Retraining the AI model with your own examples
 
 Marking an email **False alarm** or **Confirm phishing** doesn't teach the AI model anything by itself.
-The model (phish-tiny) is a fixed file that comes with each version. It learns only when it is trained
-again, in the S.P.R.U.C.E+ extension's repository, and the new model comes to the service with a new
-version.
+The model (phish-tiny) is a fixed file that each version pins. It learns only when it is trained again,
+in TinyPhishLLM_Private_Training (the model's private training repository), and published to TinyPhishLLM
+(the model's public repository, which the S.P.R.U.C.E+ extension uses too); the new model comes to the
+service with a new version that pins it, and every build of that version downloads it from TinyPhishLLM.
 
 This guide turns the emails your admins marked into training examples, and the examples into a better
 model, without any person's details reaching a repository or an outside service.
@@ -18,7 +19,8 @@ model, without any person's details reaching a repository or an outside service.
 4. **Final check.** `tools/check-training-file.js --final` refuses the file until nothing is left.
 5. **Split and measure.** A third of the examples are kept aside, and the current model is scored on
    them.
-6. **Train.** In the extension's repository, from the other two thirds.
+6. **Train.** In TinyPhishLLM_Private_Training, the model's private training repository, from the other
+   two thirds, then publish the model to TinyPhishLLM.
 7. **Compare.** The new model must do better on the examples kept aside. If it doesn't, it isn't
    used.
 8. **Release and clean up.** The new model comes with a new version that the maintainer approves.
@@ -33,7 +35,8 @@ model, without any person's details reaching a repository or an outside service.
 - **Two people are better than one.** One prepares the file, the other reads it before it goes anywhere.
 - **What it takes:** a computer or Cloud Shell with Node 20 or later and this version's folder (the zip
   you installed from, or a copy of `google_service_main`). Training also needs Python 3 with `torch` (the
-  CPU build is enough) and `transformers`, and the extension's repository (step 6).
+  CPU build is enough) and `transformers`, a copy of TinyPhishLLM_Private_Training (private: ask the
+  maintainer for access) and a copy of TinyPhishLLM (public) next to it (step 6).
 - **Only admins' marks count.** The export takes the emails an admin marked: **Confirm phishing**, and
   **Mark false alarm** (**Mark not phishing**) or an admin's **Move back to Inbox**. A user moving an email out of Spam is not a label: people
   rescue phishing too.
@@ -65,8 +68,8 @@ are done (step 8).
 
 ## How to read the file
 
-The file is JSON Lines: one example per line, in the extension's own training format (the format of
-`tools/ai/data/extra/*.jsonl`). A text editor that doesn't wrap lines shows one email per line. Here is
+The file is JSON Lines: one example per line, in the model's own training format (the format of
+TinyPhishLLM_Private_Training's `training/data/extra/*.jsonl`). A text editor that doesn't wrap lines shows one email per line. Here is
 one line, spread out (from the demo's made-up data):
 
 ```json
@@ -252,76 +255,88 @@ node tools/score-examples.js spruce-retraining-2026-11-10-held-out.jsonl
 It shows the missed phishing and the false alarms at the service's move threshold (0.9, or
 `--threshold` to match your `AI_MOVE_THRESHOLD`), and lists the emails it got wrong.
 
-## 6. Train (in the extension's repository)
+## 6. Train (in TinyPhishLLM_Private_Training)
 
-phish-tiny is trained in the S.P.R.U.C.E+ extension's repository, on its `llm_testing` branch, by
-whoever looks after the model there, following that repository's own rules (its `CLAUDE.md`). Its
-`tools/ai/README.md` describes the training in full.
+phish-tiny is trained in **TinyPhishLLM_Private_Training**, the model's **private** training repository
+(the training scripts, the published examples, the check sets), by whoever looks after the model,
+following that repository's rules (its `CLAUDE.md`). Its `training/README.md` describes the training in
+full. The finished model is then published to **TinyPhishLLM**, the model's public repository, which
+holds only the model: the service and the S.P.R.U.C.E+ extension download it from there.
 
-The service runs the model it was last synced with (**Settings → About → Model**). The extension's branch may
-already have a newer one, and your examples are added to the newest. To see what your examples add on
-their own, sync and score the extension's current model first (step 7's commands), before step 1 below.
+The service runs the model its version pins (**Settings → Update** shows it; `vendor/spruce/VENDOR.json`,
+under `modelSource`, says which TinyPhishLLM commit). TinyPhishLLM may already have a newer one, and
+your examples are added to the newest. To see what your examples add on their own, sync and score
+TinyPhishLLM's current model first (step 7's commands), before step 1 below.
 
-With your examples:
+With your examples, in your TinyPhishLLM_Private_Training folder:
 
-1. Copy the train file into the extension's folder as
-   `tools/ai/data/extra/spruce-service-2026-11-10.jsonl`. `tools/ai/data/` is never committed (it is in
-   `.gitignore`): run `git status` to make sure the file isn't listed.
+1. Copy the train file into the folder as
+   `training/data/extra/spruce-service-2026-11-10.jsonl`. `training/data/` is never committed (it is in
+   `.gitignore`, and `node training/check.js` fails if any of it is): run `git status` to make sure the
+   file isn't listed.
 2. Build the dataset. It reports how many training emails it has, and that number should be higher by
    the number of your examples:
 
    ```bash
-   node tools/ai/make-dataset.js
+   node training/make-dataset.js
    ```
 
-3. Train, with a version number higher than the one in `models/phish-tiny/model.json`:
+3. Train, with a version number higher than the one in `model/phish-tiny/model.json`:
 
    ```bash
-   python3 tools/ai/train.py --version 0.12.0 --seeds 7,8,9 --runs-dir ~/phish-runs
+   python3 training/train.py --version 0.14.0 --seeds 7,8,9 --runs-dir ~/phish-runs
    ```
 
-4. Compare the new `models/phish-tiny/MODEL_CARD.md` with the previous model's card:
+4. Make `model.onnx` (the service runs that) and its reference answers, then check the files:
+
+   ```bash
+   pip install onnx numpy
+   ```
+
+   ```bash
+   python3 training/export-onnx.py model/phish-tiny --reference model/reference/model-reference.json
+   ```
+
+   ```bash
+   node training/check.js
+   ```
+
+   ```bash
+   python3 training/check-model.py
+   ```
+
+5. Compare the new `model/phish-tiny/MODEL_CARD.md` with the previous model's card:
    - **genuine look-alikes** and **real-world genuine, held out**: the false alarms;
    - **real-world, held out**: the missed phishing;
    - **hand-written**.
 
    If the false alarms rose, add more genuine examples or fewer phishing ones, and train again.
-5. Run the extension's tests (`cd tests && node run-all.js`). They fail if the model gets the
-   hand-written emails or the regression cases wrong.
 6. **A false alarm that matters** (one that moved real mail) can also become a regression case:
-   - add its made-up version to `tests/fixtures/ai-regressions.jsonl`, in the same format, with a
-     `note` that says what it was;
-   - every later model must then get it right.
+   - add its made-up version to TinyPhishLLM_Private_Training's `training/regressions.jsonl`, in the
+     same format, with a `note` that says what it was;
+   - every later model must then get it right (`training/check-model.py`).
 
-   That file is committed, so it may only hold made-up names, as in the rest of the file.
-7. Commit the new model, following the extension's rules: version, changelog, its maintainer's
-   approval. The files are `models/phish-tiny/*`, `tests/fixtures/ai-vectors.json` and any regression
-   cases. Your examples stay out of the commit.
+   That file is committed (privately), so it may only hold made-up names, as in the rest of the file.
+7. Commit the new model in TinyPhishLLM_Private_Training, following its rules (version, changelog with
+   the scores). Your examples stay out of the commit. Then publish it: with TinyPhishLLM cloned next to it,
+   `node training/publish.js ../TinyPhishLLM` copies the model and its made-up references (nothing else);
+   commit and push them in TinyPhishLLM with a changelog entry. Neither releases anything: the service
+   gets it in step 7 and a version the maintainer approves.
 
-The extension's model scores use 0.5 as the line between phishing and genuine; the service moves mail
-only from `AI_MOVE_THRESHOLD` (0.9 by default). That's why step 7 scores at the service's threshold.
+The model card's scores use 0.5 as the line between phishing and genuine; the service moves mail only
+from `AI_MOVE_THRESHOLD` (0.9 by default). That's why step 7 scores at the service's threshold.
 
 ## 7. Is the new model better?
 
-In this repository (`google_service_testing`), copy the new model's files in (the model is this
-project's own since 0.4.0; only its files come from the training):
+In this repository (`google_service_testing`), sync the new model from your TinyPhishLLM folder (the
+commit must be pushed to TinyPhishLLM's main branch: the service downloads it from there). It runs
+TinyPhishLLM's check, checks that the service builds the model's input exactly as the model was trained,
+pins TinyPhishLLM's commit and each file's SHA-256 in `vendor/spruce/VENDOR.json`, copies the reference
+answers into `test/fixtures/`, and puts the model's files in `vendor/spruce/models/` (not committed: every
+build of the image downloads them from TinyPhishLLM, `tools/fetch-model.js`):
 
 ```bash
-cp ../spruce-browser-extension/models/phish-tiny/{model.json,model.bin,vocab.txt,MODEL_CARD.md} vendor/spruce/models/phish-tiny/
-```
-
-Then set its version in `vendor/spruce/VENDOR.json` (`model`), as in `model.json`.
-
-The service runs the model in ONNX Runtime (since 0.5.0), from `model.onnx`: make it from the new
-`model.bin`. The same command computes the new model's answers for the tests' made-up inputs on its own
-(numpy, from `model.bin`), so the tests check that ONNX Runtime gives them:
-
-```bash
-pip install onnx numpy
-```
-
-```bash
-python3 tools/export-onnx.py vendor/spruce/models/phish-tiny --reference test/fixtures/model-reference.json
+node tools/sync-model.js ../TinyPhishLLM
 ```
 
 ```bash
@@ -335,8 +350,8 @@ node tools/score-examples.js spruce-retraining-2026-11-10-held-out.jsonl
 Compare with the numbers from step 5:
 - **Better:** fewer false alarms and fewer missed phishing at the same threshold, or one lower and the
   other unchanged.
-- **Not better:** don't use it (`git checkout vendor/spruce`), and train again with more or better
-  examples.
+- **Not better:** don't use it (`git checkout vendor/spruce test/fixtures`, then
+  `node tools/fetch-model.js`), and train again with more or better examples.
 
 To keep the score honest:
 - don't move examples from the held-out file into training to raise it;
@@ -354,7 +369,8 @@ With 30 held-out emails, one email is 3%, so a small set tells you about large c
   - the tests and a look in demo mode;
   - the maintainer trying that version and approving it.
 
-  Admins then upgrade with `bash deploy/update.sh`, which shows the model's version change.
+  Admins then upgrade with **Settings → Update** or `bash deploy/update.sh`, which show the model's
+  version and where it comes from; the build downloads the model from TinyPhishLLM and checks it.
 - **After the upgrade:** watch Status → Model health for a week. If the undo rate for **AI score** moves go up,
   roll back (`bash deploy/rollback.sh`) and look at the emails it moved.
 - **Clean up:**
@@ -374,5 +390,6 @@ With 30 held-out emails, one email is 3%, so a small set tells you about large c
 - **A `text` field:** the dataset builder uses it instead of the facts. The check refuses it.
 - **Training on the held-out examples, or fitting the generator to them:** the score stops meaning
   anything.
-- **Personal data in a repository:** only `tools/ai/data/extra/`, which is never committed, holds your
-  examples. Regression cases and anything else committed are made up.
+- **Personal data in a repository:** only TinyPhishLLM_Private_Training's `training/data/extra/`, which is
+  never committed, holds your examples. Regression cases and anything else committed are made up, and
+  TinyPhishLLM (public) gets only the model and made-up references.

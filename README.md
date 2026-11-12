@@ -14,9 +14,13 @@ mode).
 
 - **Runs in your own Google Cloud project** (Cloud Run, Pub/Sub, Firestore). Email is read through the
   Gmail API with domain-wide delegation and is not sent to any other service.
-- **Its own checks and AI model.** `vendor/spruce/` holds the checks (`shared.js`, `decoders.js`) and the
-  phish-tiny model (`ai.js`, `models/`). They began as the S.P.R.U.C.E+ browser extension's; since 0.4.0
-  they are this project's own code, changed here. Since 0.5.0 the model runs in ONNX Runtime (the
+- **Its own checks, and the shared AI model.** `vendor/spruce/` holds the checks (`shared.js`,
+  `decoders.js`) and the code that runs the phish-tiny model (`ai.js`). They began as the S.P.R.U.C.E+
+  browser extension's; since 0.4.0 they are this project's own code, changed here. The model comes from
+  **TinyPhishLLM**, the model's own public repository, which the extension uses too: each version pins
+  one commit and every file's SHA-256 (`VENDOR.json`, by `tools/sync-model.js`), and every build of the
+  image (install, update, Settings → Update) downloads the model from there and checks it
+  (`tools/fetch-model.js`); the model's files are not in this repository. Since 0.5.0 the model runs in ONNX Runtime (the
   native engine, `src/engine/model.js`): about 25 times faster than the JavaScript that ran it, with
   the same answers.
 - **Careful by default:**
@@ -224,6 +228,11 @@ npm install
 npm run demo
 ```
 
+`npm run demo` and `npm test` first download the AI model from TinyPhishLLM, at the commit
+`vendor/spruce/VENDOR.json` pins, into `vendor/spruce/models/` (once; `tools/fetch-model.js` checks every
+file's SHA-256). Offline, with a TinyPhishLLM checkout at that commit:
+`node tools/fetch-model.js --from ../TinyPhishLLM`.
+
 Then open http://localhost:8080. The demo uses made-up data from an invented district
 (`maple-schools.example`), and every record in it is produced by the real engine. Demo mode has no
 sign-in and refuses to run on Cloud Run.
@@ -301,5 +310,5 @@ training examples, and a better AI model.
 | `src/demo/seed.js` | Made-up demo data, judged by the real engine |
 | `deploy/` | `install.sh`, `update.sh`, `upgrade.sh`, `rollback.sh`, `stop.sh`, `doctor.sh` and `clear-data.sh` (Cloud Shell), `dashboard-policy.sh` (theirs), `cloud-update.sh` (Settings → Update's Cloud Build), `settings.example.env` |
 | `.github/` | Dependabot (`dependabot.yml`: security fixes as pull requests) and the tests on every pull request (`workflows/test.yml`) |
-| `tools/` | `build-mockup.js`, `release.js` (the install zip); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js`, `export-onnx.py` (a new model for the native engine) |
-| `vendor/spruce/` | The checks and the AI model (this project's own code since 0.4.0; they began as the extension's, `VENDOR.json` says from which commit) |
+| `tools/` | `build-mockup.js`, `release.js` (the install zip); `sync-model.js` (pins a model of TinyPhishLLM), `fetch-model.js` (downloads it: the image build and `npm test` run it); for retraining: `check-training-file.js`, `split-examples.js`, `score-examples.js` |
+| `vendor/spruce/` | The checks and the code that runs the model (this project's own since 0.4.0; they began as the extension's); `VENDOR.json` says from which commits, and pins the model (`modelSource`); `models/phish-tiny/` is where `fetch-model.js` puts the model (not committed) |

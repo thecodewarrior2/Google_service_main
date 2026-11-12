@@ -184,22 +184,27 @@ else
     echo "  (Couldn't set the image cleanup policy; old builds stay until deleted.)"
 fi
 # The image is named after its source: a run with the same files (a change of settings only) uses the
-# image already built and just redeploys, in a minute or so. FORCE_BUILD=1 builds again anyway.
-SRC="$( { find src public vendor package.json package-lock.json Dockerfile -type f -print0 2>/dev/null || true; } | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-12)"
+# image already built and just redeploys, in a minute or so. FORCE_BUILD=1 builds again anyway. The AI
+# model's files aren't counted (they may or may not have been downloaded here): VENDOR.json, which pins
+# them, is.
+SRC="$( { find src public vendor package.json package-lock.json Dockerfile tools/fetch-model.js -path vendor/spruce/models -prune -o -type f -print0 2>/dev/null || true; } | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-12)"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/spruce/mail-protection:$VERSION-src$SRC"
 MODEL="$(sed -n 's/.*"model": *"\([^"]*\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
+# The build downloads the AI model from TinyPhishLLM at the commit VENDOR.json pins (Dockerfile).
+MODEL_COMMIT="$(sed -n 's/.*"commit": *"\([0-9a-f]\{40\}\)".*/\1/p' vendor/spruce/VENDOR.json 2>/dev/null | head -1 || true)"
+echo "  The AI model, phish-tiny ${MODEL:-unknown}, is downloaded from TinyPhishLLM (github.com/thecodewarrior2/TinyPhishLLM, commit ${MODEL_COMMIT:0:7}) during the build, and used only if every file's SHA-256 matches."
 # Cloud Build builds and stores the image inside Google Cloud, so it works where Docker can't upload.
 # It runs as spruce-build; its source and logs go to buckets in this project and region.
 cloud_build() {
     gcloud builds submit --tag "$IMAGE" --region="$REGION" --service-account="projects/$PROJECT/serviceAccounts/$SA_BUILD" \
         --default-buckets-behavior=regional-user-owned-bucket --quiet . \
-        || fail "Cloud Build couldn't build the image (its log is above). If it says spruce-build lacks a permission, wait a minute (new permissions take a moment to apply) and run this again."
+        || fail "Cloud Build couldn't build the image (its log is above). If it says spruce-build lacks a permission, wait a minute (new permissions take a moment to apply) and run this again. If it couldn't download the AI model, check that the build can reach raw.githubusercontent.com."
 }
 if [ -z "${FORCE_BUILD:-}" ] && gcloud artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
     echo "  These files were built before: using that image, not building again (FORCE_BUILD=1 builds anyway)."
 elif command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet >/dev/null
-    docker build -t "$IMAGE" . || fail "the image didn't build (the error is above)."
+    docker build -t "$IMAGE" . || fail "the image didn't build (the error is above; the build downloads the AI model from raw.githubusercontent.com)."
     if ! docker push "$IMAGE"; then
         echo "  Docker couldn't upload the image from here (Cloud Shell can't always reach Artifact Registry)."
         echo "  Building it with Cloud Build instead (a few minutes)."

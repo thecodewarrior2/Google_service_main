@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.8: The AI model comes from TinyPhishLLM, downloaded when the service is built
+
+Nothing in how emails are judged changes: the model is still phish-tiny 0.13.0, byte for byte. It now
+comes from **TinyPhishLLM**, the model's own public repository, which the S.P.R.U.C.E+ extension uses
+too: one model, trained in one place. Its training (scripts, examples, check sets) is in a separate
+private repository, TinyPhishLLM_Private_Training; TinyPhishLLM holds only the model and made-up
+references.
+
+- **The model's files are no longer in this repository.** `vendor/spruce/VENDOR.json` (`modelSource`)
+  pins one TinyPhishLLM commit and each file's SHA-256, and **`tools/fetch-model.js`** downloads the files
+  at that commit and stops if any differs. The Dockerfile runs it, so every build of the image takes the
+  model from TinyPhishLLM: `deploy/install.sh`, `deploy/update.sh`, `deploy/upgrade.sh` (from a zip too)
+  and **Settings → Update** (Cloud Build). `npm test` and `npm run demo` run it first;
+  `--from <TinyPhishLLM folder>` works offline. Nothing is downloaded while the service runs, and the
+  request carries no token and nothing about the installation.
+- **Settings → Update** shows the AI model of the version installed and of the newest approved one, and
+  where each comes from (TinyPhishLLM and the commit). `update.sh` and `upgrade.sh` say it too; the
+  update's line in Activity names the model and its commit.
+- **`tools/sync-model.js <TinyPhishLLM folder>`** pins a model: after TinyPhishLLM's own check
+  (`tools/check.js`), a check that the commit is on TinyPhishLLM's main branch on GitHub, and a check that
+  `vendor/spruce/ai.js` builds the model's input exactly as it was trained, it records the commit and
+  hashes and copies the two references the tests use (`test/fixtures/model-reference.json`,
+  `test/fixtures/model-input-format.jsonl`). Pinned to TinyPhishLLM `68f8dd6`. `model.bin` is no longer
+  part of the service (only ONNX Runtime's `model.onnx` runs here).
+- **The input-format reference is made up:** 72 made-up emails built to use every rule of the format,
+  and 10 edge cases (TinyPhishLLM publishes nothing from its check sets). The service builds all 82 texts
+  exactly.
+- **Tests** (`test/model-source.test.js`): the pin is complete; the downloaded files match it; no model
+  file is committed and the image build downloads them; `fetch-model.js` downloads, checks, keeps the
+  right files without downloading them again, and never writes a file whose SHA-256 differs; the input
+  format matches. `test/update.test.js`: the model's source on Settings → Update and in the update's
+  Activity line.
+- **`tools/export-onnx.py` moved** to the model's training repository, where `model.onnx` is made with the
+  rest of the model.
+- **Retraining** (`docs/RETRAINING.md`): steps 6 and 7 train in TinyPhishLLM_Private_Training, publish
+  to TinyPhishLLM and pin it here. Also `README.md`, `CLAUDE.md` (never commit the model's files),
+  `docs/INSTALL.md`, `docs/PRIVACY.md` (what the build downloads), `docs/ARCHITECTURE.md`, `docs/SCALING.md`.
+- `installLevel` is unchanged: nothing new to install. The build needs to reach
+  `raw.githubusercontent.com`, as updates already reach `github.com`.
+
+
 ## 0.5.7: Model health measures "rules and AI together"
 
 Nothing in how emails are judged changes: this only counts.

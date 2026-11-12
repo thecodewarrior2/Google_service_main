@@ -2,6 +2,8 @@ node_modules
 build
 test
 tools
+# …except the one that downloads the AI model into the image (Dockerfile).
+!tools/fetch-model.js
 docs
 deploy
 .git
@@ -9,4 +11,3 @@ deploy
 .env
 *.key.json
 service-account*.json
-vendor/spruce/models/phish-tiny/model.bin

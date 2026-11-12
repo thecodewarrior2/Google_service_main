@@ -13,6 +13,11 @@ RUN npm ci --omit=dev \
 COPY src ./src
 COPY public ./public
 COPY vendor ./vendor
+# The AI model (phish-tiny) from TinyPhishLLM, its own public repository, at the commit VENDOR.json pins,
+# each file checked against its SHA-256 (tools/fetch-model.js): the build stops if a file differs or can't
+# be downloaded. Files already here with the right SHA-256 are kept. Nothing is downloaded at run time.
+COPY tools/fetch-model.js ./tools/fetch-model.js
+RUN node tools/fetch-model.js && rm -rf tools
 USER node
 EXPOSE 8080
 CMD ["node", "src/server.js"]

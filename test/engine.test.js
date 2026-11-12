@@ -110,14 +110,13 @@ test('the model (0.4.0): a pass\'s answer is remembered by a hash of its input, 
     } finally { session.run = run; }
 });
 
-// The reference: 400 made-up inputs, their token ids, and the model's answers as tools/export-onnx.py
-// computes them from model.bin in numpy, without ONNX (for phish-tiny 0.11.0 they agreed with the
-// JavaScript engine of 0.4.1 to 1.2e-6). A new model gets new answers from tools/export-onnx.py
-// --reference (docs/RETRAINING.md, step 7).
+// The reference: 400 made-up inputs, their token ids, and the model's answers as TinyPhishLLM's
+// training/export-onnx.py computes them from model.bin in numpy, without ONNX (for phish-tiny 0.11.0 they
+// agreed with the JavaScript engine of 0.4.1 to 1.2e-6). It comes with the model (tools/sync-model.js).
 test('the native engine (0.5.0): the same answers as an independent computation of the model, on 400 made-up inputs; one at a time or in a batch', async () => {
     const E = require('../src/engine/spruce').load();
     const ref = require('./fixtures/model-reference.json');
-    assert.equal(ref.model, E.modelInfo.version, 'the reference is for this model (a new model: python3 tools/export-onnx.py <folder> --reference test/fixtures/model-reference.json)');
+    assert.equal(ref.model, E.modelInfo.version, 'the reference is for this model (a new model comes with its own: node tools/sync-model.js <TinyPhishLLM folder>)');
     ref.cases.forEach((c, i) => assert.deepEqual(E.model.tok.encode(c.text, E.model.cfg.maxLen), c.ids, `case ${i}: the tokenizer's ids`));
     const { Model } = require('../src/engine/model');
     // (a fresh model: nothing remembered from the other tests)

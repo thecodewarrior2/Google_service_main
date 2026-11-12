@@ -1,7 +1,7 @@
 'use strict';
 // The AI model, phish-tiny (a BERT-tiny classifier, 4.4 million parameters), run by the native engine:
 // ONNX Runtime (onnxruntime-node, MIT), from models/phish-tiny/model.onnx (made from model.bin by
-// tools/export-onnx.py). About 25× faster than the plain JavaScript that ran it until 0.4.1: about 6 ms for a
+// TinyPhishLLM's training/export-onnx.py, synced by tools/sync-model.js). About 25× faster than the plain JavaScript that ran it until 0.4.1: about 6 ms for a
 // 256-token pass instead of 146 ms, with the same answers to rounding (test/engine.test.js holds them to
 // the JavaScript engine's own, on a reference set).
 //

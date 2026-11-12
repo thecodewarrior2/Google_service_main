@@ -13,14 +13,21 @@
 // installation itself (permissions, jobs, settings): that one is updated from Cloud Shell
 // (bash deploy/update.sh). Progress is in state/update: requested, building, done or failed, and in the
 // page's answer as progress (never status: the server takes a status as the HTTP status code).
-const { compareVersions } = require('./releases');
+const fs = require('fs');
+const path = require('path');
+const { compareVersions, modelSourceOf } = require('./releases');
 
 const PKG = require('../package.json');
+// The AI model this version runs: its version and where its image build downloaded it (VENDOR.json).
+const INSTALLED_MODEL = (() => {
+    try { const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')); return { model: v.model || null, modelSource: modelSourceOf(v) }; }
+    catch (e) { return { model: null, modelSource: null }; }
+})();
 const RUNNING_MS = 45 * 60 * 1000;   // a build still "requested" or "building" after this has stopped
 
 // What the page shows, and whether (and why not) the button is offered.
 async function updateInfo({ cfg, store, releases }) {
-    const installed = { version: PKG.version, installLevel: Number(PKG.installLevel) || 0 };
+    const installed = { version: PKG.version, installLevel: Number(PKG.installLevel) || 0, ...INSTALLED_MODEL };
     // The last update's progress, when it is about a newer version (or is the one installed, done). One
     // about a version already installed or passed (installed from Cloud Shell since, say) is history.
     const last = await store.getState('update');
@@ -36,7 +43,7 @@ async function updateInfo({ cfg, store, releases }) {
     else if (!cfg.updateJob && !cfg.demo) why = 'Updating from the dashboard isn\'t set up yet: run bash deploy/update.sh in Cloud Shell once (it sets it up), then the next versions can be installed from here.';
     else if (running) why = `An update to ${status.version} is under way (started by ${status.by}).`;
     const newer = newest ? newest.changelog.filter(c => compareVersions(c.version, installed.version) > 0) : [];
-    return { installed, newest: newest && { version: newest.version, commit: newest.commit, date: newest.date, model: newest.model, installLevel: newest.installLevel, repo: newest.repo },
+    return { installed, newest: newest && { version: newest.version, commit: newest.commit, date: newest.date, model: newest.model, modelSource: newest.modelSource || null, installLevel: newest.installLevel, repo: newest.repo },
         newer, changelog: newest ? newest.changelog.slice(0, 20) : [], canUpdate: !why, why, progress: status || null, running, setUp: !!cfg.updateJob };
 }
 

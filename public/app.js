@@ -865,10 +865,15 @@
     async function updatePage() {
         const d = await api('/api/update');
         const n = d.newest;
-        const out = [h('h1', { text: 'Update' }), h('p', { class: 'sub', text: 'The approved versions, from google_service_main, and what changed in them. A version that changes only the service is installed from here; one that changes the installation itself (permissions, jobs, settings) from Cloud Shell, with bash deploy/update.sh.' })];
+        const out = [h('h1', { text: 'Update' }), h('p', { class: 'sub', text: 'The approved versions, from google_service_main, and what changed in them. A version that changes only the service is installed from here; one that changes the installation itself (permissions, jobs, settings) from Cloud Shell, with bash deploy/update.sh. Each version names its AI model: the update downloads that model from TinyPhishLLM, the model\'s own repository, and uses it only if every file matches.' })];
+        // The AI model: each version pins one commit of TinyPhishLLM (its own public repository), which the
+        // image build downloads and checks (SHA-256).
+        const modelText = (v) => v && v.model ? `phish-tiny ${v.model}${v.modelSource ? `, from ${v.modelSource.repository.replace(/^https:\/\/github\.com\//, '')} (commit ${v.modelSource.commit.slice(0, 7)})` : ''}` : 'unknown';
         out.push(h('section', { class: 'card' }, h('dl', { class: 'kv' },
             kvRow('Installed', d.installed.version),
-            kvRow('Newest approved', n ? `${n.version}${n.model ? ` (AI model phish-tiny ${n.model})` : ''}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
+            kvRow('Its AI model', modelText(d.installed)),
+            kvRow('Newest approved', n ? `${n.version}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
+            kvRow('Its AI model', n ? modelText(n) : '–'),
             kvRow('From', n ? n.repo : '–'))));
         const st = d.progress;
         if (st && st.phase) {
