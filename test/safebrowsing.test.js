@@ -88,7 +88,7 @@ test('every instance notices a new or removed key within 30 seconds; the environ
     // Without Secret Manager (an install before 0.5.23): the environment's key only; nothing can be saved.
     const old = createSafeBrowsingKey({ cfg: { safeBrowsingKey: 'env-made-up-key-000000000000000000000' }, store, http: createHttp({ fetch: g.fetch }) });
     assert.equal(await old.get(), 'env-made-up-key-000000000000000000000');
-    await assert.rejects(old.save(GOOD, 'a@maple-schools.example'), (e) => e.status === 409 && /deploy\/install\.sh/.test(e.message));
+    await assert.rejects(old.save(GOOD, 'a@maple-schools.example'), (e) => e.status === 409 && /bash deploy\/update\.sh .*bash deploy\/upgrade\.sh/.test(e.message));
 });
 
 test('what Google\'s refusals mean', () => {

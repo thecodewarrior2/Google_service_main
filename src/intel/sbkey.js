@@ -83,7 +83,7 @@ function createSafeBrowsingKey({ cfg, store, secrets = null, http = null, now = 
     }
     // An admin saves a key: tested, then kept in Secret Manager (older versions destroyed).
     async function save(key, by) {
-        if (!secrets) throw Object.assign(new Error('The key can\'t be saved from here yet: run bash deploy/install.sh once (it sets up Secret Manager for it).'), { status: 409 });
+        if (!secrets) throw Object.assign(new Error('The key can\'t be saved from here yet: upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)); it sets up Secret Manager for it.'), { status: 409 });
         key = String(key || '').trim();
         const t = await test(key);
         if (!t.ok) throw Object.assign(new Error(`${t.why} ${t.fix}`), { status: 400 });

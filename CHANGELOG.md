@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.25: The right script for an existing installation
+
+No change in how mail is judged. Where the dashboard told an existing installation to run `install.sh`, it
+now says to upgrade: `bash deploy/update.sh` (an approved version), or `bash deploy/upgrade.sh` from an
+unzipped copy. Both run `install.sh` themselves, after copying the settings and showing what changes;
+`install.sh` alone is for a first install or for settings changed in the same folder. On Settings → Safe
+Browsing (a key that can't be saved yet), and where a change needs the project ID and the dashboard
+doesn't know it. The 0.5.23 entry and docs/INSTALL.md say the same.
+
 ## 0.5.24: Settings → Update says when a version needs a manual install, and keeps the button off until then
 
 - **"Manual install required"** on Settings → Update, when the newest approved version changes the
@@ -25,8 +34,9 @@
 
 ## 0.5.23: Google Safe Browsing from the dashboard: the API key and on/off on Settings → Safe Browsing
 
-**Needs `bash deploy/install.sh` from Cloud Shell** (`installLevel` 4): it sets up Secret Manager for the key.
-Settings → Update doesn't offer this version.
+**Needs an upgrade from Cloud Shell** (`installLevel` 4): `bash deploy/update.sh` once it is approved, or
+`bash deploy/upgrade.sh` from an unzipped copy. The upgrade runs `install.sh`, which sets up Secret Manager for
+the key. Settings → Update doesn't offer this version.
 
 - **Settings → Safe Browsing** (new page). Safe Browsing stays **optional and off by default**; the page says
   the service works fully without it, and what it adds: Google's own list of phishing, malware and

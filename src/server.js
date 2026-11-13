@@ -289,7 +289,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     // The project ID typed in for a change (as for the policy): null when right, else the answer to give.
     const projectCheck = (admin, body) => {
         const expected = expectedProject(cfg);
-        if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
+        if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)), then try again.', status: 409 };
         if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
         if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) { wrong.add(admin.email); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
         wrong.clear(admin.email);
@@ -500,7 +500,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const key = String(body.key || '');
             if (!POLICY_KEYS.includes(key)) return { error: 'Choose a setting to change.', status: 400 };
             const expected = expectedProject(cfg);
-            if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
+            if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)), then try again.', status: 409 };
             if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
             if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) {
                 wrong.add(admin.email);

@@ -253,8 +253,9 @@ When it finishes, it prints the **dashboard address**.
      only (never shown again); tick **Turn Safe Browsing on** to start at once.
   3. **Turn off** stops it; **Remove the key** destroys it. Each change is emailed as an alert.
 
-  From 0.5.23; that version needs `bash deploy/install.sh` (or `update.sh`) once, from Cloud Shell, to set
-  up Secret Manager for the key.
+  From 0.5.23. An existing installation upgrades to it from Cloud Shell, once: `bash deploy/update.sh` once
+  it is approved, or `bash deploy/upgrade.sh` from an unzipped copy (see "Upgrading to a new version"). The
+  upgrade runs `install.sh`, which sets up Secret Manager for the key.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version

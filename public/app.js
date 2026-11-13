@@ -813,7 +813,7 @@
         const sb = d.safeBrowsing || {};
         const hl = sb.health;
         const keyText = sb.saved ? `Saved by ${sb.saved.by}, ${when(sb.saved.at)}. It is kept in Secret Manager and never shown here again.`
-            : !sb.available ? (sb.envKey ? 'From the service\'s settings (SAFE_BROWSING_KEY). Run bash deploy/install.sh once to manage the key here instead.' : 'Can\'t be saved here yet: run bash deploy/install.sh once (it sets up Secret Manager for the key).')
+            : !sb.available ? (sb.envKey ? 'From the service\'s settings (SAFE_BROWSING_KEY). Upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)) to manage the key here instead.' : 'Can\'t be saved here yet: upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)); it sets up Secret Manager for the key.')
             : sb.envKey ? 'None saved here; the key from the service\'s settings (SAFE_BROWSING_KEY) is used.' : 'None saved.';
         const lookups = !sb.on ? 'Off: links aren\'t sent to Google.'
             : !sb.working ? 'On, but no key can be used: links aren\'t looked up with Google.'
