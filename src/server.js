@@ -72,7 +72,7 @@ const DEMO_PROJECT = 'demo-project';
 const POLICY_TRIES = 5, POLICY_LOCK_MS = 10 * 60 * 1000;
 // What a policy change is for, in Activity's words (a wrong project ID, 0.5.30).
 const POLICY_WHAT = { mode: 'the mode', aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', aiScansInside: 'whether the AI reads inside mail',
-    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', suspiciousLabel: 'the Suspicious label', recheck: 're-checking delivered mail', brakePerHour: 'the brake', timeZone: 'the time zone',
+    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', spamhaus: 'Spamhaus (on or off)', abusech: 'abuse.ch (on or off)', suspiciousLabel: 'the Suspicious label', recheck: 're-checking delivered mail', brakePerHour: 'the brake', timeZone: 'the time zone',
     allowDomains: 'the allowlisted domains', allowAddresses: 'the allowlisted addresses', retentionDays: 'how long records are kept' };
 // The project ID a policy change must be confirmed with ('' when the dashboard doesn't know it).
 const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
@@ -123,6 +123,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     if (service && service.intel && typeof service.alertDaily === 'function') {
         if (service.intel.threats && service.intel.threats.setAlert) service.intel.threats.setAlert((name, text) => service.alertDaily(`${name}-down`, text));
         if (service.intel.sbKey && service.intel.sbKey.setAlert) service.intel.sbKey.setAlert((text) => service.alertDaily('safe-browsing-key', text));
+        // Spamhaus refusing the key or the lookups (0.5.37): emailed at most once a day. (abuse.ch refusing its
+        // key is a list that missed its download: the list-download alert.)
+        if (service.intel.keys && service.intel.keys.spamhaus) service.intel.keys.spamhaus.setAlert((text) => service.alertDaily('spamhaus-key', text));
     }
     // The last 32 days at first, older records when a page shows them (Last 90 days), never past how long
     // records are kept (RETENTION_DAYS, or Settings → Policy: the copy forgets them too).
@@ -327,6 +330,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     const once = (key, gap = ACTIONS_GAP_MS) => { const t = lastAction.get(key) || 0; if (Date.now() - t < gap) return false; lastAction.set(key, Date.now()); return true; };
     // Google Safe Browsing (0.5.23): the key's state (src/intel/sbkey.js), never the key itself.
     const sbKey = () => (service.intel && service.intel.sbKey) || null;
+    // The optional services' keys (0.5.37): service.intel.keys.spamhaus, .abusech (src/intel/apikey.js).
+    const apiKey = (id) => (service.intel && service.intel.keys && service.intel.keys[id]) || null;
     const safeBrowsingOn = async () => !!cfg.safeBrowsing && !!sbKey() && !!(await sbKey().get().catch(() => null));
     const safeBrowsingInfo = async () => {
         const k = sbKey();
@@ -341,6 +346,18 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) { await wrong.add(admin.email, what); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
         wrong.clear(admin.email);
         return null;
+    };
+    const optionalInfo = async () => {
+        const out = {};
+        for (const id of ['spamhaus', 'abusech']) {
+            const k = apiKey(id);
+            out[id] = Object.assign(k ? await k.status() : { available: false, saved: null, health: null }, { on: !!cfg[id] });
+        }
+        if (service.intel && service.intel.spamhaus) out.spamhaus.quota = await service.intel.spamhaus.quota().catch(() => null);
+        out.spamhaus.dailyMax = cfg.spamhausDailyMax;
+        // abuse.ch's lists: how their downloads went
+        out.abusech.lists = service.intel && service.intel.feeds ? (await service.intel.feeds.status().catch(() => [])).filter(l => l.optional) : [];
+        return out;
     };
     // The phishing lists that missed their download, for the overview: [{ id, name, missed, error, failedSince, updated }].
     const missedLists = async () => {
@@ -440,6 +457,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: await safeBrowsingOn(), phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      // Settings → Safe Browsing (0.5.23): on or off, whether a key is saved (who, when), how the lookups go. Never the key.
                      safeBrowsing: await safeBrowsingInfo(),
+                     // Settings → Spamhaus, Settings → abuse.ch (0.5.37): on or off, a key saved (who, when; never the key), how it goes.
+                     optional: await optionalInfo(),
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         // Settings → About's Re-check (0.5.22): the lists that missed their download, or aren't up to date, are
@@ -447,6 +466,35 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         'POST /api/lists/recheck': async (q, body, admin) => {
             if (!once('lists-recheck', 60 * 1000)) return { error: 'The lists were re-checked less than a minute ago.', status: 429 };
             return service.recheckLists(admin.email);
+        },
+        // Settings → Spamhaus, Settings → abuse.ch (0.5.37): as the Safe Browsing key below: tested first, kept in
+        // Secret Manager only (never answered back or logged), optionally turning the service on; or removed (every
+        // version destroyed, the service turned off). The project ID typed in.
+        'POST /api/keys/save': async (q, body, admin) => {
+            const id = String(body.id || '');
+            if (!['spamhaus', 'abusech'].includes(id) || !apiKey(id)) return { error: 'That service isn\'t available here.', status: 409 };
+            const name = apiKey(id).label;
+            const bad = await projectCheck(admin, body, `the ${name} key`);
+            if (bad) return bad;
+            let saved;
+            try { saved = await apiKey(id).save(String(body.apiKey || ''), admin.email); }
+            catch (e) { if (e.status) return { error: `${e.message} Nothing was saved.`, status: e.status }; throw e; }
+            await service.adminNotice('settings', `${admin.email} saved a ${name} key${saved.tested ? ` (${name} accepted it)` : ''}.`);
+            let turnedOn = false;
+            if (body.turnOn === true && !cfg[id]) { await service.setPolicy(id, true, admin.email); turnedOn = true; }
+            return { saved: true, tested: saved.tested, turnedOn };
+        },
+        'POST /api/keys/remove': async (q, body, admin) => {
+            const id = String(body.id || '');
+            if (!['spamhaus', 'abusech'].includes(id) || !apiKey(id)) return { error: 'That service isn\'t available here.', status: 409 };
+            const name = apiKey(id).label;
+            const bad = await projectCheck(admin, body, `the ${name} key (remove it)`);
+            if (bad) return bad;
+            if (cfg[id]) await service.setPolicy(id, false, admin.email);
+            try { await apiKey(id).remove(admin.email); }
+            catch (e) { if (e.status) return { error: e.message, status: e.status }; throw e; }
+            await service.adminNotice('settings', `${admin.email} removed the ${name} key (every copy destroyed); ${name} is off.`);
+            return { removed: true };
         },
         // Settings → Safe Browsing (0.5.23): an admin saves an API key (tested with Google first, kept in Secret
         // Manager only, never answered back or logged), optionally turning Safe Browsing on; or removes it (every
@@ -606,6 +654,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             if (key === 'aiMovesInside' && /^(true|on|yes|1)$/i.test(String(body.value)) && !cfg.aiMovesInside && body.agree !== true) return { error: 'Tick "I agree" to let the AI alone move mail from inside. Nothing was changed.', status: 400 };
             // Safe Browsing on needs a key that can be used.
             if (key === 'safeBrowsing' && /^(true|on|yes|1)$/i.test(String(body.value)) && !(sbKey() && await sbKey().get().catch(() => null))) return { error: 'Save an API key first (Settings → Safe Browsing). Nothing was changed.', status: 400 };
+            // Spamhaus and abuse.ch on (0.5.37) need their key saved first.
+            if ((key === 'spamhaus' || key === 'abusech') && /^(true|on|yes|1)$/i.test(String(body.value)) && !(apiKey(key) && await apiKey(key).get().catch(() => null))) return { error: `Save a key first (Settings → ${key === 'spamhaus' ? 'Spamhaus' : 'abuse.ch'}). Nothing was changed.`, status: 400 };
             try { return { changed: await service.setPolicy(key, body.value, admin.email), policy: service.policyInfo() }; }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw e; }
         },

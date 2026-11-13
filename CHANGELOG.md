@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.37: Spamhaus and abuse.ch, two optional services (off by default)
+
+**Needs `bash deploy/upgrade.sh` from Cloud Shell** (installLevel 5: two new secrets); Settings → Update says
+so instead of offering the button.
+
+- **Settings → Spamhaus (new; off by default):** Spamhaus's free Data Query Service, with the district's own
+  DQS key. For each email, the sender's domain and up to 5 link sites (full host names; never your own
+  domains or the big brands') are looked up in the **Domain Blocklist** (DBL) and **Zero Reputation Domains**
+  (ZRD) by DNS, `<name>.<key>.dbl.dq.spamhaus.net` and `…zrd…`:
+  - a link site the DBL lists for phishing, malware or botnet control is dangerous; the sender's domain
+    listed so is strong evidence (5);
+  - low reputation (spam): a sign of 2; a legitimate site Spamhaus says is abused for phishing or malware: 3
+    (Spamhaus's advice: codes from 100 only score, never block);
+  - a sender domain first seen in the last 24 hours (ZRD): 3; a link site: 2.
+  - **Fair use:** the free service is for non-commercial small organizations, at most 100,000 lookups a day.
+    The service stops for the day at `SPAMHAUS_DAILY_MAX` (90,000 by default; each name costs 2 lookups),
+    counted for every instance together, and asks each name at most once an hour. Spamhaus allows DQS through
+    shared resolvers (Cloud Run uses Google's) but recommends a dedicated one; a lookup that fails is "not
+    checked". The key is tested with Spamhaus's test entry (`dbltest.com`) before it is saved. Spamhaus
+    refusing it is an alert (`spamhaus-key`). The district should confirm with Spamhaus that it qualifies.
+- **Settings → abuse.ch (new; off by default):** with the district's free abuse.ch Auth-Key, three more lists,
+  downloaded once a day and matched like the phishing lists (and looked for in delivered mail, 0.5.35):
+  **URLhaus** (links spreading malware: its export of the last 30 days, `recent.csv`) and **ThreatFox** (malware
+  domains and links of the last 7 days, through its API). abuse.ch puts the key in URLhaus's export address: that
+  address is made only for the download and never logged or stored (an error says only the HTTP status). A
+  refused key is a list that missed its download. Settings → About lists them ("Off" until turned on).
+- **Their keys** are kept like the Safe Browsing key: tested first, then in Secret Manager only
+  (`spruce-spamhaus-key`, `spruce-abusech-key`, made by install.sh, empty until an admin saves one), never in
+  Firestore, the logs or the dashboard's answers; saving, removing, turning on and off need the project ID and
+  are noted in Activity.
+- **No AI training on their data:** abuse.ch's and Spamhaus's terms don't allow it, so the retraining export
+  leaves out a link's finding from them.
+- The lists' shared copies: a list may now carry its own minimum size (ThreatFox's weekly lists can be small).
+- Tests: `test/optional-services.test.js`.
+
 ## 0.5.36: The look-alike watch
 
 Payroll and vendor fraud often starts with a domain made to pass for the district's own. Now the service looks

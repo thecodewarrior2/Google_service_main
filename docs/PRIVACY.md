@@ -156,6 +156,8 @@ can be turned off):
 |---|---|---|---|
 | **Cloudflare Security DNS** (`security.cloudflare-dns.com`, and `cloudflare-dns.com` to tell a block from a missing domain) | host names: the sites links point to, and the sender's domain. Never paths, addresses or anything else | Cloudflare's resolver privacy commitments (it doesn't sell or keep identifying query data) | `CLOUDFLARE_THREATS` |
 | **Google Safe Browsing** (Lookup API v4). **Off by default:** nothing is sent until an admin saves an API key and turns it on (Settings → Safe Browsing; or `SAFE_BROWSING=true` with `SAFE_BROWSING_KEY`). The key is kept in Secret Manager only, never in Firestore, the logs or the dashboard's answers | link addresses, without the `#…` part, and for one-time links (password resets, sign-in, unsubscribe) without the query string, so tokens never leave | Google's API terms. The Lookup API is for non-commercial use, as a district's own protection is; otherwise use Google's Web Risk API | Settings → Safe Browsing (`SAFE_BROWSING`, `SAFE_BROWSING_KEY`) |
+| **Spamhaus's Data Query Service** (DBL and ZRD, by DNS through Google's resolver). **Off by default:** nothing is sent until an admin saves a DQS key and turns it on (Settings → Spamhaus, 0.5.37). The key is in Secret Manager only | domain and host names: the sender's domain and up to 5 link sites per email (never your own domains or the big brands'), with the key, each at most once an hour, at most `SPAMHAUS_DAILY_MAX` lookups a day | Spamhaus's terms for the free service (non-commercial small organizations; no AI training on its data) | Settings → Spamhaus |
+| **abuse.ch** (URLhaus, ThreatFox). **Off by default:** nothing is asked until an admin saves an abuse.ch Auth-Key and turns it on (Settings → abuse.ch, 0.5.37). The key is in Secret Manager only | nothing about email: the lists are downloaded once a day with the key and matched in the service | downloads only (abuse.ch's terms: not-for-profit use; no AI training on its data) | Settings → abuse.ch |
 | **Phishing lists** (OpenPhish, HaGeZi, TweetFeed and Sefinek on GitHub, Phishing Army) | nothing about email: the lists are downloaded once a day and matched in the service | downloads only | `PHISHING_LISTS` |
 | **Cloudflare's public resolver** (`cloudflare-dns.com`), for the look-alike watch (0.5.36) | look-alike names of your own domains, made by the service (about 80 an hour, a pass a day): nothing from any email | Cloudflare's resolver privacy commitments | `LOOKALIKE_WATCH` |
 | **Domain registries** (RDAP, found through IANA's list) | domain names: up to 3 unfamiliar link domains per email and the sender's domain, each at most once a month for the whole district | public registration records | `SITE_AGE` |
@@ -172,8 +174,9 @@ can be turned off):
 - HaGeZi Threat Intelligence Feeds: GPL-3.0 (the list is used by the service, not redistributed).
 - TweetFeed: CC0 1.0.
 - Sefinek: MIT.
-- Not used: URLhaus (abuse.ch). Its downloads need an abuse.ch key since October 2026 (free for
-  non-commercial use); keyless downloads answer "410 Gone".
+- URLhaus and ThreatFox (abuse.ch, 0.5.37, off by default): abuse.ch's terms of use, for not-for-profit use
+  with a free Auth-Key; their data may not be used to train or improve an AI model, so the retraining export
+  leaves out what they found (Spamhaus's data likewise).
 
 **Settings → Update** reads the approved versions from GitHub (`api.github.com` and
 `raw.githubusercontent.com`, the public `google_service_main` repository): the newest commit on main, and

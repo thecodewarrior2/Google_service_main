@@ -28,6 +28,9 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
                                           its API key in Secret Manager (spruce-safe-browsing-key)
        ──▶ registries (RDAP, via IANA)    domain names, at most once a month each
        ──▶ cloudflare-dns.com             the look-alike watch: look-alike names of ORG_DOMAINS, a pass a day
+       ··▶ *.dq.spamhaus.net (DNS)        OFF by default (Settings → Spamhaus): domain and host names, with the DQS key
+       ··▶ urlhaus-api / threatfox-api    OFF by default (Settings → abuse.ch): the lists' downloads, with the key
+                                          (both keys in Secret Manager: spruce-spamhaus-key, spruce-abusech-key)
        ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```
 

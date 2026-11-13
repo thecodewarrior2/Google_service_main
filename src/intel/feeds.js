@@ -22,8 +22,14 @@ const STALE_MS = 48 * 60 * 60 * 1000;
 // Each list's download health, in the store (state): { [id]: { lastAttempt, error, failedSince, failures } }.
 const HEALTH = 'feedHealth';
 
-function createFeeds({ http, store, engine, now = () => Date.now(), log = console }) {
+// extra: () => more lists (0.5.37: abuse.ch's, src/intel/abusech.js), each like a PHISH_FEEDS entry plus
+// headers() (the request's headers: its key) and enabled() (turned on, with a key). A list that isn't enabled
+// isn't downloaded or used; its status says "off".
+function createFeeds({ http, store, engine, now = () => Date.now(), log = console, extra = () => [] }) {
     const E = engine;
+    const extras = () => { try { return extra() || []; } catch (e) { return []; } };
+    const allFeeds = () => [...E.PHISH_FEEDS, ...extras()];
+    const isOn = async (feed) => (typeof feed.enabled === 'function' ? !!(await feed.enabled()) : true);
     let sets = null, versions = {}, lastCheck = 0, loading = null;
     const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } };
 
@@ -34,8 +40,7 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
         return String(text).split('\n').map(l => l.split(',')).filter(c => c.length >= 4 && c[2] === 'domain').map(c => c[3]);
     }
     // How sure a list is (PHISH_FEEDS confidence): 'report' for community reports, else 'list'.
-    const CONFIDENCE = new Map(E.PHISH_FEEDS.map(f => [f.name, f.confidence || 'list']));
-    const confidenceOf = (name) => CONFIDENCE.get(name) || 'list';
+    const confidenceOf = (name) => { const f = allFeeds().find(x => x.name === name); return (f && f.confidence) || 'list'; };
 
     // The extension's sanitizeFeed: what an entry must look like, and what a list may never contain (the
     // protected brands' own domains, cloud-storage hosts, whole personal-mail domains).
@@ -73,19 +78,22 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     async function sync({ force = false, retryFailed = false, only = null } = {}) {
         const results = [], recovered = [];
         const health = Object.assign({}, (await store.getState(HEALTH).catch(() => null)) || {});
-        for (const feed of E.PHISH_FEEDS) {
+        for (const feed of allFeeds()) {
             if (only && !only.includes(feed.id)) continue;
+            if (!(await isOn(feed))) continue;
             const name = `feed_${feed.id}`;
             const info = await store.blobInfo(name);
             const prev = health[feed.id] || {};
             if (!force && !(retryFailed && prev.error) && info && now() - info.updated < SYNC_MIN_INTERVAL_MS) { results.push({ id: feed.id, name: feed.name, skipped: 'recent' }); continue; }
             try {
-                const res = await http.request(feed.url, {}, 60000);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const text = await res.text();
+                // (a keyed list makes its own request: fetchWith, src/intel/abusech.js)
+                const res = feed.fetchWith ? await feed.fetchWith() : await http.request(feed.url, {}, 60000);
+                if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? `HTTP ${res.status}: the key was refused` : `HTTP ${res.status}`);
+                const text = feed.unpack ? await feed.unpack(res) : await res.text();
                 if (text.length > E.PHISH_FEED_MAX_BYTES) throw new Error(`too large (${text.length} bytes)`);
                 const entries = sanitize(feed, text);
-                if (entries.size < E.PHISH_FEED_MIN_ENTRIES) throw new Error(`only ${entries.size} entries; the previous copy is kept`);
+                const min = typeof feed.minEntries === 'number' ? feed.minEntries : E.PHISH_FEED_MIN_ENTRIES;
+                if (entries.size < min) throw new Error(`only ${entries.size} entries; the previous copy is kept`);
                 // What this download adds to the previous copy (0.5.35): delivered mail is checked again for it
                 // (pipeline.js recheckFromLists). Nothing on a list's first download (everything would be new).
                 let added = null;
@@ -108,7 +116,8 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
                 }
                 health[feed.id] = { lastAttempt: now() };
             } catch (e) {
-                const error = String(e.message || e).slice(0, 160);
+                // (never an address: a keyed list's has its key in it)
+                const error = String(e.message || e).replace(/https?:\/\/\S+/g, '(its address)').slice(0, 160);
                 results.push({ id: feed.id, name: feed.name, error, newly: !prev.error });
                 health[feed.id] = { lastAttempt: now(), error, failedSince: prev.error ? (prev.failedSince || now()) : now(), failures: (prev.error ? (prev.failures || 1) : 0) + 1 };
                 await store.addEvent({ kind: 'error', text: `${feed.name} could not be updated (${error.slice(0, 120)}); the previous copy is kept.` });
@@ -121,7 +130,8 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
 
     async function load() {
         const parts = { url: [], domain: [], address: [] }, vers = {};
-        for (const feed of E.PHISH_FEEDS) {
+        for (const feed of allFeeds()) {
+            if (!(await isOn(feed))) { vers[feed.id] = 'off'; continue; }
             const b = await store.getBlob(`feed_${feed.id}`);
             if (!b) continue;
             vers[feed.id] = b.info.updated;
@@ -140,7 +150,7 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
             try {
                 lastCheck = now();
                 let newer = !sets;
-                for (const feed of E.PHISH_FEEDS) { const i = await store.blobInfo(`feed_${feed.id}`); if ((i && i.updated) !== versions[feed.id]) newer = true; }
+                for (const feed of allFeeds()) { const i = (await isOn(feed)) ? await store.blobInfo(`feed_${feed.id}`) : null; if ((i ? i.updated : (await isOn(feed)) ? undefined : 'off') !== versions[feed.id]) newer = true; }
                 if (newer) await load();
             } catch (e) { log.error && log.error('phishing lists:', e); if (!sets) sets = null; }
             return sets;
@@ -174,12 +184,13 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     async function status() {
         const out = [];
         const health = (await store.getState(HEALTH).catch(() => null)) || {};
-        for (const feed of E.PHISH_FEEDS) {
+        for (const feed of allFeeds()) {
+            const on = await isOn(feed);
             const i = await store.blobInfo(`feed_${feed.id}`);
-            const hl = health[feed.id] || {};
+            const hl = on ? health[feed.id] || {} : {};
             const updated = i ? i.updated : null;
-            const missed = hl.error ? 'failed' : updated && now() - updated > STALE_MS ? 'stale' : null;
-            out.push({ id: feed.id, name: feed.name, kind: feed.kind, confidence: feed.confidence || 'list', home: feed.home || null, updated, count: i ? i.count : 0,
+            const missed = !on ? null : hl.error ? 'failed' : updated && now() - updated > STALE_MS ? 'stale' : null;
+            out.push({ id: feed.id, name: feed.name, kind: feed.kind, confidence: feed.confidence || 'list', home: feed.home || null, updated, count: i ? i.count : 0, off: !on || undefined, optional: !!feed.enabled || undefined,
                 lastAttempt: hl.lastAttempt || null, error: hl.error || null, failedSince: hl.error ? (hl.failedSince || hl.lastAttempt || null) : null, failures: hl.error ? (hl.failures || 1) : 0, missed });
         }
         return out;

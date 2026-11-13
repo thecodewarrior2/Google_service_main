@@ -153,6 +153,17 @@ Mail is still checked; one source of evidence is missing until it comes back.
 - **What to do:** Settings → Link clicks → Test says what Google answered. docs/INSTALL.md, "Link clicks".
   Emailed at most once a day.
 
+### Spamhaus refused the key or the lookups (`spamhaus-key`)
+- **When:** Settings → Spamhaus is on (off by default) and Spamhaus answers the service's lookups with an
+  error: the key disabled, the key used in a way its terms don't allow, or a mistyped zone. Emailed at most
+  once a day.
+- **What it means for mail:** domains aren't looked up with Spamhaus meanwhile (they are "not checked",
+  never "clean"); every other check still runs.
+- **What to do:** Settings → Spamhaus shows Spamhaus's answer. Check the key in Spamhaus's portal (a free
+  account must stay within its fair use: non-commercial, under 100,000 lookups a day), or save a new one.
+  abuse.ch refusing its key shows as a list that missed its download (`list-download`, above): URLhaus or
+  ThreatFox, with "the key was refused"; Settings → abuse.ch.
+
 ## Phishing that needs a decision
 
 ### Moving is paused: the brake (`brake`)

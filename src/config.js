@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'recheck', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'spamhaus', 'abusech', 'suspiciousLabel', 'recheck', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -86,6 +86,15 @@ function loadConfig(env = process.env) {
         safeBrowsing: bool(env.SAFE_BROWSING, false),
         safeBrowsingKey: env.SAFE_BROWSING_KEY || '',
         safeBrowsingSecret: env.SAFE_BROWSING_SECRET || '',
+        // 0.5.37: two more optional services, off by default, each turned on on its Settings page with a key
+        // kept in Secret Manager (install.sh makes the secrets): Spamhaus's free Data Query Service (the DBL and
+        // ZRD domain lists, looked up per email, at most SPAMHAUS_DAILY_MAX lookups a day: its fair use is
+        // 100,000), and abuse.ch (URLhaus and ThreatFox, downloaded like the phishing lists).
+        spamhaus: bool(env.SPAMHAUS, false),
+        spamhausSecret: env.SPAMHAUS_SECRET || '',
+        spamhausDailyMax: Math.min(100000, Math.max(1000, Math.round(num(env.SPAMHAUS_DAILY_MAX, 90000)))),
+        abusech: bool(env.ABUSECH, false),
+        abusechSecret: env.ABUSECH_SECRET || '',
         // A Gmail label on emails that are suspicious but not moved, so their readers see it (0.5.33): OFF by
         // default; an admin turns it on in Settings → Policy (a policy setting).
         suspiciousLabel: bool(env.SUSPICIOUS_LABEL, false),

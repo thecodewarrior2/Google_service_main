@@ -193,6 +193,14 @@ async function buildDemo({ now = Date.now(), cfg }) {
     // Settings → Safe Browsing in the demo (0.5.23): a key is only checked for its form, never sent anywhere,
     // and kept in this process; turned on, "Check an email" gets the made-up Safe Browsing answers.
     intel.sbKey = createSafeBrowsingKey({ cfg, store, secrets: memorySecrets(), offline: true });
+    // Settings → Spamhaus and abuse.ch in the demo (0.5.37): keys checked for their form only, kept in this
+    // process; nothing is looked up or downloaded.
+    const { createApiKey } = require('../intel/apikey');
+    intel.keys = {
+        spamhaus: createApiKey({ id: 'spamhaus', label: 'Spamhaus', store, secrets: memorySecrets(), keyRe: require('../intel/spamhaus').KEY_RE, test: async () => ({ ok: true }), offline: true }),
+        abusech: createApiKey({ id: 'abusech', label: 'abuse.ch', store, secrets: memorySecrets(), keyRe: require('../intel/abusech').KEY_RE, test: async () => ({ ok: true }), offline: true })
+    };
+    intel.spamhaus = { checkDomains: async () => new Map(), quota: async () => ({ today: 0, max: cfg.spamhausDailyMax, stopped: false }), setKey() {} };
     intel.threats.enabled = { cloudflare: true, get safeBrowsing() { return !!cfg.safeBrowsing; } };
     return { store, staff, intel, raws };
 }

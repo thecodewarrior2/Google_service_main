@@ -30,7 +30,10 @@ function createFakeIntel() {
                 return [ok('openphish', 'OpenPhish community feed', 'url', 412), ok('phishingarmy', 'Phishing Army (extended)', 'domain', 141882),
                     demoListFailed ? ok('hagezitif', 'HaGeZi Threat Intelligence Feeds', 'domain', 365120, { updated: Date.now() - 29 * 3600e3, lastAttempt: Date.now() - 2 * 3600e3, error: 'HTTP 503', failedSince: t, failures: 2, missed: 'failed' })
                         : ok('hagezitif', 'HaGeZi Threat Intelligence Feeds', 'domain', 366027, { updated: Date.now(), lastAttempt: Date.now() }),
-                    ok('tweetfeed', 'TweetFeed (researchers\' reports)', 'domain', 2641, { confidence: 'report' }), ok('sefinekemails', 'Sefinek scam-sender list', 'address', 23517)];
+                    ok('tweetfeed', 'TweetFeed (researchers\' reports)', 'domain', 2641, { confidence: 'report' }), ok('sefinekemails', 'Sefinek scam-sender list', 'address', 23517),
+                    // abuse.ch's (0.5.37): off until turned on with a key
+                    ...[['urlhaus', 'URLhaus (abuse.ch)', 'url'], ['threatfoxdomains', 'ThreatFox domains (abuse.ch)', 'domain'], ['threatfoxurls', 'ThreatFox links (abuse.ch)', 'url']]
+                        .map(([id, name, kind]) => ok(id, name, kind, 0, { updated: null, lastAttempt: null, off: true, optional: true }))];
             },
             async sync({ retryFailed = false } = {}) {
                 if (!retryFailed || !demoListFailed) return { feeds: [], recovered: [] };

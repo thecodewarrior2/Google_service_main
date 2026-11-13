@@ -145,10 +145,16 @@ retry gcloud iam service-accounts add-iam-policy-binding "$SA_INVOKER" --member=
 # Google Safe Browsing's API key (0.5.23): kept in Secret Manager, saved and removed by an admin on the
 # dashboard (Settings → Safe Browsing). The secret has no value until then. The services' account may read
 # it, add a version and destroy old ones, on this secret only.
+# 0.5.37: the same for the two other optional services' keys, Spamhaus's Data Query Service and abuse.ch
+# (Settings → Spamhaus, Settings → abuse.ch; both off by default).
 SB_SECRET=spruce-safe-browsing-key
-gcloud secrets describe "$SB_SECRET" >/dev/null 2>&1 || retry gcloud secrets create "$SB_SECRET" --replication-policy=automatic --quiet >/dev/null
-for r in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionAdder roles/secretmanager.secretVersionManager; do
-    retry gcloud secrets add-iam-policy-binding "$SB_SECRET" --member="serviceAccount:$SA_RUN" --role="$r" --condition=None --quiet >/dev/null
+SH_SECRET=spruce-spamhaus-key
+AC_SECRET=spruce-abusech-key
+for sec in "$SB_SECRET" "$SH_SECRET" "$AC_SECRET"; do
+    gcloud secrets describe "$sec" >/dev/null 2>&1 || retry gcloud secrets create "$sec" --replication-policy=automatic --quiet >/dev/null
+    for r in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionAdder roles/secretmanager.secretVersionManager; do
+        retry gcloud secrets add-iam-policy-binding "$sec" --member="serviceAccount:$SA_RUN" --role="$r" --condition=None --quiet >/dev/null
+    done
 done
 # The dashboard's "Update group membership now" runs the spruce-renew-watches job, and shows its last run.
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/cloudscheduler.jobRunner --condition=None --quiet >/dev/null
@@ -246,7 +252,7 @@ WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
     RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app"
-    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET" AUDIT_DAYS "$AUDIT_DAYS" GAPS_ALERT_DAY "$GAPS_ALERT_DAY" GAPS_ALERT_MAILBOX "$GAPS_ALERT_MAILBOX" AUDIT_LOG "$([ "$AUDIT_LOG" = on ] && echo true || echo false)")
+    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET" SPAMHAUS_SECRET "projects/$PROJECT/secrets/$SH_SECRET" ABUSECH_SECRET "projects/$PROJECT/secrets/$AC_SECRET" AUDIT_DAYS "$AUDIT_DAYS" GAPS_ALERT_DAY "$GAPS_ALERT_DAY" GAPS_ALERT_MAILBOX "$GAPS_ALERT_MAILBOX" AUDIT_LOG "$([ "$AUDIT_LOG" = on ] && echo true || echo false)")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
 LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 

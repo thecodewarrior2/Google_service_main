@@ -149,7 +149,7 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, rene
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'recheck', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'spamhaus', 'abusech', 'suspiciousLabel', 'recheck', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 const LIST_KEYS = ['allowDomains', 'allowAddresses'];
 const MAX_ALLOWED = 500;
 const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -192,11 +192,11 @@ function policyValue(key, v, now = {}) {
         return Number.isFinite(n) && n >= 0.5 && n <= ceiling ? Math.round(n * 1000) / 1000
             : bad(`The AI suspicious line is from 50% to the move threshold (${pc(ceiling)}). To go higher, raise the move threshold first.`);
     }
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel' || key === 'recheck') {
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'spamhaus' || key === 'abusech' || key === 'suspiciousLabel' || key === 'recheck') {
         if (v === true || v === false) return v;
         const t = String(v).trim().toLowerCase();
         return ['on', 'true', 'yes', '1'].includes(t) ? true : ['off', 'false', 'no', '0'].includes(t) ? false
-            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.', suspiciousLabel: 'The Suspicious label is on or off.', recheck: 'Re-checking delivered mail is on or off.' }[key]);
+            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.', suspiciousLabel: 'The Suspicious label is on or off.', recheck: 'Re-checking delivered mail is on or off.', spamhaus: 'Spamhaus is on or off.', abusech: 'abuse.ch is on or off.' }[key]);
     }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
@@ -209,7 +209,7 @@ function policyWords(key, v) {
     if (key === 'aiThreshold' || key === 'aiSuspicious') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
     if (key === 'retentionDays') return `${Number(v)} days`;
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel' || key === 'recheck') return v ? 'on' : 'off';
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'spamhaus' || key === 'abusech' || key === 'suspiciousLabel' || key === 'recheck') return v ? 'on' : 'off';
     return String(v);
 }
 

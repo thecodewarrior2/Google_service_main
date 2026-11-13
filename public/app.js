@@ -949,8 +949,9 @@
             missed.length ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${missed.length === 1 ? '1 list' : `${num(missed.length)} lists`} missed ${missed.length === 1 ? 'its' : 'their'} download (highlighted below).` }),
                 ' Re-check downloads them again now; the alert was emailed to the admins.')) : null,
             lists.length ? dataTable([{ name: 'List', get: listName }, { name: 'Kind', get: l => (({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind) + (l.confidence === 'report' ? ' (reports: a caution)' : '') },
-                { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') },
-                { name: 'Last download', get: l => (l.lastAttempt ? `${when(l.lastAttempt)}: ${l.error ? 'failed' : 'OK'}` : '—') }], lists, l => (l.missed ? 'row-alert' : ''))
+                { name: 'Entries', num: true, get: l => (l.off ? '–' : num(l.count)) }, { name: 'Updated', get: l => (l.off ? 'not used' : l.updated ? when(l.updated) : 'not yet') },
+                // (abuse.ch's lists, 0.5.37: used only when turned on with a key)
+                { name: 'Last download', get: l => (l.off ? h('a', { href: '#/abusech', text: 'Off (Settings → abuse.ch)' }) : l.lastAttempt ? `${when(l.lastAttempt)}: ${l.error ? 'failed' : 'OK'}` : '—') }], lists, l => (l.missed ? 'row-alert' : ''))
                 : h('div', { class: 'empty', text: d.checks && d.checks.phishingLists ? 'Not downloaded yet: the hourly job downloads them within the hour.' : 'The phishing lists are off (PHISHING_LISTS=off).' }));
         if (q && q.get && q.get('show') === 'lists') setTimeout(() => { if (listsCard.isConnected) listsCard.scrollIntoView({ block: 'start' }); }, 0);
         return [h('h1', { text: 'About' }), h('p', { class: 'sub', text: 'What this service runs, what it keeps, and what it looks up.' }),
@@ -1651,6 +1652,92 @@
             d.demoProjectId ? h('p', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}.` }) : null];
     }
 
+    // --- Settings → Spamhaus, Settings → abuse.ch (0.5.37; optional, off by default) ---------------------
+    const OPTIONAL = {
+        spamhaus: {
+            title: 'Spamhaus', label: 'Spamhaus',
+            sub: 'Spamhaus\'s free Data Query Service: its Domain Blocklist (DBL) and Zero Reputation Domains (ZRD), looked up for each email\'s sender domain and link sites. Off by default. It needs a free DQS key from Spamhaus.',
+            benefits: [
+                ['The Domain Blocklist. ', 'Domains Spamhaus has seen in phishing, malware, botnet control and spam, kept up to date around the clock: a link to a phishing or malware domain is dangerous, and a sender domain on it is strong evidence.'],
+                ['Brand-new domains. ', 'Zero Reputation Domains: a domain first seen on the internet in the last 24 hours. Phishing sites are usually that new; a sender or link domain that new is a sign.'],
+                ['Hacked real sites. ', 'The DBL marks legitimate domains being abused for phishing or malware right now, which the age and look-alike checks can\'t tell.']],
+            costs: (o) => `Costs: none. Spamhaus's free use is for non-commercial small organizations, at most 100,000 lookups a day; the service stops for the day at ${num(o.dailyMax || 90000)} (SPAMHAUS_DAILY_MAX), and each name is looked up once an hour at most (a campaign's copies share it; each costs 2 lookups, DBL and ZRD). Spamhaus works on a "know your client" basis: confirm with them that your district qualifies, with its own key. Each lookup sends the site's name, with the key, to Spamhaus's DNS servers through Google's resolver; nothing else about the email.`,
+            steps: [['Ask for a ', ['free Spamhaus Data Query Service account', 'https://www.spamhaus.com/data-access/free-data-query-service/'], ' with the district\'s name and a work address, and read its ', ['fair use policy', 'https://www.spamhaus.com/terms-of-use-fair-use-policy-for-free-data-query-service/'], '.'],
+                ['Once approved, copy the DQS key (26 characters) from Spamhaus\'s portal.'], ['Paste it below with the project ID: it is tried with Spamhaus first (a lookup of Spamhaus\'s own test entry, dbltest.com).']],
+            placeholder: 'DQS key'
+        },
+        abusech: {
+            title: 'abuse.ch', label: 'abuse.ch',
+            sub: 'abuse.ch\'s URLhaus (links spreading malware) and ThreatFox (malware sites and control servers), downloaded with your free abuse.ch key and matched like the phishing lists. Off by default.',
+            benefits: [
+                ['Malware links. ', 'URLhaus lists the links spreading malware right now (fake invoices, "view document" downloads), which the phishing lists mostly don\'t cover.'],
+                ['Malware sites. ', 'ThreatFox lists domains and links of malware campaigns reported by security researchers.'],
+                ['Delivered mail too. ', 'Like the phishing lists, what a download adds is looked for in mail already delivered (Email → Re-checked).']],
+            costs: () => 'Costs: none (abuse.ch\'s data is free for non-commercial use with a key). The lists are downloaded once a day for the whole district, with the key; nothing about any email is sent to abuse.ch.',
+            steps: [['Sign in at ', ['abuse.ch\'s authentication portal', 'https://auth.abuse.ch/'], ' (with a Google, Microsoft, GitHub or LinkedIn account) and copy your Auth-Key from your profile.'],
+                ['Paste it below with the project ID: it is tried with abuse.ch first (one small download).']],
+            placeholder: 'Auth-Key'
+        }
+    };
+    async function optionalPage(id) {
+        const d = await settingsData();
+        const def = OPTIONAL[id], o = (d.optional || {})[id] || {}, hl = o.health;
+        const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+        const keyText = o.saved ? `Saved by ${o.saved.by}, ${when(o.saved.at)}. It is kept in Secret Manager and never shown here again.`
+            : !o.available ? 'Can\'t be saved here yet: this installation needs bash deploy/upgrade.sh from Cloud Shell once (it sets up Secret Manager for the key).' : 'None saved.';
+        const working = !o.on ? 'Off.' : !o.saved ? 'On, but no key is saved.' : hl && !hl.ok ? `${def.label} refused (${when(hl.at)}): ${hl.error}` : hl ? `Working: last answer ${when(hl.at)}.` : 'On: nothing asked yet.';
+        const bad = o.on && (!o.saved || (hl && !hl.ok));
+        const sw = o.on ? confirmForm('Turn off', '/api/policy', () => ({ key: id, value: false }), () => `${def.label} is off (within 30 seconds everywhere).`)
+            : o.saved ? confirmForm('Turn on', '/api/policy', () => ({ key: id, value: true }), () => `${def.label} is on (within 30 seconds everywhere).`) : h('div', { class: 'small muted', text: 'Save a key below first.' });
+        const keyInput = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: def.placeholder, 'aria-label': `${def.label} key`, 'data-lpignore': 'true', 'data-1p-ignore': 'true' });
+        const turnOn = h('input', { type: 'checkbox', checked: !o.on });
+        const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const save = h('button', { class: 'btn primary', type: 'button', disabled: true }, o.saved ? 'Test and replace the key' : 'Test and save the key');
+        const ready = () => { save.disabled = !keyInput.value.trim() || !project.value.trim(); };
+        keyInput.addEventListener('input', ready); project.addEventListener('input', ready);
+        save.addEventListener('click', async () => {
+            err.textContent = ''; save.disabled = true; acting++;
+            const apiKey = keyInput.value;
+            keyInput.value = '';                                  // (not left in the page)
+            try {
+                const out = await api('/api/keys/save', { method: 'POST', body: { id, apiKey, projectId: project.value, turnOn: !o.on && turnOn.checked } });
+                toast(`${out.tested ? `${def.label} accepted the key. ` : ''}It is saved in Secret Manager${out.turnedOn ? `, and ${def.label} is on` : ''}.`);
+                render();
+            } catch (e) { err.textContent = e.message; ready(); }
+            finally { acting--; }
+        });
+        const quota = id === 'spamhaus' && o.quota ? kvRow('Lookups today', `${num(o.quota.today)} of ${num(o.quota.max)} (${o.quota.stopped ? 'stopped for the day: the rest of today\'s mail isn\'t looked up with Spamhaus' : 'the day\'s limit'}).`)
+            : id === 'abusech' && (o.lists || []).length ? kvRow('Lists', h('ul', { class: 'plain-list' }, o.lists.map(l => h('li', {}, l.missed ? alertIcon('Missed its download') : null,
+                `${l.name}: ${l.off ? 'not used (off)' : l.error ? `last download failed (${l.error})` : l.updated ? `${num(l.count)} entries, downloaded ${when(l.updated)}` : 'not downloaded yet'}`))))
+            : null;
+        return [h('h1', { text: def.title }), h('p', { class: 'sub', text: def.sub }),
+            bad ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${def.label} is on, but it isn't working. ` }), working)) : null,
+            h('section', { class: 'card optional-note' }, h('h2', { text: 'Optional: the service works without it' }),
+                h('div', { class: 'sub', text: `S.P.R.U.C.E doesn't need ${def.label} to protect your mail: every email still gets the rule checks, the AI model, Cloudflare's check, the phishing lists, the site-age check and the look-alike watch. Turned on, it adds:` }),
+                h('ul', { class: 'benefits' }, def.benefits.map(([b, t]) => h('li', {}, h('b', { text: b }), t))),
+                h('div', { class: 'small muted', text: def.costs(o) })),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Status' }), h('dl', { class: 'kv' },
+                kvRow(def.label, o.on ? 'On' : 'Off'), kvRow('Key', keyText), kvRow('Lookups', working), quota,
+                kvRow('Changes', 'Each needs the Google Cloud project ID, applies everywhere within 30 seconds, and is noted in Status → Activity → What admins did. The key refused is an alert: the admins are emailed.')),
+                h('div', { class: 'actions' }, sw)),
+            o.available ? h('section', { class: 'card spaced' }, h('h2', { text: o.saved ? 'Replace the key' : 'Add the key' }),
+                h('div', { class: 'sub', text: `Paste the key. It is tried with ${def.label} first; only a key that works is saved, in Secret Manager. It is never kept in the dashboard's records, shown here again, or written to the logs. Saving a new key destroys the old one.` }),
+                h('div', { class: 'policy-form sb-form' },
+                    h('label', { class: 'project' }, h('span', { text: 'Key' }), keyInput),
+                    o.on ? null : h('label', { class: 'choice' }, turnOn, h('span', { text: `Turn ${def.label} on once the key works` })),
+                    h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),
+                    d.demoProjectId ? h('div', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}; any well-formed key is accepted, and nothing is sent anywhere.` }) : null,
+                    h('div', { class: 'actions' }, save), err),
+                o.saved ? h('div', { class: 'spaced-top' }, h('h3', { text: 'Remove the key' }),
+                    h('div', { class: 'small muted', text: `Turns ${def.label} off and destroys every copy of the key in Secret Manager.` }),
+                    confirmForm('Remove the key', '/api/keys/remove', () => ({ id }), () => `The key was removed, and ${def.label} is off.`)) : null) : null,
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Getting a key' }),
+                h('ol', { class: 'steps' }, def.steps.map(parts => h('li', {}, parts.map(x => (Array.isArray(x) ? link(x[0], x[1]) : x))))))];
+    }
+    const spamhausPage = () => optionalPage('spamhaus');
+    const abusechPage = () => optionalPage('abusech');
+
     // --- Settings → Link clicks (0.5.35; optional, off by default) ---------------------------------------
     async function clicksPage() {
         const d = await api('/api/clicks');
@@ -1698,14 +1785,14 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, clicks: clicksPage, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, spamhaus: spamhausPage, abusech: abusechPage, clicks: clicksPage, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['rechecked', 'Re-checked'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['lookalikes', 'Look-alikes'], ['activity', 'Activity']] },
-        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['clicks', 'Link clicks'], ['update', 'Update'], ['about', 'About']] }
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['spamhaus', 'Spamhaus'], ['abusech', 'abuse.ch'], ['clicks', 'Link clicks'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {

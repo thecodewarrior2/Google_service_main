@@ -125,7 +125,9 @@ test('dashboard: the overview names the lists that missed their download; Re-che
         const o = await get('/api/overview?days=30');
         assert.deepEqual(o.missedLists.map(l => [l.id, l.missed, l.error]), [['hagezitif', 'failed', 'HTTP 503']]);
         const st = await get('/api/settings');
-        assert.deepEqual(st.lists.map(l => l.id), ['openphish', 'phishingarmy', 'hagezitif', 'tweetfeed', 'sefinekemails']);
+        assert.deepEqual(st.lists.filter(l => !l.optional).map(l => l.id), ['openphish', 'phishingarmy', 'hagezitif', 'tweetfeed', 'sefinekemails']);
+        // (abuse.ch's, 0.5.37: listed, off until turned on with a key)
+        assert.deepEqual(st.lists.filter(l => l.optional).map(l => [l.id, l.off]), [['urlhaus', true], ['threatfoxdomains', true], ['threatfoxurls', true]]);
         assert.equal(st.lists.find(l => l.id === 'tweetfeed').confidence, 'report');
         assert.equal((await post('/api/lists/recheck', false)).status, 403, 'only from the dashboard');
         const r = await post('/api/lists/recheck');

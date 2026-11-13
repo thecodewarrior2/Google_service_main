@@ -103,6 +103,8 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | **Google Safe Browsing**: optional, off by default. An admin adds the API key (kept in Secret Manager) and turns it on in Settings → Safe Browsing | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
 | **Phishing lists** (OpenPhish, Phishing Army, HaGeZi Threat Intelligence Feeds, TweetFeed, Sefinek) | nothing: downloaded once a day (a list that misses its download: tried again every 3 hours, a red banner on Overview, an alert to the admins, and Settings → About shows it with a Re-check button), matched in the service | listed links are dangerous; a listed sender address or domain is a sign. TweetFeed (domains researchers reported in the last 30 days) is a community report: a reported link is amber and a sign of 2, never dangerous on its own. Your own domains count only as exact listed links and addresses, never as a whole site or domain |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
+| **Spamhaus** (0.5.37): optional, off by default. An admin adds the district's free DQS key (Secret Manager) and turns it on in Settings → Spamhaus | the sender's domain and up to 5 link sites' names, by DNS, at most `SPAMHAUS_DAILY_MAX` (90,000) lookups a day | a link site on the Domain Blocklist for phishing, malware or botnet control is dangerous (the sender's domain: strong evidence); low reputation or an abused site: a sign; a domain first seen in the last 24 hours (ZRD): a sign |
+| **abuse.ch** (0.5.37): optional, off by default. An admin adds the district's free Auth-Key (Secret Manager) and turns it on in Settings → abuse.ch | nothing: URLhaus and ThreatFox are downloaded once a day and matched in the service | links spreading malware, malware sites and control servers are dangerous, as the phishing lists' |
 | **The look-alike watch** (0.5.36; `LOOKALIKE_WATCH`): a pass a day over look-alike names of your domains (a letter left out, swapped or replaced, other endings, `-k12`, `schools`…), Status → Look-alikes | those names only, to Cloudflare's public resolver | a newly registered look-alike is an alert; mail from it, replies to it and links to it are strong signs (one there before the watch: a small sign; one marked as yours: none) |
 
 **Reputation check before a newsletter's link is called dangerous.** A link whose text shows a well-known
@@ -286,6 +288,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     waits, and the largest campaigns go into each dashboard admin's Inbox. **Preview** and **Send one
     now** are next to it.
   - **Retraining** (off by default): allows **Download for retraining** on Status → Model health.
+  - **Spamhaus** and **abuse.ch** (0.5.37; optional, off by default): what each adds, its key (tested, then
+    kept in Secret Manager only; never shown again), on and off, and how its lookups or downloads go (Spamhaus:
+    the day's lookups against its limit). Each change needs the project ID.
   - **Link clicks** (0.5.35; optional, off by default): for each email found to be phishing after it was
     delivered, Gmail's own logs (Admin SDK Reports API) tell when each person first opened it and whether
     they clicked a link in it; a click is an alert. It needs Gmail log events in your Workspace edition, the

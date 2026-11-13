@@ -51,17 +51,25 @@ async function networkChecks(E, intel, facts, judged, ctx) {
     const ageDomains = [...signInOf.keys()].sort((a, b) => rank(b) - rank(a)).slice(0, LINK_AGE_LOOKUPS);
     const senderReg = senderDomain && !personal && !ours(senderDomain) ? E.registrableDomain(senderDomain) : '';
     const listHit = (u) => intel.feeds.urlHit(u, { exactOnly: ours(hostOf(u)) }).catch(() => null);
+    // Spamhaus's DBL and ZRD (0.5.37; off by default): the sender's domain first, then the link sites (full
+    // host names), the ones about signing in or paying first, at most 6 (src/intel/spamhaus.js; nothing when off).
+    const shHosts = [...new Set(web.map(j => hostOf(j.finalUrl || j.url)).filter(h => h && signInOf.has(E.registrableDomain(h))))]
+        .sort((a, b) => rank(E.registrableDomain(b)) - rank(E.registrableDomain(a)));
+    const shDomains = [senderReg ? senderDomain : '', ...shHosts].filter(Boolean);
 
-    const [hostResults, urlResults, ages, senderAge, senderOnList, senderDomainListed, linkListed] = await Promise.all([
+    const [hostResults, urlResults, ages, senderAge, senderOnList, senderDomainListed, linkListed, shResults] = await Promise.all([
         intel.threats ? intel.threats.checkHosts(hosts) : new Map(),
         intel.threats && (!intel.threats.enabled || intel.threats.enabled.safeBrowsing) ? intel.threats.checkUrls(web.map(j => ({ url: j.finalUrl && j.finalUrl !== j.url ? j.finalUrl : j.url, text: j.text })).concat(web.filter(j => j.finalUrl && j.finalUrl !== j.url).map(j => ({ url: j.url, text: j.text })))) : new Map(),
         intel.rdap ? Promise.all(ageDomains.map(async d => ({ domain: d, days: await intel.rdap.ageDays(d).catch(() => null), signIn: signInOf.get(d) }))) : [],
         intel.rdap && senderReg ? intel.rdap.ageDays(senderReg).catch(() => null) : null,
         intel.feeds && facts.senderAddress ? intel.feeds.addressHit(facts.senderAddress).catch(() => null) : null,
         intel.feeds && senderDomain && !personal && !ours(senderDomain) ? intel.feeds.domainHit(senderDomain).catch(() => null) : null,
-        intel.feeds ? Promise.all(web.map(async j => [j, (await listHit(j.finalUrl || j.url)) || (j.finalUrl && j.finalUrl !== j.url ? await listHit(j.url) : null)])) : []
+        intel.feeds ? Promise.all(web.map(async j => [j, (await listHit(j.finalUrl || j.url)) || (j.finalUrl && j.finalUrl !== j.url ? await listHit(j.url) : null)])) : [],
+        intel.spamhaus && shDomains.length ? intel.spamhaus.checkDomains(shDomains).catch(() => new Map()) : new Map()
     ]);
     checks.lists = !!intel.feeds;
+    if (shResults.size) checks.spamhaus = shResults.size;
+    const shOf = (u) => { const h = hostOf(u); return h ? shResults.get(h) : null; };
 
     // Links: the first finding that flags one makes it dangerous. A community report (a list whose confidence
     // is 'report', such as TweetFeed: 0.5.21) only marks it for caution, and counts as a sign below.
@@ -73,6 +81,8 @@ async function networkChecks(E, intel, facts, judged, ctx) {
         for (const u of [j.finalUrl, j.url]) { const r = u && urlResults.get(u); if (r && r.verdict === 'unsafe') found.push(r.reason); }
         const listed = (linkListed.find(([x]) => x === j) || [])[1];
         if (listed && !isReport(listed)) found.push(`listed as phishing by ${listed}`);
+        const sh = shOf(j.finalUrl || j.url) || shOf(j.url);
+        if (sh && sh.dbl && sh.dbl.severity === 'danger') found.push(`listed by Spamhaus's Domain Blocklist (${sh.dbl.list})`);
         if (found.length) { j.severity = 'danger'; j.reason = found[0]; j.network = true; }
         else if (listed) {
             reported.push({ j, by: listed });
@@ -106,6 +116,19 @@ async function networkChecks(E, intel, facts, judged, ctx) {
         signals.push({ weight: 1, kind: 'mailer-link', text: `${n === 1 ? `A link shows ${s.text} but goes` : `${n} links show another site but go`} through the click tracker of ${s.mailer} (${s.host}), the mail service that sent this email, with a clean reputation: where ${n === 1 ? 'it leads' : 'they lead'} isn't known until clicked. A warning: it takes other signs to move the email.` });
     }
     if (senderOnList) signals.push({ weight: 5, kind: 'scam-sender-list', text: `The sender's address is on a list of known scam senders (${senderOnList}).` });
+    // Spamhaus (0.5.37): the sender's domain on the DBL (phishing, malware, botnet control: strong; spam: a
+    // sign), or first seen in the last 24 hours (ZRD); a link site on the DBL for spam, or brand new.
+    const shSender = senderReg ? shResults.get(senderDomain) : null;
+    if (shSender && shSender.dbl && shSender.dbl.severity === 'danger') signals.push({ weight: 5, kind: 'sender-domain-listed', text: `The sender's domain ${senderDomain} is on Spamhaus's Domain Blocklist (${shSender.dbl.list}).` });
+    else if (shSender && shSender.dbl) signals.push({ weight: shSender.dbl.severity === 'spam' ? 2 : 1, kind: 'sender-domain-spam', text: `The sender's domain ${senderDomain} is on Spamhaus's Domain Blocklist (${shSender.dbl.list}).` });
+    if (shSender && typeof shSender.zrdHours === 'number') signals.push({ weight: 3, kind: 'zrd-sender', text: `The sender's domain ${senderDomain} was first seen on the internet ${shSender.zrdHours <= 2 ? 'less than 2' : `about ${shSender.zrdHours}`} hours ago (Spamhaus's Zero Reputation Domains): phishing often comes from brand-new domains.` });
+    const shLinks = [...shResults.entries()].filter(([d]) => d !== senderDomain);
+    const shAbused = shLinks.find(([, r]) => r.dbl && r.dbl.severity === 'abused' && /phishing|malware|botnet/.test(r.dbl.list));
+    if (shAbused) signals.push({ weight: 3, kind: 'spamhaus-abused-link', text: `A link goes to ${shAbused[0]}, ${shAbused[1].dbl.list}, says Spamhaus's Domain Blocklist.` });
+    const shSpam = shLinks.find(([, r]) => r.dbl && (r.dbl.severity === 'spam' || (r.dbl.severity === 'abused' && !/phishing|malware|botnet/.test(r.dbl.list))));
+    if (shSpam) signals.push({ weight: 2, kind: 'spamhaus-spam-link', text: `A link goes to ${shSpam[0]}, on Spamhaus's Domain Blocklist (${shSpam[1].dbl.list}).` });
+    const shNew = shLinks.find(([, r]) => typeof r.zrdHours === 'number');
+    if (shNew) signals.push({ weight: 2, kind: 'zrd-link', text: `A link goes to ${shNew[0]}, first seen on the internet ${shNew[1].zrdHours <= 2 ? 'less than 2' : `about ${shNew[1].zrdHours}`} hours ago (Spamhaus's Zero Reputation Domains).` });
     const sd = hostResults.get(senderDomain);
     if (sd && sd.verdict === 'unsafe') signals.push({ weight: 5, kind: 'sender-domain-blocked', text: `The sender's domain ${senderDomain} is blocked by Cloudflare Security as malware or phishing.` });
     else if (senderDomainListed && isReport(senderDomainListed)) signals.push({ weight: 2, kind: 'sender-domain-reported', text: `The sender's domain ${senderDomain} was reported as phishing or malware by ${senderDomainListed} (community reports).` });

@@ -94,6 +94,22 @@ email and whether it had been opened.
 Logs can take a few hours to show a click: each re-checked email is looked at again every 3 hours, 4 times.
 A click found is an alert (docs/ALERTS.md, "A link was clicked").
 
+### Spamhaus and abuse.ch (optional, off by default)
+
+Two more free services can add to the checks once the service runs; neither is needed (0.5.37). Each is
+turned on on its own Settings page with a key the district gets itself, kept in Secret Manager only:
+
+- **Spamhaus** (Settings → Spamhaus): its free Data Query Service looks up each email's sender domain and link
+  sites in the Domain Blocklist and Zero Reputation Domains. Ask for a free DQS account at
+  https://www.spamhaus.com/data-access/free-data-query-service/ (for non-commercial small organizations, at
+  most 100,000 lookups a day; Spamhaus checks who you are: confirm the district qualifies, with its own key).
+  The service stops for the day at `SPAMHAUS_DAILY_MAX` (90,000).
+- **abuse.ch** (Settings → abuse.ch): URLhaus and ThreatFox, downloaded once a day. Get a free Auth-Key at
+  https://auth.abuse.ch/ (not-for-profit use).
+
+Paste the key with the project ID: it is tested first, then saved. An installation from before 0.5.37 runs
+`bash deploy/upgrade.sh` once to set up the two secrets.
+
 ## 3. A Google Cloud project
 
 1. In [console.cloud.google.com](https://console.cloud.google.com), create a **new project** in your

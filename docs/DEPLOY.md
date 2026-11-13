@@ -48,10 +48,11 @@ The service works fully without it. From 0.5.23 an admin adds its API key and tu
 **Settings → Safe Browsing**, which also lists what it adds and the steps to get a key. `install.sh` sets up
 what that needs:
 - the Secret Manager and Safe Browsing APIs;
-- the secret `spruce-safe-browsing-key` (empty until an admin saves a key), and on that secret only, for
+- the secrets `spruce-safe-browsing-key`, and from 0.5.37 `spruce-spamhaus-key` and `spruce-abusech-key` (each empty until an admin saves a key), and on those secrets only, for
   `spruce-run`: `roles/secretmanager.secretAccessor`, `roles/secretmanager.secretVersionAdder` and
   `roles/secretmanager.secretVersionManager`;
-- `SAFE_BROWSING_SECRET=projects/PROJECT/secrets/spruce-safe-browsing-key` on both services.
+- `SAFE_BROWSING_SECRET=projects/PROJECT/secrets/spruce-safe-browsing-key`, `SPAMHAUS_SECRET=…/spruce-spamhaus-key` and
+  `ABUSECH_SECRET=…/spruce-abusech-key` on both services.
 
 The key is tried with Google before it is saved, kept only in Secret Manager, and never shown again. To make
 a key from Cloud Shell instead of the console (paste what it prints on Settings → Safe Browsing):
@@ -362,6 +363,9 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |
 | `SAFE_BROWSING_SECRET` | set by install.sh | the Secret Manager secret holding the Safe Browsing API key that an admin saves on Settings → Safe Browsing (0.5.23) |
 | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off by default. Turned on and off on Settings → Safe Browsing; `SAFE_BROWSING=true` with `SAFE_BROWSING_KEY` is the older way, for an install without the secret |
+| `SPAMHAUS_SECRET`, `ABUSECH_SECRET` | set by install.sh | the Secret Manager secrets holding the keys an admin saves on Settings → Spamhaus and Settings → abuse.ch (0.5.37) |
+| `SPAMHAUS`, `ABUSECH` | `false` | Spamhaus's DQS lookups and abuse.ch's lists: off by default; turned on and off on their Settings pages (policy settings) once a key is saved |
+| `SPAMHAUS_DAILY_MAX` | `90000` | Spamhaus lookups a day at most, for every instance together, 1,000 to 100,000 (the free service's fair use is 100,000) |
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
 | `RETENTION_DAYS` | `35` | days each email's record (and its checked-message marker, and Activity entries) is kept, 14 to 365; also on the dashboard (Settings → Policy). Each document gets its `expireAt` when written, from the value in force then, and Firestore's TTL policies delete it on that date: the oldest go first, never all at once. A lower value also reaches documents already written: the hourly cleanup deletes what is older (within 30 s a run). A higher one applies to documents written from then on |

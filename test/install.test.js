@@ -386,6 +386,12 @@ test('0.5.23: install.sh sets up Secret Manager for the Safe Browsing key: the A
         }
         assert.ok(!has(r.calls, /projects add-iam-policy-binding .*secretmanager/), 'never a project-wide Secret Manager role');
         for (const s of ['spruce-worker', 'spruce-admin']) assert.match(fs.readFileSync(path.join(w.fake, `env-${s}.yaml`), 'utf8'), /SAFE_BROWSING_SECRET: "?projects\/test-proj\/secrets\/spruce-safe-browsing-key/, s);
+        // 0.5.37: the same for Spamhaus's and abuse.ch's keys.
+        for (const [secret, env] of [['spruce-spamhaus-key', 'SPAMHAUS_SECRET'], ['spruce-abusech-key', 'ABUSECH_SECRET']]) {
+            assert.ok(has(r.calls, new RegExp(`^gcloud secrets create ${secret} --replication-policy=automatic`)), secret);
+            for (const role of ['secretAccessor', 'secretVersionAdder', 'secretVersionManager']) assert.ok(has(r.calls, new RegExp(`^gcloud secrets add-iam-policy-binding ${secret} --member=serviceAccount:spruce-run@test-proj\\.iam\\.gserviceaccount\\.com --role=roles/secretmanager\\.${role}`)), `${secret} ${role}`);
+            for (const s of ['spruce-worker', 'spruce-admin']) assert.match(fs.readFileSync(path.join(w.fake, `env-${s}.yaml`), 'utf8'), new RegExp(`${env}: "?projects/test-proj/secrets/${secret}`), `${s} ${env}`);
+        }
         // Already there (a later install): not made again; its roles granted again (harmless).
         const again = w.run('install.sh', { FAKE_SECRET: 'exists' });
         assert.equal(again.code, 0, again.out);

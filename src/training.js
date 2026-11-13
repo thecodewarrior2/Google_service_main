@@ -1,4 +1,7 @@
 'use strict';
+// What abuse.ch's and Spamhaus's data found is never exported for retraining (0.5.37): their terms don't allow
+// it to train or improve an AI model. Such a link's finding is left empty.
+const NO_TRAINING_RE = /URLhaus|ThreatFox|abuse\.ch|Spamhaus/i;
 // The retraining export (Status → Model health → "Download for retraining"; off until an admin allows it in
 // Settings). The emails an admin marked (confirmed as phishing; with a tick, false alarms too) are read
 // from Gmail at the moment of the download, one per campaign, and each becomes one line of the
@@ -211,7 +214,7 @@ function deidentify(aiFacts, { people = {}, mailbox = '', orgDomains = [], label
         senderName: dropSender ? (f.senderName ? SENDER : '') : clean(cut(f.senderName, 80)),
         senderAddress: sender ? `${E.isSharedMailbox(sender) ? local : 'sender'}@${replaceOrg(domain, orgDomains)}` : '',
         auth: f.auth && f.auth.dmarc ? { dmarc: f.auth.dmarc } : null,
-        links: (f.links || []).slice(0, 8).map(l => ({ text: clean(cut(l.text, 60)), host: replaceOrg(l.host || '', orgDomains), destHost: replaceOrg(l.destHost || '', orgDomains), finding: clean(l.finding || '', { names: false, mark: false }) })),
+        links: (f.links || []).slice(0, 8).map(l => ({ text: clean(cut(l.text, 60)), host: replaceOrg(l.host || '', orgDomains), destHost: replaceOrg(l.destHost || '', orgDomains), finding: clean(NO_TRAINING_RE.test(l.finding || '') ? '' : l.finding || '', { names: false, mark: false }) })),
         bodyText: clean(cut(f.bodyText, BODY_CHARS))
     };
     if (f.org) out.org = f.org;
