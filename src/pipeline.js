@@ -341,7 +341,8 @@ class Service {
                 const p = await this.gmail.profile(user);
                 const after = Math.max(Number(u.lastNotification) || 0, this.now() - 7 * DAY);
                 await this.store.putUser(user, Object.assign({ historyId: String(p.historyId), backfill: { after, pageToken: null, checked: 0 } }, noted));
-                await this.store.addEvent({ kind: 'gap', missed: true, user, text: `Changes to ${user}'s mailbox were missed (history too old). Checking resumed from now, and the Inbox mail since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too.` });
+                // (0.5.32: said plainly, as the alert does; "missed" read as "emails missed")
+                await this.store.addEvent({ kind: 'gap', missed: true, user, text: `The service fell behind on ${user}'s mailbox: Gmail no longer had the list of what changed there since the service last looked (it keeps about a week). New mail is checked from now on, and the mail still in the Inbox since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too, a batch at a time; mail deleted or moved out of the Inbox meanwhile isn't. Not a problem when it happens now and then (docs/ALERTS.md, "The service fell behind").` });
                 await this.gapCheck(user).catch(e => this.log.error('counting the gaps:', e));
                 return { resynced: true };
             }
@@ -769,7 +770,7 @@ class Service {
     }
     async gmailTrouble(e, user) {
         if (!Service.isGmailAccessError(e)) return false;
-        return this.alertDaily('gmail-access', `Gmail refused the service for ${user} (${String((e && e.message) || e).slice(0, 200)}): new mail there isn't checked. Usually the domain-wide delegation was removed or its scopes changed (Admin console → Security → API controls → Domain-wide delegation; docs/INSTALL.md, step 3). bash deploy/doctor.sh checks the rest.`).catch(() => false);
+        return this.alertDaily('gmail-access', `Gmail refused the service for ${user} (${String((e && e.message) || e).slice(0, 200)}): new mail there isn't checked. Usually the domain-wide delegation was removed or its scopes changed: Admin console → Security → Access and data control → API controls → Manage Domain Wide Delegation (docs/INSTALL.md, step 3). bash deploy/doctor.sh checks the rest. More: docs/ALERTS.md, "Gmail refused the service".`).catch(() => false);
     }
     // An alert at most once a day (per kind and UTC day, whichever instance sees it first): for a problem that
     // lasts (a lookup service down, the AI model not loading). key: once a day per key instead (a mailbox).
@@ -785,7 +786,7 @@ class Service {
     // days (its watch, or a bug). Both are settings (GAPS_ALERT_DAY, GAPS_ALERT_MAILBOX).
     async gapCheck(user) {
         const now = this.now();
-        const missed = (e) => e.kind === 'gap' && (e.missed === true || /were missed \(history too old\)/.test(String(e.text || '')));
+        const missed = (e) => e.kind === 'gap' && (e.missed === true || /were missed \(history too old\)|fell behind on/.test(String(e.text || '')));
         const week = (await this.store.listEvents(now - 7 * DAY, { limit: 5000 })).filter(missed);
         const day = week.filter(e => e.at >= now - DAY);
         const mine = week.filter(e => e.user === user);
@@ -793,10 +794,20 @@ class Service {
         const out = { day: day.length, mailbox: mine.length, alerted: [] };
         if (day.length >= perDay) {
             const boxes = new Set(day.map(e => e.user)).size;
-            if (await this.alertDaily('gaps', `Changes were missed ${day.length} times in the last 24 hours, in ${boxes} mailbox${boxes === 1 ? '' : 'es'} (Gmail's history for them had run out, so the service caught up on their Inbox instead). One now and then is normal; this many means Gmail's notifications weren't processed for days: the worker down or failing, Pub/Sub backing up, or a bug. Status → Service status and Activity → Errors and gaps say more; bash deploy/doctor.sh checks the rest.`)) out.alerted.push('gaps');
+            if (await this.alertDaily('gaps', `The service fell behind on ${boxes} mailbox${boxes === 1 ? '' : 'es'} in the last 24 hours (${day.length} time${day.length === 1 ? '' : 's'}). `
+                + `What happened: Gmail no longer had the list of what changed in ${boxes === 1 ? 'that mailbox' : 'those mailboxes'} since the service last looked (it keeps about a week), so the service started again from now and is checking the mail still in each Inbox from that time. `
+                + `What it means for mail: new mail reached those Inboxes before it was checked; mail still in the Inbox is being checked now, but mail already deleted or moved out of the Inbox wasn't. `
+                + `Why: once in a while is normal, after an outage. This many usually means Gmail's notifications weren't being processed for days (the worker stopped or kept failing, Pub/Sub backed up), or a bug. `
+                + `What to do: 1) Status → Service status: are the worker, the jobs and the notifications all right now? 2) Status → Activity → Errors and gaps: since when? 3) In Cloud Shell: bash deploy/doctor.sh. If you know why (an outage, a long upgrade), nothing more is needed: the service catches up by itself ("Caught up on …" in Activity). `
+                + `More: docs/ALERTS.md, "The service fell behind".`)) out.alerted.push('gaps');
         }
         if (mine.length >= perMailbox) {
-            if (await this.alertDaily('gaps-mailbox', `Changes to ${user}'s mailbox were missed ${mine.length} times in the last 7 days. Once in a while is normal; this often is probably a problem with that mailbox's watch (Settings → Mailboxes: when Gmail last said it changed) or a bug. Activity → Errors and gaps lists each one.`, { user }, { key: `gaps-${senderHash(user)}` })) out.alerted.push('gaps-mailbox');
+            if (await this.alertDaily('gaps-mailbox', `The service fell behind on ${user}'s mailbox ${mine.length} times in the last 7 days. `
+                + `What happened: each time, Gmail no longer had the list of what changed in that mailbox since the service last looked, so the service started again and checked the mail still in its Inbox. `
+                + `What it means for mail: mail that arrived meanwhile reached the Inbox before it was checked; mail deleted or moved out of the Inbox meanwhile wasn't checked. `
+                + `Why: once in a while is normal; this often for one mailbox usually means Gmail stops notifying the service about it, a problem with that account, or a bug. Other mailboxes aren't affected unless they have their own alert. `
+                + `What to do: 1) Settings → Mailboxes: when did Gmail last notify the service about it? 2) Settings → Mailboxes → Update group membership now (it renews every watch). 3) Admin console → Users: is the account active, licensed, with Gmail on? If it goes on, it may be a bug: note the mailbox and the times (Status → Activity, search for it). `
+                + `More: docs/ALERTS.md, "The service fell behind on one mailbox".`, { user }, { key: `gaps-${senderHash(user)}` })) out.alerted.push('gaps-mailbox');
         }
         return out;
     }

@@ -396,7 +396,7 @@ alerts() {
     ALERT_CHANNEL="$channel"
     policy "SPRUCE Mail Protection Service: an alert from the service" 'resource.type=\"cloud_run_revision\" AND jsonPayload.spruceAlert:*' \
         '{ "alert": "EXTRACT(jsonPayload.spruceAlert)", "message": "EXTRACT(jsonPayload.message)" }' \
-        "The service reported something to look at: the message says what. Open the dashboard (Overview, Activity)." "$channel" || return 1
+        "The service reported something to look at: the message says what happened, what it means for mail, and what to do. docs/ALERTS.md (in the folder you installed from, or the release repository) explains every alert. The dashboard lists them: Status → Activity → Alerts." "$channel" || return 1
     policy "SPRUCE Mail Protection Service: a scheduled job failed" 'resource.type=\"cloud_scheduler_job\" AND severity>=ERROR AND resource.labels.job_id:\"spruce-\"' \
         '{ "job": "EXTRACT(resource.labels.job_id)", "why": "EXTRACT(jsonPayload.debugInfo)" }' \
         "A scheduled job couldn't reach the worker. If it says 401 or 403, see docs/INSTALL.md, Troubleshooting, The jobs and notifications are refused." "$channel" || return 1

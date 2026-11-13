@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.32: Clearer gap alerts, and docs/ALERTS.md explains every alert
+
+- **"Changes were missed" is now "The service fell behind".** "Missed" read as "emails missed". Each gap
+  alert, and the note in Activity, now says in turn what happened (Gmail's list of what changed in a mailbox
+  ran out before the service read it), what it means for mail (it reached the Inbox before it was checked;
+  what is still in the Inbox is checked now; what was deleted or moved out meanwhile isn't), why it can
+  happen, and numbered steps for what to do.
+- **docs/ALERTS.md (new):** every alert the admins can receive, grouped by what it is about, each with
+  when, what it means for mail, and what to do. Linked from the README, docs/INSTALL.md (Troubleshooting)
+  and the alert email itself (the alert policy's text, updated by the next `install.sh`).
+- "Gmail refused the service" names the Admin console's path exactly as docs/INSTALL.md does.
+
 ## 0.5.31: Missed changes, again and again, are an alert
 
 A mailbox's changes are "missed" when Gmail's history for it has run out (it keeps about a week) before the

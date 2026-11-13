@@ -79,7 +79,8 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   Inbox: the service's rules never move a suspicious email, an admin's decision can. Nothing is ever
   withheld from a mailbox. The counters are spread so one busy
   campaign doesn't make every move wait for one Firestore document; the daily stats are spread too.
-- **Alerts.** An alert is a problem the admins are emailed about (0.5.28). The service logs each one as a
+- **Alerts.** An alert is a problem the admins are emailed about (0.5.28; docs/ALERTS.md says what each means
+  and what to do). The service logs each one as a
   structured line (`spruceAlert`, `message`) and adds it to Activity → Alerts; Cloud Monitoring emails them,
   and any failed Cloud Scheduler job, to `ALERT_EMAIL` (log-based alert policies made by `deploy/install.sh`).
   They are: a phishing list that missed its download; Cloudflare Security or Safe Browsing whose every

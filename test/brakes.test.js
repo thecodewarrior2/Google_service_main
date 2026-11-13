@@ -201,7 +201,7 @@ test('after a gap in the history, the Inbox mail since the last notification is 
     assert.deepEqual(await svc.handleNotification({ emailAddress: u, historyId: '5' }), { resynced: true });
     const b = (await store.getUser(u)).backfill;
     assert.equal(b.after, last);
-    assert.match((await store.listEvents()).find(e => e.kind === 'gap').text, /the Inbox mail since .* is being checked too/);
+    assert.match((await store.listEvents()).find(e => e.kind === 'gap').text, /^The service fell behind on .*: Gmail no longer had the list of what changed there .* the mail still in the Inbox since .* is being checked too/);
     assert.equal((await store.listEvents()).find(e => e.kind === 'gap').missed, true, '0.5.31: counted toward the gap alerts');
     // Pages of 25 from the search, then done.
     const ids = Object.keys(boxes[u]);

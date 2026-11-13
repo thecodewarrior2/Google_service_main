@@ -486,6 +486,17 @@ Details).
 
 ## Troubleshooting
 
+**An alert email:** each alert's message says what happened, what it means for mail and what to do;
+[docs/ALERTS.md](ALERTS.md) explains every one, with more detail. Two that are easy to misread:
+- **"The service fell behind on N mailboxes"** (or on one mailbox): Gmail's list of what changed in a
+  mailbox ran out (it keeps about a week) before the service read it, so the service started again and is
+  checking the mail still in the Inbox. Mail that arrived meanwhile reached the Inbox before it was checked.
+  Once in a while is normal (after an outage); the alert comes only when it happens often: 10 times in 24
+  hours across the organization, or 3 times in 7 days for one mailbox (`GAPS_ALERT_DAY`,
+  `GAPS_ALERT_MAILBOX`).
+- **"Gmail refused the service"**: usually the domain-wide delegation was removed or changed; until it is
+  back, new mail isn't checked.
+
 - **Start with Status → Service status** in the dashboard. In Cloud Shell, `bash deploy/doctor.sh` checks the
   rest (the subscription, Gmail's permission to publish, the jobs, the alert policies, recent errors)
   and says what to run.

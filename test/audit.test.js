@@ -169,7 +169,7 @@ test('0.5.31: missed changes now and then are only noted; many in a day, or one 
     assert.equal(warned.length, 0, 'nine in a day: noted only');
     const tenth = await gap(`u9@${ORG}`);
     assert.deepEqual([tenth.day, tenth.alerted], [10, ['gaps']]);
-    assert.match(warned[0].message, /^Changes were missed 10 times in the last 24 hours, in 10 mailboxes/);
+    assert.match(warned[0].message, /^The service fell behind on 10 mailboxes in the last 24 hours \(10 times\)\. What happened: .* What it means for mail: new mail reached those Inboxes before it was checked; .* What to do: 1\) Status → Service status/);
     await gap(`u10@${ORG}`);
     assert.equal(warned.filter(w => w.spruceAlert === 'gaps').length, 1, 'once a day');
     // One mailbox, three times in 7 days (an older one written before 0.5.31 counts by its text): its own alert, per mailbox.
@@ -178,7 +178,7 @@ test('0.5.31: missed changes now and then are only noted; many in a day, or one 
     assert.equal(warned.filter(w => w.spruceAlert === 'gaps-mailbox').length, 0);
     const third = await gap(`a@${ORG}`);
     assert.deepEqual(third.alerted, ['gaps-mailbox']);
-    assert.match(warned.find(w => w.spruceAlert === 'gaps-mailbox').message, /^Changes to a@maple-schools\.example's mailbox were missed 3 times in the last 7 days/);
+    assert.match(warned.find(w => w.spruceAlert === 'gaps-mailbox').message, /^The service fell behind on a@maple-schools\.example's mailbox 3 times in the last 7 days\. What happened: .* What to do: 1\) Settings → Mailboxes/);
     for (let i = 0; i < 3; i++) await gap(`b@${ORG}`);
     assert.equal(warned.filter(w => w.spruceAlert === 'gaps-mailbox').length, 2, 'another mailbox: its own alert the same day');
     await gap(`a@${ORG}`);
@@ -188,4 +188,15 @@ test('0.5.31: missed changes now and then are only noted; many in a day, or one 
     await strict.store.addEvent({ kind: 'gap', missed: true, user: `c@${ORG}`, at: now, text: 'missed' });
     assert.deepEqual((await strict.gapCheck(`c@${ORG}`)).alerted, ['gaps-mailbox']);
     assert.equal(cfgOf({ GAPS_ALERT_DAY: '0' }).gapsAlertDay, 1);
+});
+
+test('0.5.32: docs/ALERTS.md explains every alert the service can send', () => {
+    const fs = require('fs'), path = require('path');
+    const root = path.join(__dirname, '..');
+    const doc = fs.readFileSync(path.join(root, 'docs', 'ALERTS.md'), 'utf8');
+    const src = ['src/pipeline.js', 'src/server.js', 'src/update.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
+    const kinds = new Set([...src.matchAll(/\b(?:alert|alertDaily)\(\s*'([a-z-]+)'/g), ...src.matchAll(/spruceAlert: '([a-z-]+)'/g), ...src.matchAll(/once\('\w+AlertAt', '([a-z-]+)'/g)].map(m => m[1]));
+    for (const k of ['cloudflare-down', 'safeBrowsing-down']) kinds.add(k);   // (raised through the lookups' helper: `${name}-down`)
+    assert.ok(kinds.size >= 20, [...kinds].join(' '));
+    for (const k of kinds) assert.ok(doc.includes(`\`${k}\``), `docs/ALERTS.md explains the "${k}" alert`);
 });
