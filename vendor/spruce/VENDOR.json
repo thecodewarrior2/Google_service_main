@@ -9,7 +9,7 @@
     "ai.js"
   ],
   "synced": "2026-11-10",
-  "note": "The checks and the code that run the model (shared.js, decoders.js, ai.js) began as the extension's files at the commit above and are this project's own code since 0.4.0 (changed here, with tests). The AI model (phish-tiny) comes from TinyPhishLLM, the model's own public repository: modelSource pins the commit and each file's SHA-256 (tools/sync-model.js), and tools/fetch-model.js downloads the files when the image is built or the tests run. phish-tiny 0.13.0 was trained with the extension's training tools at 9292388 plus a district's own de-identified examples (docs/RETRAINING.md), which are not in any repository.",
+  "note": "The checks and the code that run the model (shared.js, decoders.js, ai.js) began as the extension's files at the commit above and are this project's own code since 0.4.0 (changed here, with tests); what only the extension used (its pages, settings, storage, webmail layouts, sender pictures) was removed in 0.5.20. The AI model (phish-tiny) comes from TinyPhishLLM, the model's own public repository: modelSource pins the commit and each file's SHA-256 (tools/sync-model.js), and tools/fetch-model.js downloads the files when the image is built or the tests run. phish-tiny 0.13.0 was trained with the extension's training tools at 9292388 plus a district's own de-identified examples (docs/RETRAINING.md), which are not in any repository.",
   "modelSource": {
     "repository": "https://github.com/thecodewarrior2/TinyPhishLLM",
     "commit": "68f8dd69dd854e6cedfdd893a4dfbd87251d26f6",

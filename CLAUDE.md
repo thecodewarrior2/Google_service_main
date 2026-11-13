@@ -29,8 +29,9 @@ in `Google_service_main`). Then follow its section below.
   are made up (the `maple-schools.example` district). Reported emails are paraphrased with made-up names.
 - The engine in `vendor/spruce/` (the checks and the code that runs the AI model) began as a copy of the
   S.P.R.U.C.E+ browser extension's files. Since 0.4.0 it is this project's own code: change it here, with
-  tests. A change to the model's arithmetic must keep its answers (compare them on many made-up emails
-  before and after).
+  tests. It holds only what the service uses (the extension's own parts were removed in 0.5.20): don't
+  copy extension-only code (pages, settings, storage, webmail layouts) back in. A change to the model's
+  arithmetic must keep its answers (compare them on many made-up emails before and after).
 - **The AI model comes from TinyPhishLLM**, the model's own public repository, which the extension uses
   too; its training (scripts, examples, check sets) is in the private TinyPhishLLM_Private_Training.
   `vendor/spruce/VENDOR.json` (`modelSource`) pins one TinyPhishLLM commit and each file's SHA-256, and

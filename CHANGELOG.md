@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.20: The extension's own code removed from the engine
+
+No change in how mail is judged (every test, and the AI model's reference answers, the same).
+
+- `vendor/spruce/` began as a copy of the browser extension's files and still carried what only the
+  extension uses: its settings and their backups, storage, webmail page layouts (`WEBMAIL_SITES`), sender
+  pictures and their colors, conflicts with other extensions, phishing-simulation rules, outgoing-mail
+  checks, attachment readers, country flags, its own network calls, and the code that edits its own pages.
+  Everything the service can't reach is removed: 153 top-level declarations, about 1,900 lines
+  (`shared.js` 3,092 → about 1,330 lines; `decoders.js` 665 → 607). Found with a parser from what
+  `src/engine/spruce.js` takes, not by hand.
+- The extension's release switches for its 5.90 company matching (`COMPANY_MATCHING`) are folded in:
+  always on here, as they were.
+- `src/engine/spruce.js` runs the engine with the language's own objects only (no stand-in "chrome" or
+  "fetch"), and Gmail's receiving server (`mx.google.com`) is a constant instead of a look-up in the
+  webmail layouts.
+
+
 ## 0.5.19: The sending mail service known from the email's signature, not a list
 
 - 0.5.18's hand-kept list of marketing mail services is gone. The service that sent a newsletter is

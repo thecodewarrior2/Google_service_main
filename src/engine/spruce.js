@@ -3,9 +3,9 @@
 //
 // vendor/spruce/ holds shared.js, decoders.js, ai.js and the model (models/phish-tiny). They began as the
 // S.P.R.U.C.E+ browser extension's files (VENDOR.json says from which commit); since 0.4.0 they are this
-// project's own code, changed here. They are plain JavaScript written for the browser; they run here in a
-// separate context with the few browser things they use (URL, TextDecoder, a stand-in "chrome"), as the
-// extension's unit tests ran them in Node.
+// project's own code, changed here. They are plain JavaScript; they run here in a separate context with the
+// language's own objects (URL, TextDecoder…). What only the extension used (its pages, settings, storage,
+// webmail layouts, sender pictures) was removed in 0.5.20.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -17,13 +17,9 @@ let engine = null;
 
 function load() {
     if (engine) return engine;
-    const ctx = {
-        console, URL, URLSearchParams, TextDecoder, TextEncoder, atob, btoa, setTimeout, clearTimeout, Intl, BigInt,
-        // shared.js asks chrome.runtime.getURL for its own files; nothing else of "chrome" is used here.
-        chrome: { runtime: { id: 'spruce-service', getURL: (p) => p, lastError: null } },
-        // decoders.js may look at the network only through functions the service never calls.
-        fetch: async () => { throw new Error('the engine does not use the network'); }
-    };
+    // Only the language's own objects: the extension's browser-only code (pages, storage, its own network
+    // calls, webmail layouts) was removed from vendor/spruce in 0.5.20, so nothing of "chrome" or "fetch" is used.
+    const ctx = { console, URL, URLSearchParams, TextDecoder, TextEncoder, atob, btoa, setTimeout, clearTimeout, Intl, BigInt };
     vm.createContext(ctx);
     for (const f of ['shared.js', 'decoders.js', 'ai.js']) {
         vm.runInContext(fs.readFileSync(path.join(VENDOR, f), 'utf8'), ctx, { filename: `vendor/spruce/${f}` });
@@ -85,8 +81,10 @@ function load() {
         redactForAi: fn('redactForAi'),
         maskRecipient: fn('maskRecipient'),
         isSharedMailbox: fn('isSharedMailbox'),
-        gmailReceiver: get(`(WEBMAIL_SITES.find(w => w.id === 'gmail') || { mail: { headers: {} } }).mail.headers.receiver || {}`),
-        builtinTrackers: get('typeof BUILTIN_TRACKER_SET !== "undefined" ? BUILTIN_TRACKER_SET : new Set()'),
+        // Gmail's receiving mail system, whose own Authentication-Results and delivery records can be trusted
+        // (the only thing the service needed from the extension's table of webmail page layouts).
+        gmailReceiver: Object.freeze({ host: 'mx.google.com', name: 'Gmail' }),
+        builtinTrackers: get('BUILTIN_TRACKER_SET'),
         SIGNAL_CAUTION_SCORE: get('SIGNAL_CAUTION_SCORE'),
         SIGNAL_FLAG_SCORE: get('SIGNAL_FLAG_SCORE')
     };
