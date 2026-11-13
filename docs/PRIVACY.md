@@ -75,6 +75,10 @@ And:
 - **the worker's AI engine:** the model, engine version and self-check of the newest worker instance
   (`state/engine-worker`), for Status. Nothing about any email.
 
+**Conversations:** for an email whose subject says it is a reply and that names an earlier email, the service asks
+Gmail how many emails its conversation (thread) holds in that mailbox (0.5.33: a fake reply chain). Only the
+number; nothing of the other emails is read.
+
 **Retention:** records and message IDs are deleted after `RETENTION_DAYS` (35 by
 default, 14 to 365; also changed on the dashboard, Settings → Policy). Activity entries (alerts, admins'
 actions, errors: mailbox addresses, sender domains and admins' addresses, never email text) are kept

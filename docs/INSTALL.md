@@ -215,6 +215,8 @@ When it finishes, it prints the **dashboard address**.
 - **Monitor for two to three weeks.**
   - Open the *Would be moved* emails: **Email → Review**.
   - Use **Mark false alarm** or **Confirm phishing** (keys **F** and **P**).
+  - Optional (off by default): **Settings → Policy → Suspicious label** puts the Gmail label
+    `SPRUCE/Suspicious` on those emails, so their readers see them, in monitor mode too; nothing is moved by it.
   - Also go through **Review → Suspicious, not moved** now and then: phishing among them is what the
     move rules miss. In enforce mode, **P** there moves the email to Spam.
   - Watch **Status → Model health**.

@@ -76,6 +76,11 @@ class GmailClient {
     insert(user, raw, labelIds = ['INBOX', 'UNREAD']) {
         return this.call(user, 'POST', '/messages', { query: { internalDateSource: 'dateHeader' }, body: { raw: Buffer.from(raw).toString('base64url'), labelIds } });
     }
+    // How many emails a conversation (thread) holds (0.5.33: a "RE:" answering nothing this mailbox has).
+    async threadSize(user, threadId) {
+        const r = await this.call(user, 'GET', `/threads/${encodeURIComponent(threadId)}`, { query: { format: 'minimal', fields: 'messages(id)' } });
+        return (r.messages || []).length;
+    }
     modify(user, id, add = [], remove = []) { return this.call(user, 'POST', `/messages/${encodeURIComponent(id)}/modify`, { body: { addLabelIds: add, removeLabelIds: remove } }); }
     // The id of a label of ours ("SPRUCE/Moved"), made if the mailbox doesn't have it yet.
     async labelId(user, name) {

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.33: Fake reply chains count; an optional Suspicious label; Workspace settings to pair with the service
+
+- **Fake reply chains** (a new sign, 2 points): an email whose subject says it is a reply ("RE:", and "AW:",
+  "SV:", "Antw:", "RIF:", "RES:"…, also after an "[EXTERNAL]" tag), from outside the organization or from a
+  sender never seen before, that answers nothing this mailbox has. Either it names no earlier email at all
+  (no In-Reply-To or References), or it names one but its Gmail conversation holds only this email. A common
+  invoice and payroll trick. It counts toward the rules' score: with a new outside sender it is amber; with
+  payment or "confirm today" wording it reaches the move rules. The conversation is looked up only for a
+  "RE:" that names an earlier email (Gmail's thread: the number of emails in it, nothing else). Not for a
+  platform's notification (a share is never a reply). `src/engine/replychain.js`.
+- **The Suspicious label** (Settings → Policy, **off by default**): when turned on, an email that is suspicious
+  but not moved gets the Gmail label `SPRUCE/Suspicious` (`SUSPICIOUS_LABEL_NAME`), so its reader sees it, in
+  monitor mode too. Nothing is moved by it. Marking the email a false alarm takes the label off; turning the
+  setting off labels no more (the ones labeled keep it). A policy setting: the project ID to change it, noted in
+  Activity.
+- **docs/WORKSPACE.md (new):** Google Workspace settings that work alongside the service. An outbound
+  recipient limit with an admin quarantine and a bypass address list catches a staff account taken over and
+  sending phishing to many outside people (internal mail is left alone: all-staff, school and grade lists
+  reach hundreds or thousands); Gmail's own Safety settings; DMARC for your own domain.
+- Not added, on purpose: a fixed list of payroll or bank-change phrases (too many false alarms with static
+  words); the AI model judges those in context, and more training will let rules and AI together decide.
+- Tests: `test/replychain.test.js`.
+
 ## 0.5.32: Clearer gap alerts, and docs/ALERTS.md explains every alert
 
 - **"Changes were missed" is now "The service fell behind".** "Missed" read as "emails missed". Each gap

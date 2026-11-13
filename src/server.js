@@ -70,7 +70,7 @@ const DEMO_PROJECT = 'demo-project';
 const POLICY_TRIES = 5, POLICY_LOCK_MS = 10 * 60 * 1000;
 // What a policy change is for, in Activity's words (a wrong project ID, 0.5.30).
 const POLICY_WHAT = { mode: 'the mode', aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', aiScansInside: 'whether the AI reads inside mail',
-    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', brakePerHour: 'the brake', timeZone: 'the time zone',
+    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', suspiciousLabel: 'the Suspicious label', brakePerHour: 'the brake', timeZone: 'the time zone',
     allowDomains: 'the allowlisted domains', allowAddresses: 'the allowlisted addresses', retentionDays: 'how long records are kept' };
 // The project ID a policy change must be confirmed with ('' when the dashboard doesn't know it).
 const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
@@ -381,7 +381,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const mb = await mailboxes();
             // (the list, for Settings → Mailboxes only: ?mailboxes=1)
             const listed = q && q.get && q.get('mailboxes') ? await store.listWatched(500) : null;
-            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, aiScansInside: cfg.aiScansInside, brakePerHour: cfg.brakePerHour,
+            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, aiScansInside: cfg.aiScansInside, suspiciousLabel: cfg.suspiciousLabel, suspiciousLabelName: cfg.suspiciousLabelName, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,

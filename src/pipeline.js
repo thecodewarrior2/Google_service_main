@@ -19,6 +19,7 @@ const { GoogleApiError } = require('./gmail/client');
 const { compareHistoryIds, movesForward } = require('./store/history');
 const { buildDigest, mime, isSummary, localParts } = require('./digest');
 const A = require('./dashboard/aggregate');
+const { looksLikeReply } = require('./engine/replychain');
 const training = require('./training');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -128,7 +129,7 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, rene
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 const LIST_KEYS = ['allowDomains', 'allowAddresses'];
 const MAX_ALLOWED = 500;
 const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -171,11 +172,11 @@ function policyValue(key, v, now = {}) {
         return Number.isFinite(n) && n >= 0.5 && n <= ceiling ? Math.round(n * 1000) / 1000
             : bad(`The AI suspicious line is from 50% to the move threshold (${pc(ceiling)}). To go higher, raise the move threshold first.`);
     }
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing') {
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel') {
         if (v === true || v === false) return v;
         const t = String(v).trim().toLowerCase();
         return ['on', 'true', 'yes', '1'].includes(t) ? true : ['off', 'false', 'no', '0'].includes(t) ? false
-            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.' }[key]);
+            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.', suspiciousLabel: 'The Suspicious label is on or off.' }[key]);
     }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
@@ -188,7 +189,7 @@ function policyWords(key, v) {
     if (key === 'aiThreshold' || key === 'aiSuspicious') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
     if (key === 'retentionDays') return `${Number(v)} days`;
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing') return v ? 'on' : 'off';
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel') return v ? 'on' : 'off';
     return String(v);
 }
 
@@ -304,6 +305,9 @@ class Service {
             : key === 'aiMovesInside' ? (value
                 ? `${by} turned on "AI alone moves inside mail" on the dashboard (${how}): an email from inside the organization that the AI scores ${policyWords('aiThreshold', this.cfg.aiThreshold)} or more is ${this.cfg.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode)'} on the AI score alone, as outside mail is. The AI reads inside mail for it.`
                 : `${by} turned off "AI alone moves inside mail" on the dashboard (${how}): the AI score alone no longer moves mail from inside the organization; the rules still can (a staff account taken over).${this.cfg.aiScansInside ? '' : ' The AI stops reading inside mail ("AI on inside mail" is off).'}`)
+            : key === 'suspiciousLabel' ? (value
+                ? `${by} turned on the Suspicious label on the dashboard (${how}): from now on, an email that is suspicious but not moved gets the label ${this.cfg.suspiciousLabelName} in its mailbox, so its reader sees it, in monitor mode too. Nothing is moved by it.`
+                : `${by} turned off the Suspicious label on the dashboard (${how}): no more emails get it; the ones that have it keep it.`)
             : key === 'safeBrowsing' ? (value
                 ? `${by} turned on Google Safe Browsing on the dashboard (${how}): the addresses of the links in each email are now also looked up with Google (without the part after "#", and one-time links without their query), within 30 seconds everywhere.`
                 : `${by} turned off Google Safe Browsing on the dashboard (${how}): links are no longer sent to Google. The saved key stays in Secret Manager until it is removed.`)
@@ -554,7 +558,8 @@ class Service {
         // The sender counts as new if it was on arrival (by now it isn't, and that would change the rules'
         // score, not the model or the checks): from the arrival's signs, kept with them after a re-scan.
         const firstTime = rec.arrival ? !!rec.arrival.firstTime : (rec.signals || []).some(x => x && x.kind === 'first-time');
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(rec.user), aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(rec.user), aiInside: this.aiReadsInside(),
+            threadSize: await this.threadSizeOf(rec.user, rec.threadId, facts) });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
         const ai = aiRecord(result.ai, this.cfg);
@@ -649,8 +654,9 @@ class Service {
         const shareReach = alreadyMoved ? 0 : await this.countShare(facts, user, now);
         // Allowlisted only with DMARC passing for the address (policy.js).
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        const threadSize = await this.threadSizeOf(user, msg.threadId, facts);
         const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !!who && !learning && now - first < DAY, intel: this.intel,
-            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), shareReach, aiInside: this.aiReadsInside() });
+            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), shareReach, aiInside: this.aiReadsInside(), threadSize });
         result.allowlistedUnverified = allowlisted && !verified;
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });
@@ -676,6 +682,12 @@ class Service {
         } else if (decision.action === 'would-move' && this.cfg.monitorLabel) {
             await this.gmail.modify(user, msg.id, [await this.gmail.labelId(user, this.cfg.monitorLabel)], []);
         }
+        // Suspicious, not moved: a label its reader sees, when the setting is on (0.5.33; off by default).
+        let labeled = false;
+        if (decision.action === 'flag' && this.cfg.suspiciousLabel) {
+            try { await this.gmail.modify(user, msg.id, [await this.gmail.labelId(user, this.cfg.suspiciousLabelName)], []); labeled = true; }
+            catch (e) { this.log.error(`suspicious label ${user} ${msg.id}:`, e); }
+        }
         const rec = {
             key: recordKey(user, msg.id), user, messageId: msg.id, threadId: msg.threadId || '',
             // The message's history id when it was read: an Inbox label added after it is the user's.
@@ -695,7 +707,8 @@ class Service {
             ownAddressUnverified: !!(result.ownAddress && !result.inside), userPlaced: userPlaced || undefined,
             // From inside the organization (your domains, DMARC passing), as the policy judged it (Model health).
             inside: !!result.inside,
-            state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null
+            state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null,
+            suspiciousLabel: labeled || undefined
         };
         await this.store.saveRecord(rec);
         await this.count(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
@@ -760,6 +773,12 @@ class Service {
     // policy change, an update started, a Safe Browsing key) isn't one: it is recorded in Activity → What
     // admins did, and not emailed.
     async adminNotice(kind, text, extra = {}) { await this.store.addEvent(Object.assign({ kind, text, admin: true }, extra)); }
+    // A "RE:" email's conversation size in this mailbox (0.5.33: a fake reply chain), only for one that names
+    // an earlier email (one that names none needs no look); null when unknown.
+    async threadSizeOf(user, threadId, facts) {
+        if (!threadId || !this.gmail.threadSize || !looksLikeReply(facts.subject) || !(facts.inReplyTo || (facts.references || []).length)) return null;
+        try { return await this.gmail.threadSize(user, threadId); } catch (e) { return null; }
+    }
     // Gmail refusing the service (0.5.29): domain-wide delegation removed or its scopes changed, the service
     // account's token refused. Every email then goes unchecked, while Gmail's notifications keep coming (so
     // the "quiet" alert never fires): the admins are told at once, then once a day while it lasts.
@@ -986,6 +1005,11 @@ class Service {
         if (!rec) return { error: 'not found' };
         let out = await this.store.updateRecord(key, { falseAlarm: !!falseAlarm, markedBy: by });
         if (falseAlarm && rec.falseAlarm !== true) await this.store.incStat(this.dayOf(this.now()), 'falseAlarms');
+        // A false alarm loses the Suspicious label it was given (0.5.33).
+        if (falseAlarm && rec.suspiciousLabel) {
+            try { await this.gmail.modify(rec.user, rec.messageId, [], [await this.gmail.labelId(rec.user, this.cfg.suspiciousLabelName)]); out = await this.store.updateRecord(key, { suspiciousLabel: false }); }
+            catch (e) { this.log.error(`suspicious label off ${rec.user} ${rec.messageId}:`, e); }
+        }
         let moved = null;
         if (!falseAlarm && move) {
             await this.refreshPolicy();

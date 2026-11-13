@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -86,6 +86,10 @@ function loadConfig(env = process.env) {
         safeBrowsing: bool(env.SAFE_BROWSING, false),
         safeBrowsingKey: env.SAFE_BROWSING_KEY || '',
         safeBrowsingSecret: env.SAFE_BROWSING_SECRET || '',
+        // A Gmail label on emails that are suspicious but not moved, so their readers see it (0.5.33): OFF by
+        // default; an admin turns it on in Settings → Policy (a policy setting).
+        suspiciousLabel: bool(env.SUSPICIOUS_LABEL, false),
+        suspiciousLabelName: env.SUSPICIOUS_LABEL_NAME || 'SPRUCE/Suspicious',
         // Status → Activity (what admins did, alerts, errors) is kept this many days (0.5.29; the email records
         // RETENTION_DAYS). 30 to 1,825. It holds no email text: mailbox addresses, sender domains, admins.
         auditDays: Math.min(1825, Math.max(30, Math.round(num(env.AUDIT_DAYS, 365)))),

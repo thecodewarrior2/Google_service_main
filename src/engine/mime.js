@@ -57,6 +57,9 @@ async function readMessage(raw) {
         senderName: String(from.name || ''),
         senderAddress: String(from.address || '').toLowerCase(),
         replyTo: ((mail.replyTo && mail.replyTo.value) || []).map(v => String(v.address || '').toLowerCase()).filter(Boolean),
+        // The email(s) this one answers, by Message-ID (0.5.33: a fake reply chain names none).
+        inReplyTo: mail.inReplyTo ? String(mail.inReplyTo).slice(0, 1000) : '',
+        references: [].concat(mail.references || []).map(String).slice(0, 50),
         to,
         people,
         auth: receiverAuth(rawHead),

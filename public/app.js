@@ -1297,6 +1297,8 @@
             : 'Off: mail from inside the organization (your domains, Gmail\'s DMARC check passing) isn\'t read by the AI. The rule checks read it as any email: its links, its headers and the rest; a forged inside address (DMARC not passing) is outside mail, and the AI reads it') },
         { key: 'aiMovesInside', label: 'AI alone moves inside mail', show: (v, d) => (v ? `On: an email from inside the organization that the AI scores ${pct(d.aiThreshold)} or more is ${d.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode)'} on the AI score alone, as outside mail is, whatever the rules find. The AI reads inside mail for it`
             : 'Off: the AI score alone never moves mail from inside the organization (your domains, Gmail\'s DMARC check passing); the rules still can (a staff account taken over), and a forged inside address is outside mail') },
+        { key: 'suspiciousLabel', label: 'Suspicious label', show: (v, d) => (v ? `On: an email that is suspicious but not moved gets the label ${d.suspiciousLabelName || 'SPRUCE/Suspicious'} in its mailbox, so its reader sees it (in monitor mode too). Nothing is moved by it`
+            : 'Off: suspicious emails that aren\'t moved stay in the Inbox unmarked; only the dashboard lists them (Email → Review)') },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
         { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the dashboard's days (the charts and daily counts), the weekly summary, and the nightly jobs` },
         { key: 'retentionDays', label: 'Records kept', show: (v) => `${num(v)} days: each email's record is deleted ${num(v)} days after it arrived, the oldest first` }
@@ -1310,7 +1312,7 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', safeBrowsing: 'SAFE_BROWSING', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', safeBrowsing: 'SAFE_BROWSING', suspiciousLabel: 'SUSPICIOUS_LABEL', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
@@ -1322,7 +1324,7 @@
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
             if (p.replaced) return `From settings.env (${ENV_NAME[key]}). It replaced ${short(key, p.replaced.value)}, set here by ${p.replaced.by}.`;
             // (install.sh doesn't pass these two: off unless changed here, or set in the services' environment)
-            if (key === 'aiScansInside' || key === 'aiMovesInside') return p.env ? `On in the services' environment (${ENV_NAME[key]}).` : `Off: the default (${ENV_NAME[key]}).`;
+            if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'suspiciousLabel') return p.env ? `On in the services' environment (${ENV_NAME[key]}).` : `Off: the default (${ENV_NAME[key]}).`;
             return `From settings.env (${ENV_NAME[key]}).`;
         };
         const rows = ROWS.map(r => {
@@ -1398,6 +1400,12 @@
             choices.addEventListener('change', () => { agreeBox.hidden = !(choices.querySelector('input:checked').value === 'on' && !value); update(); });
             read = () => choices.querySelector('input:checked').value === 'on';
             extra = [choices, agreeBox, h('div', { class: 'small muted', text: 'Inside: your domains, with Gmail\'s DMARC check passing; a forged staff address is outside mail, and the AI can move it either way. Off by default (AI_MOVES_INSIDE).' })];
+        } else if (key === 'suspiciousLabel') {
+            // (0.5.33) Off by default; visible to the email's reader, never moves anything.
+            const radio = (v, label) => h('label', { class: 'choice' }, h('input', { type: 'radio', name: 'policy-suspicious-label', value: v ? 'on' : 'off', checked: !!value === v }), h('span', { text: label }));
+            const choices = h('div', { class: 'choices' }, radio(false, 'Off: suspicious emails stay in the Inbox as they arrived (the default)'), radio(true, `On: they get the label ${d.suspiciousLabelName || 'SPRUCE/Suspicious'}, which their reader sees`));
+            read = () => choices.querySelector('input:checked').value === 'on';
+            extra = [choices, h('div', { class: 'small muted', text: 'Only emails that are suspicious but not moved (Email → Review → Suspicious, not moved) get it, in monitor mode too; nothing is moved by it. Marking one a false alarm takes the label off. Turning it off labels no more; the ones labeled keep it.' })];
         } else if (key === 'brakePerHour') {
             const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
             const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });

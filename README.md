@@ -362,7 +362,8 @@ See `docs/DEPLOY.md` (each piece, by hand) and `docs/PRIVACY.md` (what is read, 
 `docs/COSTS.md` is what it costs a month, by district size. `docs/SCALING.md` is what a district of
 10,000 mailboxes and 100,000 emails a day asks of it, measured, and the plan beyond.
 `docs/ARCHITECTURE.md` explains the pieces. `docs/ALERTS.md` says what each alert the admins can receive means
-and what to do. `docs/RETRAINING.md` turns the emails admins marked into
+and what to do. `docs/WORKSPACE.md` lists Google Workspace settings that work alongside the service (an outbound
+recipient limit for a staff account taken over, Gmail's own Safety settings, DMARC). `docs/RETRAINING.md` turns the emails admins marked into
 training examples, and a better AI model.
 
 ## Layout

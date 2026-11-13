@@ -10,6 +10,7 @@
 const spruce = require('./spruce');
 const { detectLanguage } = require('./language');
 const N = require('./notifications');
+const { fakeReplySigns } = require('./replychain');
 const { networkChecks } = require('./network');
 
 const MAX_LINKS = 300;
@@ -109,6 +110,9 @@ async function analyze(facts, ctx = {}) {
         ...safe(() => E.selfVouchingSigns(allText)),
         ...safe(() => E.layoutSigns(facts.layout)),
         ...safe(() => E.highRiskRequestSigns(bodyText)),
+        // "RE:" from outside or a new sender, answering nothing this mailbox has (0.5.33). Not a platform's
+        // notification (a share is never a reply). ctx.threadSize: the Gmail thread's size (pipeline.js).
+        ...safe(() => (relay ? [] : fakeReplySigns(facts, { threadSize: ctx.threadSize == null ? null : Number(ctx.threadSize), outside: !inside, firstTime: !!ctx.firstTime }))),
         // Outside, and first time: for a notification, the person's (none when the notification doesn't say who).
         ...safe(() => (relay ? (relay.address ? E.senderContextSigns(relay.address, org, !!ctx.firstTime) : []) : E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime))),
         ...linkSignals(judged),
