@@ -1206,7 +1206,8 @@
             kvRow('Installation level', `${d.installed.installLevel}${d.installed.levelFrom === 'cloud-run' ? ' (read from Cloud Run)' : ''}: what deploy/install.sh last set up. A version with a higher level is installed from Cloud Shell.`),
             kvRow('Newest approved', n ? `${n.version}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
             kvNode('Its AI model', n ? modelText(n) : '–'),
-            kvNode('From', n && /^[\w.-]+\/[\w.-]+$/.test(String(n.repo || '')) ? ghLink(`https://github.com/${n.repo}`, n.repo) : (n ? n.repo : '–')))));
+            kvNode('From', n && /^[\w.-]+\/[\w.-]+$/.test(String(n.repo || '')) ? ghLink(`https://github.com/${n.repo}`, n.repo) : (n ? n.repo : '–')),
+            kvNode('Last checked', checkAgain(d, demoManual)))));
         const st = d.progress;
         if (st && st.phase) {
             const at = st.at ? when(st.at) : '';
@@ -1231,7 +1232,7 @@
                     h('li', {}, 'Open ', link('Cloud Shell', 'https://shell.cloud.google.com/?show=terminal'), ', signed in as a project owner.'),
                     h('li', {}, 'Go to the folder you installed or last upgraded from (the one with deploy/settings.env).'),
                     h('li', {}, 'Run ', h('code', { text: m.command }), ' ', copyButton(m.command, 'command', 'Copy'), '. It downloads the newest approved version, shows what changes and asks before changing anything, then runs deploy/install.sh.'),
-                    h('li', {}, 'When it is done, this page installs updates again by itself (within 10 minutes).')),
+                    h('li', {}, 'When it is done, this page installs updates again (within 10 minutes, or at once with Check again).')),
                 h('div', { class: 'small muted', text: `${m.since ? `Waiting since ${when(m.since)}. ` : ''}The admins were sent an alert. Read what's new below first: the entry for ${m.version} says what it sets up.` })));
             out.push(updateForm(d, { locked: true }));
         } else if (d.canUpdate) out.push(updateForm(d));
@@ -1242,6 +1243,36 @@
             d.newer.length ? d.newer.map(entry) : h('div', { class: 'empty', text: n ? 'Nothing newer than the version installed.' : 'The approved versions couldn\'t be read.' }),
             d.changelog.length ? h('details', { class: 'changelog' }, h('summary', { text: `The whole changelog (the last ${d.changelog.length} versions)` }), d.changelog.map(entry)) : null));
         return out;
+    }
+    // When GitHub was last asked, and Check again (0.5.38): GitHub asked now. The service allows it once a minute
+    // for the whole dashboard (and 10 times an hour per admin); the button counts down until then.
+    function checkAgain(d, demoManual) {
+        const kept = Math.round((d.keptMs || 600000) / 60000);
+        const text = h('span', { text: d.checkedAt ? `GitHub was asked ${when(d.checkedAt)}. The answer is kept ${kept} minutes, then asked again by itself. ` : 'GitHub couldn\'t be asked. ' });
+        const btn = h('button', { class: 'btn small-btn', type: 'button' }, 'Check again');
+        let until = Number(d.nextCheckAt) || 0, timer = null;
+        const tick = () => {
+            if (!document.body.contains(btn) && timer) { clearInterval(timer); timer = null; return; }
+            const left = Math.ceil((until - Date.now()) / 1000);
+            btn.disabled = left > 0 || acting > 0;
+            btn.textContent = left > 0 ? `Check again (in ${left} s)` : 'Check again';
+            if (left <= 0 && timer) { clearInterval(timer); timer = null; }
+        };
+        const start = () => { tick(); if (!timer && until > Date.now()) timer = setInterval(tick, 1000); };
+        btn.addEventListener('click', async () => {
+            btn.disabled = true; acting++;
+            try {
+                const o = await api('/api/update/check', { method: 'POST', body: { manual: demoManual || undefined } });
+                toast(o.newest ? `Asked GitHub just now: the newest approved version is ${o.newest.version}.` : `Asked GitHub just now: ${o.why || 'no answer'}`);
+                render();
+            } catch (e) {
+                const m = /in (\d+) seconds/.exec(e.message);
+                if (m) until = Date.now() + Number(m[1]) * 1000;
+                toast(e.message);
+            } finally { acting--; start(); }
+        });
+        start();
+        return h('span', { class: 'check-again' }, text, btn);
     }
     // locked: a manual install is waiting (0.5.24): the form is shown, everything in it off, saying why.
     function updateForm(d, { locked = false } = {}) {

@@ -70,11 +70,33 @@ async function noteManualInstall({ store, manual, alert = null, now = Date.now()
 
 // The hourly job's look (worker): the newest approved version against the installation. { manual } or null.
 async function checkManualInstall({ cfg, store, releases, cloudrun = null, alert = null }) {
-    const newest = await releases.newest();
+    const newest = await releases.newest({ freshAfter: await sharedCheckAt(store) });
     const lv = await installedLevel({ cfg, cloudrun });
     const manual = manualInstallOf(newest, { version: PKG.version, installLevel: lv.level, levelFrom: lv.from });
     const rec = await noteManualInstall({ store, manual, alert });
     return rec ? { manual: rec } : null;
+}
+
+// Settings → Update's Check again (0.5.38): GitHub asked now, by any admin, at most once every CHECK_GAP_MS for
+// the whole dashboard (every instance, through state/releasesCheckedAt), whoever presses it and however often;
+// each admin at most CHECK_PER_ADMIN times an hour. A press too soon is refused, saying when it can be pressed
+// again; GitHub isn't asked. The time is kept before GitHub is asked, so a failing GitHub isn't asked faster.
+const CHECK_GAP_MS = 60 * 1000;
+const CHECK_PER_ADMIN = 10;
+const sharedCheckAt = async (store) => Number(await store.getState('releasesCheckedAt').catch(() => 0)) || 0;
+const checksBy = new Map();   // admin → times of their checks in the last hour (this instance)
+async function checkNow({ cfg, store, releases, cloudrun = null, alert = null, admin, now = Date.now() }) {
+    const last = await sharedCheckAt(store);
+    const wait = last + CHECK_GAP_MS - now;
+    if (wait > 0) return { error: `GitHub was asked ${Math.max(1, Math.round((now - last) / 1000))} seconds ago. Check again in ${Math.ceil(wait / 1000)} seconds.`, status: 429, retryAfter: Math.ceil(wait / 1000) };
+    const mine = (checksBy.get(admin) || []).filter(t => now - t < 60 * 60 * 1000);
+    if (mine.length >= CHECK_PER_ADMIN) return { error: `You checked ${CHECK_PER_ADMIN} times in the last hour. Check again later: the page also asks GitHub by itself every 10 minutes.`, status: 429, retryAfter: Math.ceil((mine[0] + 60 * 60 * 1000 - now) / 1000) };
+    mine.push(now); checksBy.set(admin, mine);
+    if (checksBy.size > 1000) checksBy.delete(checksBy.keys().next().value);
+    await store.setState('releasesCheckedAt', now);
+    try { await releases.newest({ fresh: true }); }
+    catch (e) { /* updateInfo says what went wrong */ }
+    return Object.assign(await updateInfo({ cfg, store, releases, cloudrun, alert }), { checked: true });
 }
 
 // What the page shows, and whether (and why not) the button is offered.
@@ -87,7 +109,9 @@ async function updateInfo({ cfg, store, releases, cloudrun = null, alert = null 
     const status = last && (compareVersions(last.version, installed.version) > 0 || (last.phase === 'done' && compareVersions(last.version, installed.version) === 0)) ? last : null;
     const running = !!(status && ['requested', 'building'].includes(status.phase) && Date.now() - status.at < RUNNING_MS);
     let newest = null, error = null;
-    try { newest = await releases.newest(); } catch (e) { error = `Couldn't read the approved versions from GitHub: ${String(e.message).slice(0, 200)}`; }
+    // (an admin's Check again on any instance makes every instance read GitHub again: 0.5.38)
+    const shared = await sharedCheckAt(store);
+    try { newest = await releases.newest({ freshAfter: shared }); } catch (e) { error = `Couldn't read the approved versions from GitHub: ${String(e.message).slice(0, 200)}`; }
     let why = null;
     if (!newest) why = error;
     else if (compareVersions(newest.version, installed.version) === 0) why = `${installed.version} is the newest approved version.`;
@@ -104,7 +128,9 @@ async function updateInfo({ cfg, store, releases, cloudrun = null, alert = null 
         if (m) manualInstall = Object.assign({}, m, { since: rec ? rec.since : null, command: 'bash deploy/update.sh' });
     }
     return { installed, newest: newest && { version: newest.version, commit: newest.commit, date: newest.date, model: newest.model, modelSource: newest.modelSource || null, installLevel: newest.installLevel, repo: newest.repo },
-        newer, changelog: newest ? newest.changelog.slice(0, 20) : [], canUpdate: !why, why, manualInstall, progress: status || null, running, setUp: !!cfg.updateJob, demo: !!cfg.demo };
+        newer, changelog: newest ? newest.changelog.slice(0, 20) : [], canUpdate: !why, why, manualInstall, progress: status || null, running, setUp: !!cfg.updateJob, demo: !!cfg.demo,
+        // When GitHub was asked for this answer, how long it is kept, and when Check again can be pressed (0.5.38).
+        checkedAt: newest ? newest.checkedAt || null : null, keptMs: releases.CACHE_MS || null, nextCheckAt: shared ? shared + CHECK_GAP_MS : null };
 }
 
 // The button: the checks, then the request and the job. Returns { started } or { error, status }.
@@ -136,4 +162,4 @@ async function startUpdate({ cfg, store, releases, scheduler, service, admin, bo
     return { started: { from, to } };
 }
 
-module.exports = { updateInfo, startUpdate, checkManualInstall, installedLevel, manualInstallOf, RUNNING_MS, _resetLevelCache: () => { levelCache = null; } };
+module.exports = { updateInfo, startUpdate, checkNow, checkManualInstall, installedLevel, manualInstallOf, RUNNING_MS, CHECK_GAP_MS, CHECK_PER_ADMIN, _resetLevelCache: () => { levelCache = null; }, _resetChecks: () => checksBy.clear() };

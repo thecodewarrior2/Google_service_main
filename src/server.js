@@ -22,7 +22,7 @@ const A = require('./dashboard/aggregate');
 const spruce = require('./engine/spruce');
 const training = require('./training');
 const { createReleases, parseChangelog, modelSourceOf } = require('./releases');
-const { updateInfo, startUpdate } = require('./update');
+const { updateInfo, startUpdate, checkNow } = require('./update');
 const { suspiciousWhy } = require('./policy');
 
 const PUBLIC = path.resolve(__dirname, '..', 'public');
@@ -111,7 +111,7 @@ function demoReleases({ manual = false } = {}) {
     const PKG = require('../package.json');
     let model = null, modelSource = null;
     try { const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')); model = v.model; modelSource = modelSourceOf(v); } catch (e) { /* none */ }
-    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: (Number(PKG.installLevel) || 0) + (manual ? 1 : 0), model, modelSource,
+    return { CACHE_MS: 10 * 60 * 1000, newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), checkedAt: Date.now(), version: '9.9.9', installLevel: (Number(PKG.installLevel) || 0) + (manual ? 1 : 0), model, modelSource,
         changelog: [{ version: '9.9.9', title: manual ? 'A made-up newer version that changes the installation (demo mode)' : 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
 }
 
@@ -665,6 +665,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         'GET /api/update': async (q) => updateInfo({ cfg, store, releases: cfg.demo && q && q.get && q.get('manual') ? demoReleases({ manual: true }) : releases, cloudrun,
             alert: (t) => service.alert('update-manual', t) }),
         'POST /api/update': async (q, body, admin) => startUpdate({ cfg, store, releases, scheduler, service, admin, body, expectedProject, wrong, cloudrun }),
+        // Check again (0.5.38): GitHub asked now, at most once a minute for the whole dashboard (src/update.js).
+        'POST /api/update/check': async (q, body, admin) => checkNow({ cfg, store, releases: cfg.demo && body && body.manual ? demoReleases({ manual: true }) : releases, cloudrun, admin: admin.email,
+            alert: (t) => service.alert('update-manual', t) }),
         'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
         'POST /api/training-export': async (q, body, admin) => {
             if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings → Retraining.', status: 403 };

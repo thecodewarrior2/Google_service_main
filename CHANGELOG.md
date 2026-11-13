@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.38: Settings → Update says when GitHub was asked, and Check again asks it now
+
+The Update page keeps GitHub's answer (the newest approved version) 10 minutes, and didn't say so: a version
+approved a minute ago could stay unseen for up to 10 minutes. Now:
+
+- **Last checked:** when GitHub was asked for the answer shown, and that it is kept 10 minutes, then asked again
+  by itself.
+- **Check again:** asks GitHub now. Every dashboard instance then reads GitHub again at its next view (the time of
+  the check is shared: `state/releasesCheckedAt`), and so does the hourly look for a manual install.
+- **Limited, so it can't be hammered:** once a minute for the whole dashboard (every admin, every instance), and
+  10 times an hour per admin. A press too soon is refused, saying when it can be pressed again (GitHub isn't
+  asked); the button counts down meanwhile. The time is kept before GitHub is asked, so a failing GitHub isn't
+  asked faster.
+- Nothing new for install.sh: installs from Settings → Update on a 0.5.37 installation.
+- Tests: `test/update.test.js`.
+
 ## 0.5.37: Spamhaus and abuse.ch, two optional services (off by default)
 
 **Needs `bash deploy/upgrade.sh` from Cloud Shell** (installLevel 5: two new secrets); Settings → Update says

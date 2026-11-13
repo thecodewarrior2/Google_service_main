@@ -414,3 +414,86 @@ test('0.5.24: the demo shows a made-up version that needs a manual install (?man
         assert.deepEqual([manual.canUpdate, manual.manualInstall.version, manual.manualInstall.needs], [false, '9.9.9', PKG.installLevel + 1]);
     } finally { await new Promise(r => srv.close(r)); }
 });
+
+test('0.5.38: the page says when GitHub was asked; Check again asks it now, at most once a minute for every admin and instance, 10 times an hour per admin', async () => {
+    const { checkNow, CHECK_GAP_MS, CHECK_PER_ADMIN, _resetChecks } = require('../src/update');
+    _resetChecks();
+    let t = Date.UTC(2026, 10, 13, 17, 0);
+    const store = new MemoryStore();
+    const cfg = loadConfig({ STORE: 'memory', ORG_DOMAINS: ORG, PILOT_USERS: `reader@${ORG}`, GOOGLE_CLOUD_PROJECT: 'maple-mail-protection', UPDATE_JOB: 'projects/p/locations/r/jobs/spruce-update' });
+    // Two dashboard instances, each with its own copy of GitHub's answer, one store.
+    const ghA = fakeGitHub({ version: '9.9.9' }), ghB = fakeGitHub({ version: '9.9.9' });
+    const a = createReleases({ fetch: ghA.f, now: () => t }), b = createReleases({ fetch: ghB.f, now: () => t });
+    const realNow = Date.now;
+    Date.now = () => t;
+    try {
+        let info = await updateInfo({ cfg, store, releases: a });
+        assert.deepEqual([info.checkedAt, info.keptMs, info.nextCheckAt], [t, 10 * 60 * 1000, null], 'when GitHub was asked, how long it is kept, Check again free');
+        await updateInfo({ cfg, store, releases: b });
+        t += 60 * 1000;
+        const callsA = ghA.calls.length, callsB = ghB.calls.length;
+        // Check again on instance A: GitHub asked now; the page says so and counts down.
+        const by = `it.head@${ORG}`;
+        const o = await checkNow({ cfg, store, releases: a, admin: by, now: t });
+        assert.equal(o.checked, true);
+        assert.equal(ghA.calls.length, callsA + 4, 'GitHub asked again (the newest commit and its files)');
+        assert.deepEqual([o.checkedAt, o.nextCheckAt], [t, t + CHECK_GAP_MS]);
+        // Instance B's copy is older than that check: it asks GitHub again at its next page view.
+        t += 5 * 1000;
+        info = await updateInfo({ cfg, store, releases: b });
+        assert.equal(ghB.calls.length, callsB + 4);
+        assert.equal(info.checkedAt, t);
+        // Pressed again within the minute, by anyone, on any instance: refused, GitHub not asked.
+        for (const [who, rel] of [[by, a], [`it.director@${ORG}`, b]]) {
+            const before = ghA.calls.length + ghB.calls.length;
+            const r = await checkNow({ cfg, store, releases: rel, admin: who, now: t + 10 * 1000 });
+            assert.equal(r.status, 429);
+            assert.match(r.error, /GitHub was asked 15 seconds ago\. Check again in 45 seconds\./);
+            assert.equal(r.retryAfter, 45);
+            assert.equal(ghA.calls.length + ghB.calls.length, before);
+        }
+        // After the minute: allowed again; an admin pressing every minute is stopped after 10 in an hour.
+        let allowed = 1, refused = null;
+        for (let i = 0; i < 15 && !refused; i++) {
+            t += CHECK_GAP_MS + 1000;
+            const r = await checkNow({ cfg, store, releases: a, admin: by, now: t });
+            if (r.status === 429) refused = r; else allowed++;
+        }
+        assert.equal(allowed, CHECK_PER_ADMIN);
+        assert.match(refused.error, /You checked 10 times in the last hour/);
+        const other = await checkNow({ cfg, store, releases: a, admin: `it.director@${ORG}`, now: t });
+        assert.equal(other.checked, true, 'another admin still can (once a minute for everyone)');
+        // GitHub failing: the time is kept all the same (a failing GitHub isn't asked faster).
+        t += CHECK_GAP_MS + 1000;
+        const bad = createReleases({ fetch: fakeGitHub({ fail: true }).f, now: () => t });
+        const f = await checkNow({ cfg, store, releases: bad, admin: `it.director@${ORG}`, now: t });
+        assert.match(f.why, /Couldn't read the approved versions from GitHub: .*HTTP 503/);
+        assert.equal(await store.getState('releasesCheckedAt'), t);
+        assert.equal((await checkNow({ cfg, store, releases: bad, admin: `it.director@${ORG}`, now: t + 1000 })).status, 429);
+    } finally { Date.now = realNow; }
+});
+
+test('0.5.38: the dashboard\'s Check again route (demo mode: GitHub isn\'t read)', async () => {
+    require('../src/update')._resetChecks();
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: ORG });
+    const store = new MemoryStore();
+    const service = new Service({ cfg, store, gmail: {}, log: { error() {}, warn() {} } });
+    const srv = http.createServer(createApp({ cfg, store, service }));
+    await new Promise(r => srv.listen(0, r));
+    const port = srv.address().port;
+    const call = (method, p, body) => new Promise((resolve, reject) => {
+        const req = http.request({ port, path: p, method, headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' } }, (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d || '{}') })); });
+        req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
+    });
+    try {
+        const first = await call('POST', '/api/update/check', {});
+        assert.equal(first.status, 200, JSON.stringify(first.body));
+        assert.equal(first.body.newest.version, '9.9.9');
+        assert.ok(first.body.checkedAt && first.body.nextCheckAt > Date.now());
+        const again = await call('POST', '/api/update/check', {});
+        assert.equal(again.status, 429);
+        assert.match(again.body.error, /Check again in \d+ seconds/);
+        const page = await call('GET', '/api/update');
+        assert.ok(page.body.nextCheckAt && page.body.checkedAt, 'the page counts down');
+    } finally { srv.close(); }
+});

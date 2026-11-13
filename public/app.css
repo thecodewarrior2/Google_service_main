@@ -372,3 +372,7 @@ ul.plain-list li { margin: 2px 0; overflow-wrap: break-word; word-break: normal;
 /* 0.5.36: Status → Look-alikes. */
 .mark-lookalike { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
 .mark-lookalike select { max-width: 100%; }
+
+/* 0.5.38: Settings → Update, Last checked and Check again. */
+.check-again { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.check-again .btn.small-btn { padding: 4px 10px; font-size: 13px; }

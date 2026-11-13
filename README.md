@@ -298,7 +298,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     privilege (docs/INSTALL.md, "Link clicks"). **Test** says what Google answers; turning it on or off
     needs the project ID.
   - **Update:** the version installed, the newest approved one (from `google_service_main`), what's new
-    since yours (its changelog), and the whole changelog. **Update to …** works like
+    since yours (its changelog), and the whole changelog. **Last checked** says when GitHub was asked (the answer
+    is kept 10 minutes); **Check again** asks it now, at most once a minute for everyone and 10 times an hour per
+    admin (0.5.38). **Update to …** works like
     `bash deploy/update.sh`:
     - it needs **I agree**, the Google Cloud project ID and the email address you are signed in with
       (five wrong answers lock it for 10 minutes);
