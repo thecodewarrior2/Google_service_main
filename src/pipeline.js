@@ -24,7 +24,8 @@ const training = require('./training');
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const LIST_RETRY_MS = 3 * HOUR;
-const ERRORS_ALERT = 25;   // errors in an hour that make an alert (0.5.29)   // a phishing list that missed its download is tried again this often (0.5.22)
+const ERRORS_ALERT = 25;   // errors in an hour that make an alert (0.5.29)
+const GAPS_DAY = 10, GAPS_MAILBOX = 3;   // missed changes that make an alert: in 24 hours, or one mailbox in 7 days (0.5.31)   // a phishing list that missed its download is tried again this often (0.5.22)
 const MAX_TRIES = 3;
 // How long a claim keeps other instances off a message: longer than a request may run (the worker's
 // timeout is 120 s), so only a claim left by an instance that stopped is taken over.
@@ -340,7 +341,8 @@ class Service {
                 const p = await this.gmail.profile(user);
                 const after = Math.max(Number(u.lastNotification) || 0, this.now() - 7 * DAY);
                 await this.store.putUser(user, Object.assign({ historyId: String(p.historyId), backfill: { after, pageToken: null, checked: 0 } }, noted));
-                await this.store.addEvent({ kind: 'gap', user, text: `Changes to ${user}'s mailbox were missed (history too old). Checking resumed from now, and the Inbox mail since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too.` });
+                await this.store.addEvent({ kind: 'gap', missed: true, user, text: `Changes to ${user}'s mailbox were missed (history too old). Checking resumed from now, and the Inbox mail since ${new Date(after).toISOString().slice(0, 16).replace('T', ' ')} UTC is being checked too.` });
+                await this.gapCheck(user).catch(e => this.log.error('counting the gaps:', e));
                 return { resynced: true };
             }
             throw e;
@@ -770,11 +772,33 @@ class Service {
         return this.alertDaily('gmail-access', `Gmail refused the service for ${user} (${String((e && e.message) || e).slice(0, 200)}): new mail there isn't checked. Usually the domain-wide delegation was removed or its scopes changed (Admin console → Security → API controls → Domain-wide delegation; docs/INSTALL.md, step 3). bash deploy/doctor.sh checks the rest.`).catch(() => false);
     }
     // An alert at most once a day (per kind and UTC day, whichever instance sees it first): for a problem that
-    // lasts (a lookup service down, the AI model not loading).
-    async alertDaily(kind, text, extra = {}) {
-        if (!(await this.store.setStateIfUnset(`alert-${kind}-${new Date(this.now()).toISOString().slice(0, 10)}`, { at: this.now() }))) return false;
+    // lasts (a lookup service down, the AI model not loading). key: once a day per key instead (a mailbox).
+    async alertDaily(kind, text, extra = {}, { key = kind } = {}) {
+        if (!(await this.store.setStateIfUnset(`alert-${key}-${new Date(this.now()).toISOString().slice(0, 10)}`, { at: this.now() }))) return false;
         await this.alert(kind, text, extra);
         return true;
+    }
+    // Missed changes (0.5.31). One now and then is normal: Gmail keeps a mailbox's history for about a week,
+    // and the service catches up on the Inbox by itself. Many are a sign something is wrong, and an alert
+    // (once a day): across the organization, GAPS_DAY or more within 24 hours (notifications weren't processed
+    // for days: the worker down or failing, Pub/Sub backing up); one mailbox, GAPS_MAILBOX or more within 7
+    // days (its watch, or a bug). Both are settings (GAPS_ALERT_DAY, GAPS_ALERT_MAILBOX).
+    async gapCheck(user) {
+        const now = this.now();
+        const missed = (e) => e.kind === 'gap' && (e.missed === true || /were missed \(history too old\)/.test(String(e.text || '')));
+        const week = (await this.store.listEvents(now - 7 * DAY, { limit: 5000 })).filter(missed);
+        const day = week.filter(e => e.at >= now - DAY);
+        const mine = week.filter(e => e.user === user);
+        const perDay = this.cfg.gapsAlertDay || GAPS_DAY, perMailbox = this.cfg.gapsAlertMailbox || GAPS_MAILBOX;
+        const out = { day: day.length, mailbox: mine.length, alerted: [] };
+        if (day.length >= perDay) {
+            const boxes = new Set(day.map(e => e.user)).size;
+            if (await this.alertDaily('gaps', `Changes were missed ${day.length} times in the last 24 hours, in ${boxes} mailbox${boxes === 1 ? '' : 'es'} (Gmail's history for them had run out, so the service caught up on their Inbox instead). One now and then is normal; this many means Gmail's notifications weren't processed for days: the worker down or failing, Pub/Sub backing up, or a bug. Status → Service status and Activity → Errors and gaps say more; bash deploy/doctor.sh checks the rest.`)) out.alerted.push('gaps');
+        }
+        if (mine.length >= perMailbox) {
+            if (await this.alertDaily('gaps-mailbox', `Changes to ${user}'s mailbox were missed ${mine.length} times in the last 7 days. Once in a while is normal; this often is probably a problem with that mailbox's watch (Settings → Mailboxes: when Gmail last said it changed) or a bug. Activity → Errors and gaps lists each one.`, { user }, { key: `gaps-${senderHash(user)}` })) out.alerted.push('gaps-mailbox');
+        }
+        return out;
     }
 
     async brakeOn() { return !!(await this.store.getState('brake')); }

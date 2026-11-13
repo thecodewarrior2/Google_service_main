@@ -351,6 +351,7 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |
 | `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none (Google charges about $0.70 a month for the two alert policies) |
 | `AUDIT_DAYS` | `365` | how long Status → Activity is kept, 30 to 1,825 days (0.5.29) |
+| `GAPS_ALERT_DAY`, `GAPS_ALERT_MAILBOX` | `10`, `3` | missed changes that make an alert: across the organization within 24 hours, or for one mailbox within 7 days (0.5.31) |
 | `PUBSUB_BACKLOG_ALERT` (installer) | off | on: an email when Gmail's notifications wait in Pub/Sub over 30 minutes; a metric alert policy Google charges about $0.40 a month for |
 | `AUDIT_LOG`, `AUDIT_LOG_DAYS` (installer) | off, `365` | on: a copy of Activity in the log bucket `spruce-audit` (a sink on `jsonPayload.spruceAudit`), kept that long; Google charges a few cents a year |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Moved back` | labels added to mail moved to Spam, and to mail an admin moved back to the Inbox (`SPRUCE/Released` before 0.3.7) |

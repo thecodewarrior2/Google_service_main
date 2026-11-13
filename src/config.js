@@ -92,6 +92,10 @@ function loadConfig(env = process.env) {
         // A copy of Activity in Cloud Logging, kept a year in its own log bucket (0.5.29): OFF by default (Google
         // charges for it, a little). install.sh sets AUDIT_LOG=true with the bucket.
         auditLog: bool(env.AUDIT_LOG, false),
+        // Missed changes (Gmail's history for a mailbox ran out) that make an alert (0.5.31): this many within 24
+        // hours across the organization, or for one mailbox within 7 days. 1 to 1,000.
+        gapsAlertDay: Math.min(1000, Math.max(1, Math.round(num(env.GAPS_ALERT_DAY, 10)))),
+        gapsAlertMailbox: Math.min(1000, Math.max(1, Math.round(num(env.GAPS_ALERT_MAILBOX, 3)))),
         phishingLists: bool(env.PHISHING_LISTS, true),
         siteAge: bool(env.SITE_AGE, true),
         // Records

@@ -202,6 +202,7 @@ test('after a gap in the history, the Inbox mail since the last notification is 
     const b = (await store.getUser(u)).backfill;
     assert.equal(b.after, last);
     assert.match((await store.listEvents()).find(e => e.kind === 'gap').text, /the Inbox mail since .* is being checked too/);
+    assert.equal((await store.listEvents()).find(e => e.kind === 'gap').missed, true, '0.5.31: counted toward the gap alerts');
     // Pages of 25 from the search, then done.
     const ids = Object.keys(boxes[u]);
     let call = 0;

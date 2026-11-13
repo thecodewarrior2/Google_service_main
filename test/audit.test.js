@@ -155,3 +155,37 @@ test('0.5.30: a wrong project ID or email address on Settings → Update is note
         assert.ok(!JSON.stringify(await store.listEvents(0)).match(/someone\.else|not-this-one/));
     } finally { await new Promise(r => srv.close(r)); }
 });
+
+test('0.5.31: missed changes now and then are only noted; many in a day, or one mailbox again and again, are an alert', async () => {
+    let now = Date.UTC(2026, 10, 12, 15);
+    const store = new MemoryStore();
+    const warned = [];
+    const svc = new Service({ cfg: cfgOf(), store, gmail: {}, now: () => now, log: { error() {}, warn: (x) => warned.push(JSON.parse(x)) } });
+    const gap = async (user, at = now) => { await store.addEvent({ kind: 'gap', missed: true, user, at, text: `Changes to ${user}'s mailbox were missed (history too old).` }); return svc.gapCheck(user); };
+    // Catching up isn't counted, nor a gap more than a day old (for the organization's count).
+    await store.addEvent({ kind: 'gap', user: `x@${ORG}`, at: now, text: `Caught up on x@${ORG}'s Inbox after the gap: 12 emails checked.` });
+    await store.addEvent({ kind: 'gap', missed: true, user: `old@${ORG}`, at: now - 2 * DAY, text: 'Changes to old@… were missed (history too old).' });
+    for (let i = 0; i < 9; i++) assert.deepEqual((await gap(`u${i}@${ORG}`)).alerted, []);
+    assert.equal(warned.length, 0, 'nine in a day: noted only');
+    const tenth = await gap(`u9@${ORG}`);
+    assert.deepEqual([tenth.day, tenth.alerted], [10, ['gaps']]);
+    assert.match(warned[0].message, /^Changes were missed 10 times in the last 24 hours, in 10 mailboxes/);
+    await gap(`u10@${ORG}`);
+    assert.equal(warned.filter(w => w.spruceAlert === 'gaps').length, 1, 'once a day');
+    // One mailbox, three times in 7 days (an older one written before 0.5.31 counts by its text): its own alert, per mailbox.
+    await store.addEvent({ kind: 'gap', user: `a@${ORG}`, at: now - 5 * DAY, text: `Changes to a@${ORG}'s mailbox were missed (history too old). Checking resumed from now.` });
+    await gap(`a@${ORG}`, now - 3 * DAY);
+    assert.equal(warned.filter(w => w.spruceAlert === 'gaps-mailbox').length, 0);
+    const third = await gap(`a@${ORG}`);
+    assert.deepEqual(third.alerted, ['gaps-mailbox']);
+    assert.match(warned.find(w => w.spruceAlert === 'gaps-mailbox').message, /^Changes to a@maple-schools\.example's mailbox were missed 3 times in the last 7 days/);
+    for (let i = 0; i < 3; i++) await gap(`b@${ORG}`);
+    assert.equal(warned.filter(w => w.spruceAlert === 'gaps-mailbox').length, 2, 'another mailbox: its own alert the same day');
+    await gap(`a@${ORG}`);
+    assert.equal(warned.filter(w => w.spruceAlert === 'gaps-mailbox').length, 2, 'the same mailbox: once a day');
+    // The limits are settings.
+    const strict = new Service({ cfg: cfgOf({ GAPS_ALERT_DAY: '2', GAPS_ALERT_MAILBOX: '1' }), store: new MemoryStore(), gmail: {}, now: () => now, log: { error() {}, warn() {} } });
+    await strict.store.addEvent({ kind: 'gap', missed: true, user: `c@${ORG}`, at: now, text: 'missed' });
+    assert.deepEqual((await strict.gapCheck(`c@${ORG}`)).alerted, ['gaps-mailbox']);
+    assert.equal(cfgOf({ GAPS_ALERT_DAY: '0' }).gapsAlertDay, 1);
+});

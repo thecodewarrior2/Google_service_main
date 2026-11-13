@@ -17,7 +17,7 @@ SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
 AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE= WORKER_MAX_INSTANCES= RETENTION_DAYS=
-AUDIT_DAYS= PUBSUB_BACKLOG_ALERT= AUDIT_LOG= AUDIT_LOG_DAYS=
+AUDIT_DAYS= PUBSUB_BACKLOG_ALERT= AUDIT_LOG= AUDIT_LOG_DAYS= GAPS_ALERT_DAY= GAPS_ALERT_MAILBOX=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -25,7 +25,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES | RETENTION_DAYS | AUDIT_DAYS | PUBSUB_BACKLOG_ALERT | AUDIT_LOG | AUDIT_LOG_DAYS) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES | RETENTION_DAYS | AUDIT_DAYS | PUBSUB_BACKLOG_ALERT | AUDIT_LOG | AUDIT_LOG_DAYS | GAPS_ALERT_DAY | GAPS_ALERT_MAILBOX) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -52,6 +52,8 @@ PUBSUB_BACKLOG_ALERT="$(onoff "$PUBSUB_BACKLOG_ALERT")"; AUDIT_LOG="$(onoff "$AU
 [ "$PUBSUB_BACKLOG_ALERT" != bad ] || fail "PUBSUB_BACKLOG_ALERT must be on or off (empty = off)."
 [ "$AUDIT_LOG" != bad ] || fail "AUDIT_LOG must be on or off (empty = off)."
 [ -z "$AUDIT_LOG_DAYS" ] || { [[ "$AUDIT_LOG_DAYS" =~ ^[0-9]+$ ]] && [ "$AUDIT_LOG_DAYS" -ge 30 ] && [ "$AUDIT_LOG_DAYS" -le 3650 ]; } || fail "AUDIT_LOG_DAYS must be a number of days from 30 to 3650 (or empty for 365)."
+# 0.5.31: how many missed changes make an alert (empty = 10 in 24 hours, 3 for one mailbox in 7 days).
+for v in GAPS_ALERT_DAY GAPS_ALERT_MAILBOX; do [ -z "${!v}" ] || { [[ "${!v}" =~ ^[0-9]+$ ]] && [ "${!v}" -ge 1 ] && [ "${!v}" -le 1000 ]; } || fail "$v must be a number from 1 to 1000 (or empty for the default)."; done
 keep_days_ok() { [ -z "$RETENTION_DAYS" ] || { [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] && [ "$RETENTION_DAYS" -ge 14 ] && [ "$RETENTION_DAYS" -le 365 ]; } || fail "RETENTION_DAYS must be a number of days from 14 to 365 (or empty for 35)."; }
 keep_days_ok
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
@@ -244,7 +246,7 @@ WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
     RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app"
-    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET" AUDIT_DAYS "$AUDIT_DAYS" AUDIT_LOG "$([ "$AUDIT_LOG" = on ] && echo true || echo false)")
+    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET" AUDIT_DAYS "$AUDIT_DAYS" GAPS_ALERT_DAY "$GAPS_ALERT_DAY" GAPS_ALERT_MAILBOX "$GAPS_ALERT_MAILBOX" AUDIT_LOG "$([ "$AUDIT_LOG" = on ] && echo true || echo false)")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
 LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 

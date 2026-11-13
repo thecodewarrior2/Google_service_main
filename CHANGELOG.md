@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.31: Missed changes, again and again, are an alert
+
+A mailbox's changes are "missed" when Gmail's history for it has run out (it keeps about a week) before the
+service read it; the service then catches up on its Inbox by itself, and Activity notes it. One now and then is
+normal (after an outage, say). Many are a sign of a bug, something to optimize, or a problem with the cloud
+service, so they are now an alert (emailed, once a day):
+
+- **Across the organization:** 10 or more within 24 hours (`GAPS_ALERT_DAY`). Gmail's notifications weren't
+  processed for days: the worker down or failing, Pub/Sub backing up, or a bug.
+- **One mailbox:** 3 or more within 7 days (`GAPS_ALERT_MAILBOX`), each mailbox on its own. Probably its
+  watch, or a bug.
+
+Both limits are settings (`deploy/settings.env`, 1 to 1,000; empty = the defaults). Catching up isn't counted;
+gaps noted before 0.5.31 count by their text. Tests: `test/audit.test.js`, `test/brakes.test.js`.
+
 ## 0.5.30: Every wrong project ID or email address is noted in Activity
 
 - Each wrong Google Cloud project ID (Settings → Policy, Allowlist, Safe Browsing, Update) or wrong email

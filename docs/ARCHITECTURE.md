@@ -85,7 +85,8 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   They are: a phishing list that missed its download; Cloudflare Security or Safe Browsing whose every
   lookup failed for 30 minutes, or Google refusing the Safe Browsing key; the AI model not working in the
   worker; Gmail refusing the service (domain-wide delegation removed), an email left unchecked after three
-  tries, or 25 errors in an hour (0.5.29); an admin's account locked after five wrong project IDs (0.5.29); no notification from Gmail for `QUIET_HOURS`, or watches about to end; the directory not readable;
+  tries, or 25 errors in an hour (0.5.29); missed changes (Gmail's history ran out) 10 times in 24 hours, or 3
+  times in 7 days for one mailbox (0.5.31; `GAPS_ALERT_DAY`, `GAPS_ALERT_MAILBOX`); an admin's account locked after five wrong project IDs (0.5.29); no notification from Gmail for `QUIET_HOURS`, or watches about to end; the directory not readable;
   the brake; a campaign whose moving paused, a large campaign, a mass share from one outside account; a
   user taking a flagged email out of Spam or into the Inbox; an update from the dashboard that failed or
   never finished; an approved version that needs a manual install. A problem that lasts is emailed at most
