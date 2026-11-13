@@ -14,7 +14,7 @@ const { Service } = require('../src/pipeline');
 const { MemoryStore } = require('../src/store/memory');
 const { createApp, expectedProject } = require('../src/server');
 const { createReleases, parseChangelog, compareVersions, modelSourceOf } = require('../src/releases');
-const { updateInfo, startUpdate } = require('../src/update');
+const { updateInfo, startUpdate, checkManualInstall, _resetLevelCache } = require('../src/update');
 
 const ROOT = path.join(__dirname, '..');
 const FAKEBIN = path.join(__dirname, 'fixtures', 'fakebin');
@@ -314,4 +314,102 @@ test('cloud-update.sh: nothing asked, nothing done; asked, the exact approved co
         assert.equal(r.states.at(-1).phase, 'failed'); assert.match(r.states.at(-1).message, /spruce-worker couldn't be deployed/);
         assert.match(r.event.text.stringValue, /bash deploy\/rollback\.sh goes back/);
     } finally { sb.cleanup(); }
+});
+
+
+// --- 0.5.24: a version that needs a manual install ---------------------------------------------------------
+// The installation's level from Cloud Run (the label install.sh sets), as the build checks it.
+const cloudRunAt = (level) => ({ calls: 0, async service(project, region, name) { this.calls++; assert.deepEqual([project, region, name], ['maple-mail-protection', 'us-east1', 'spruce-worker']); return { iap: false, image: '', url: '', labels: level == null ? {} : { 'spruce-install-level': String(level) } }; } });
+function setupLevel({ version = '9.9.9', installLevel, label = PKG.installLevel }) {
+    _resetLevelCache();
+    const store = new MemoryStore();
+    const cfg = loadConfig({ STORE: 'memory', ORG_DOMAINS: ORG, PILOT_USERS: `reader@${ORG}`, GOOGLE_CLOUD_PROJECT: 'maple-mail-protection', CLOUD_RUN_REGION: 'us-east1', UPDATE_JOB: 'projects/p/locations/r/jobs/spruce-update' });
+    const releases = createReleases({ fetch: fakeGitHub({ version, installLevel }).f });
+    const alerts = [];
+    return { store, cfg, releases, cloudrun: cloudRunAt(label), alerts, alert: async (t) => alerts.push(t) };
+}
+
+test('0.5.24: a manual install: the newest approved version needs a higher installation level; noted, alerted once, the button off for it and every later version', async () => {
+    const s = setupLevel({ installLevel: PKG.installLevel + 1 });
+    let info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: s.cloudrun, alert: s.alert });
+    assert.equal(info.canUpdate, false);
+    assert.equal(info.installed.levelFrom, 'cloud-run');
+    assert.deepEqual([info.manualInstall.version, info.manualInstall.needs, info.manualInstall.installedLevel, info.manualInstall.command], ['9.9.9', PKG.installLevel + 1, PKG.installLevel, 'bash deploy/update.sh']);
+    assert.match(info.why, /Until then no update is installed from here, neither 9\.9\.9 nor any later version/);
+    const since = info.manualInstall.since;
+    assert.ok(since > 0);
+    assert.equal(s.alerts.length, 1);
+    assert.match(s.alerts[0], /^Version 9\.9\.9 is approved, but it changes the installation itself .*installation level \d+; this installation is at \d+.*bash deploy\/update\.sh.*neither 9\.9\.9 nor any later version/);
+    assert.deepEqual(await s.store.getState('manualInstall'), { version: '9.9.9', needs: PKG.installLevel + 1, installedLevel: PKG.installLevel, since });
+    // Again: no second alert; the page and the hourly job agree.
+    info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: s.cloudrun, alert: s.alert });
+    await checkManualInstall({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: s.cloudrun, alert: s.alert });
+    assert.equal(s.alerts.length, 1, 'once per version');
+    assert.equal(info.manualInstall.since, since);
+    assert.equal(s.cloudrun.calls, 1, 'the level read once in 10 minutes');
+    // The button refused on the server too, whatever the page showed.
+    const tries = new Map();
+    const wrong = { locked: () => false, add: (w) => tries.set(w, 1), clear: () => {} };
+    const service = new Service({ cfg: s.cfg, store: s.store, gmail: {}, log: { error() {}, warn() {} } });
+    const r = await startUpdate({ cfg: s.cfg, store: s.store, releases: s.releases, scheduler: { run: async () => { throw new Error('must not run'); } }, service, admin: { email: `it.head@${ORG}` }, body: OK, expectedProject, wrong, cloudrun: s.cloudrun });
+    assert.equal(r.status, 409);
+    assert.match(r.error, /^Manual install required\. .*Nothing was changed\.$/);
+    assert.equal(await s.store.getState('updateRequest'), null);
+    // A later approved version (the level is never lowered): still waiting, since the first one; alerted for it.
+    const later = setupLevel({ version: '9.9.10', installLevel: PKG.installLevel + 1 });
+    later.store = s.store;
+    info = await updateInfo({ cfg: later.cfg, store: s.store, releases: later.releases, cloudrun: later.cloudrun, alert: s.alert });
+    assert.deepEqual([info.canUpdate, info.manualInstall.version, info.manualInstall.since], [false, '9.9.10', since]);
+    assert.equal(s.alerts.length, 2);
+    // Installed from Cloud Shell (the installation's level raised): the button again, and the note cleared.
+    const done = setupLevel({ version: '9.9.10', installLevel: PKG.installLevel + 1, label: PKG.installLevel + 1 });
+    info = await updateInfo({ cfg: done.cfg, store: s.store, releases: done.releases, cloudrun: done.cloudrun, alert: s.alert });
+    assert.deepEqual([info.canUpdate, info.manualInstall, info.installed.installLevel], [true, null, PKG.installLevel + 1]);
+    assert.equal(await s.store.getState('manualInstall'), null);
+    assert.equal(s.alerts.length, 2);
+});
+
+test('0.5.24: the installation\'s level: Cloud Run\'s label (as the build checks it), never below this version\'s own; this version\'s when it can\'t be read', async () => {
+    // The services labelled higher than this version (rolled back to an older build, say): updates up to it are offered.
+    let s = setupLevel({ installLevel: PKG.installLevel + 1, label: PKG.installLevel + 1 });
+    let info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: s.cloudrun });
+    assert.deepEqual([info.canUpdate, info.manualInstall], [true, null]);
+    // A label lower than this version's: this version's.
+    s = setupLevel({ installLevel: PKG.installLevel, label: 0 });
+    info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: s.cloudrun });
+    assert.deepEqual([info.installed.installLevel, info.canUpdate], [PKG.installLevel, true]);
+    // Cloud Run not readable: this version's own.
+    _resetLevelCache();
+    info = await updateInfo({ cfg: s.cfg, store: s.store, releases: s.releases, cloudrun: { service: async () => { throw new Error('denied'); } } });
+    assert.deepEqual([info.installed.installLevel, info.installed.levelFrom], [PKG.installLevel, 'version']);
+});
+
+test('0.5.24: the hourly job notices a manual install waiting and alerts the admins, without anyone opening the page', async () => {
+    const s = setupLevel({ installLevel: PKG.installLevel + 1 });
+    const warned = [];
+    const service = new Service({ cfg: s.cfg, store: s.store, gmail: {}, log: { error() {}, warn: (x) => warned.push(JSON.parse(x)) } });
+    service.releases = s.releases; service.cloudrun = s.cloudrun;
+    service.health = async () => ({}); service.purge = async () => 0;
+    const out = await service.syncFeeds();
+    assert.equal(out.manualInstall, '9.9.9');
+    assert.deepEqual(warned.filter(w => w.spruceAlert === 'update-manual').length, 1);
+    await service.syncFeeds();
+    assert.equal(warned.filter(w => w.spruceAlert === 'update-manual').length, 1, 'once');
+    assert.ok((await s.store.listEvents(0)).some(e => e.alert && e.kind === 'update-manual'));
+});
+
+test('0.5.24: the demo shows a made-up version that needs a manual install (?manual=1)', async () => {
+    _resetLevelCache();
+    const cfg = loadConfig({ DEMO: '1', MODE: 'monitor', ORG_DOMAINS: ORG });
+    const store = new MemoryStore();
+    const service = new Service({ cfg, store, gmail: {}, log: { error() {}, warn() {} } });
+    const srv = http.createServer(createApp({ cfg, store, service }));
+    await new Promise(r => srv.listen(0, r));
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    try {
+        const plain = await (await fetch(`${base}/api/update`)).json();
+        assert.deepEqual([plain.canUpdate, plain.manualInstall, plain.demo], [true, null, true]);
+        const manual = await (await fetch(`${base}/api/update?manual=1`)).json();
+        assert.deepEqual([manual.canUpdate, manual.manualInstall.version, manual.manualInstall.needs], [false, '9.9.9', PKG.installLevel + 1]);
+    } finally { await new Promise(r => srv.close(r)); }
 });

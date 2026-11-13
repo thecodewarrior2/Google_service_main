@@ -99,18 +99,20 @@ function reviewGroups(list) {
 const rescueToCheck = (r) => r.state === 'released' && r.releasedByUser && !r.markedBy && r.score >= 5 && r.trigger !== 'ai';
 
 // Demo mode reads no GitHub: a made-up newer version, then this version's own changelog.
-function demoReleases() {
+function demoReleases({ manual = false } = {}) {
     const file = path.resolve(__dirname, '..', 'CHANGELOG.md');
     const own = fs.existsSync(file) ? parseChangelog(fs.readFileSync(file, 'utf8')) : [];
     const PKG = require('../package.json');
     let model = null, modelSource = null;
     try { const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'vendor', 'spruce', 'VENDOR.json'), 'utf8')); model = v.model; modelSource = modelSourceOf(v); } catch (e) { /* none */ }
-    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: Number(PKG.installLevel) || 0, model, modelSource,
-        changelog: [{ version: '9.9.9', title: 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
+    return { newest: async () => ({ repo: 'demo (GitHub not read)', commit: '0'.repeat(40), date: new Date().toISOString(), version: '9.9.9', installLevel: (Number(PKG.installLevel) || 0) + (manual ? 1 : 0), model, modelSource,
+        changelog: [{ version: '9.9.9', title: manual ? 'A made-up newer version that changes the installation (demo mode)' : 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
 }
 
 function createApp({ cfg, store, service, scheduler = null, cloudrun = null, releases = null }) {
     releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
+    // The hourly job looks for an approved version that needs a manual install (0.5.24), with these.
+    if (service && typeof service === 'object' && !cfg.demo) { if (!service.releases) service.releases = releases; if (!service.cloudrun) service.cloudrun = cloudrun; }
     // The last 32 days at first, older records when a page shows them (Last 90 days), never past how long
     // records are kept (RETENTION_DAYS, or Settings → Policy: the copy forgets them too).
     const cache = new RecordCache(store, { keepDays: () => Math.min(92, cfg.retentionDays || 35) });
@@ -515,8 +517,10 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         },
         // The retraining export: allowed or not (off by default), and the download (docs/RETRAINING.md).
         // Settings → Update: the approved versions (google_service_main) and their changes; the button.
-        'GET /api/update': async () => updateInfo({ cfg, store, releases }),
-        'POST /api/update': async (q, body, admin) => startUpdate({ cfg, store, releases, scheduler, service, admin, body, expectedProject, wrong }),
+        // (demo mode: ?manual=1 shows a made-up approved version that needs a manual install)
+        'GET /api/update': async (q) => updateInfo({ cfg, store, releases: cfg.demo && q && q.get && q.get('manual') ? demoReleases({ manual: true }) : releases, cloudrun,
+            alert: (t) => service.alert('update-manual', t) }),
+        'POST /api/update': async (q, body, admin) => startUpdate({ cfg, store, releases, scheduler, service, admin, body, expectedProject, wrong, cloudrun }),
         'POST /api/training-export/allow': async (q, body, admin) => service.setTrainingExport(body.enabled === true, admin.email),
         'POST /api/training-export': async (q, body, admin) => {
             if (!((await store.getState('trainingExport')) || {}).enabled) return { error: 'The retraining export is off. An admin can allow it in Settings → Retraining.', status: 403 };
@@ -654,8 +658,9 @@ async function main() {
     // The dashboard can start the group re-read job (Cloud Scheduler); the worker doesn't need to.
     const scheduler = !cfg.demo && cfg.role !== 'worker' && (cfg.renewJob || cfg.updateJob) ? require('./scheduler').createScheduler() : null;
     // The Status page reads the worker's Cloud Run settings (a stand-in in demo mode).
-    const cloudrun = cfg.demo ? { service: async () => ({ iap: false, image: `demo:${VERSION}-demo`, url: '' }), invokers: async () => ['serviceAccount:spruce-invoker@demo.iam.gserviceaccount.com'] }
-        : cfg.role !== 'worker' ? require('./cloudrun').createCloudRun() : null;
+    // (the worker too, from 0.5.24: the installation's level, for the hourly look for a manual install)
+    const cloudrun = cfg.demo ? { service: async () => ({ iap: false, image: `demo:${VERSION}-demo`, url: '', labels: {} }), invokers: async () => ['serviceAccount:spruce-invoker@demo.iam.gserviceaccount.com'] }
+        : require('./cloudrun').createCloudRun();
     http.createServer(createApp({ cfg, store, service, scheduler, cloudrun })).listen(cfg.port, () => console.log(`Listening on ${cfg.port} (${cfg.role}, ${cfg.mode} mode).`));
     // Cloud Run stops an instance with SIGTERM and 10 seconds' grace: the counters it added up are written.
     process.on('SIGTERM', () => {

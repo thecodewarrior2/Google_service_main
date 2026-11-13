@@ -1127,8 +1127,9 @@
     // --- Settings → Update: the approved versions (google_service_main), their changes, and the button ----
     // The button needs the agreement, the project ID and the admin's own email address; it asks the
     // spruce-update job to rebuild and redeploy both services (src/update.js, deploy/cloud-update.sh).
-    async function updatePage() {
-        const d = await api('/api/update');
+    async function updatePage(q) {
+        const demoManual = !!(q && q.get && q.get('manual'));
+        const d = await api(`/api/update${demoManual ? '?manual=1' : ''}`);
         const n = d.newest;
         const out = [h('h1', { text: 'Update' }), h('p', { class: 'sub', text: 'The approved versions, from google_service_main, and what changed in them. A version that changes only the service is installed from here; one that changes the installation itself (permissions, jobs, settings) from Cloud Shell, with bash deploy/update.sh. Each version names its AI model: the update downloads that model from TinyPhishLLM, the model\'s own repository, and uses it only if every file matches.' })];
         // The AI model: each version pins one commit of TinyPhishLLM (its own public repository), which the
@@ -1148,6 +1149,7 @@
         out.push(h('section', { class: 'card' }, h('dl', { class: 'kv' },
             kvRow('Installed', d.installed.version),
             kvNode('Its AI model', modelText(d.installed)),
+            kvRow('Installation level', `${d.installed.installLevel}${d.installed.levelFrom === 'cloud-run' ? ' (read from Cloud Run)' : ''}: what deploy/install.sh last set up. A version with a higher level is installed from Cloud Shell.`),
             kvRow('Newest approved', n ? `${n.version}${n.date ? `, approved ${when(Date.parse(n.date))}` : ''}` : 'unknown'),
             kvNode('Its AI model', n ? modelText(n) : '–'),
             kvNode('From', n && /^[\w.-]+\/[\w.-]+$/.test(String(n.repo || '')) ? ghLink(`https://github.com/${n.repo}`, n.repo) : (n ? n.repo : '–')))));
@@ -1163,25 +1165,43 @@
             if (box) out.push(h('div', { class: `alert ${box[0]}`, role: 'status' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: box[1] }),
                 h('div', { class: 'grow' }, h('b', { text: box[2] }), box[3] ? ` ${box[3]}` : '')));
         }
-        if (d.canUpdate) out.push(updateForm(d));
+        // A manual install waiting (0.5.24): what and why, the steps, and the form shown with the button off.
+        const m = d.manualInstall;
+        if (m) {
+            const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+            out.push(h('section', { class: 'card spaced manual-install', role: 'alert' },
+                h('div', { class: 'manual-head' }, alertIcon('Manual install required'), h('h2', { text: `Manual install required: ${m.version}` })),
+                h('p', { text: `${m.version} changes the installation itself (new permissions, jobs or settings): it needs installation level ${m.needs}, and this installation is at level ${m.installedLevel}. The dashboard can't make those changes, so it can't install it.` }),
+                h('p', {}, h('b', { text: 'Until it is installed from Cloud Shell, no update is installed from this page: ' }), `not ${m.version}, and not any version after it. The Update button stays off, and the service keeps running ${d.installed.version} meanwhile.`),
+                h('ol', { class: 'steps' },
+                    h('li', {}, 'Open ', link('Cloud Shell', 'https://shell.cloud.google.com/?show=terminal'), ', signed in as a project owner.'),
+                    h('li', {}, 'Go to the folder you installed or last upgraded from (the one with deploy/settings.env).'),
+                    h('li', {}, 'Run ', h('code', { text: m.command }), ' ', copyButton(m.command, 'command', 'Copy'), '. It downloads the newest approved version, shows what changes and asks before changing anything, then runs deploy/install.sh.'),
+                    h('li', {}, 'When it is done, this page installs updates again by itself (within 10 minutes).')),
+                h('div', { class: 'small muted', text: `${m.since ? `Waiting since ${when(m.since)}. ` : ''}The admins were sent an alert. Read what's new below first: the entry for ${m.version} says what it sets up.` })));
+            out.push(updateForm(d, { locked: true }));
+        } else if (d.canUpdate) out.push(updateForm(d));
         else if (d.why) out.push(h('div', { class: `alert ${n && !d.newer.length ? 'good' : 'warning'}` }, h('div', { text: d.why })));
+        if (d.demo) out.push(h('div', { class: 'small muted' }, 'Demo mode: ', demoManual ? h('a', { href: '#/update', text: 'show the made-up version that installs from here' }) : h('a', { href: '#/update?manual=1', text: 'show a made-up version that needs a manual install' }), '.'));
         const entry = (c) => h('article', { class: 'release' }, h('h3', { text: `${c.version}: ${c.title}` }), markdown(c.body));
         out.push(h('section', { class: 'card spaced' }, h('h2', { text: d.newer.length ? `What's new since ${d.installed.version}` : 'What\'s new' }),
             d.newer.length ? d.newer.map(entry) : h('div', { class: 'empty', text: n ? 'Nothing newer than the version installed.' : 'The approved versions couldn\'t be read.' }),
             d.changelog.length ? h('details', { class: 'changelog' }, h('summary', { text: `The whole changelog (the last ${d.changelog.length} versions)` }), d.changelog.map(entry)) : null));
         return out;
     }
-    function updateForm(d) {
+    // locked: a manual install is waiting (0.5.24): the form is shown, everything in it off, saying why.
+    function updateForm(d, { locked = false } = {}) {
         const to = d.newest.version;
         const agree = h('input', { type: 'checkbox' });
         const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
         const email = h('input', { type: 'email', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'you@your-domain', 'aria-label': 'Your email address' });
         const err = h('div', { class: 'policy-error', role: 'alert' });
         const go = h('button', { class: 'btn primary', type: 'button' }, `Update to ${to}`);
-        const ready = () => { go.disabled = !(agree.checked && project.value.trim() && email.value.trim()); };
+        const ready = () => { go.disabled = locked || !(agree.checked && project.value.trim() && email.value.trim()); };
         for (const el of [agree, project, email]) { el.addEventListener('input', ready); el.addEventListener('change', ready); }
+        if (locked) { for (const el of [agree, project, email]) el.disabled = true; go.textContent = `Update to ${to}: manual install required`; go.title = 'Install it from Cloud Shell first (above).'; }
         ready();
-        pageBusy = () => agree.checked || !!project.value || !!email.value;
+        pageBusy = () => !locked && (agree.checked || !!project.value || !!email.value);
         go.addEventListener('click', async () => {
             err.textContent = ''; go.disabled = true; acting++;
             try {
@@ -1191,7 +1211,8 @@
             } catch (e) { err.textContent = e.message; ready(); }
             finally { acting--; }
         });
-        return h('section', { class: 'card spaced' }, h('h2', { text: `Update to ${to}` }),
+        return h('section', { class: `card spaced${locked ? ' locked' : ''}`, 'aria-disabled': locked ? 'true' : null }, h('h2', { text: `Update to ${to}` }),
+            locked ? h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '🔒' }), h('div', { class: 'grow', text: `Off until ${to} is installed from Cloud Shell (Manual install required, above).` })) : null,
             h('div', { class: 'policy-form update-form' },
                 h('label', { class: 'choice' }, agree, h('span', { text: `I agree: both services are rebuilt from ${to} and redeployed, with their settings as they are. Mail keeps being checked meanwhile (about 10 minutes). In Cloud Shell, bash deploy/rollback.sh goes back to the version before.` })),
                 h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),

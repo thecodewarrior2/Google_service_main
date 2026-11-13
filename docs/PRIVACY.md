@@ -146,8 +146,9 @@ can be turned off):
 
 **Settings → Update** reads the approved versions from GitHub (`api.github.com` and
 `raw.githubusercontent.com`, the public `google_service_main` repository): the newest commit on main, and
-that commit's `package.json`, `CHANGELOG.md` and `VENDOR.json`. Only the dashboard does, when the page is
-opened (kept 10 minutes). It is read anonymously: no token, a plain User-Agent
+that commit's `package.json`, `CHANGELOG.md` and `VENDOR.json`. The dashboard does, when the page is
+opened (kept 10 minutes), and from 0.5.24 the worker once an hour (its hourly job), to alert the admins when an
+approved version needs a manual install. It is read anonymously: no token, a plain User-Agent
 (`spruce-mail-protection`), nothing about your installation, users or mail. An update's build downloads
 the same repository from Cloud Build.
 

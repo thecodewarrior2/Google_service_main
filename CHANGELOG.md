@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.24: Settings → Update says when a version needs a manual install, and keeps the button off until then
+
+- **"Manual install required"** on Settings → Update, when the newest approved version changes the
+  installation itself (a higher `installLevel`: new permissions, jobs or settings, as 0.5.23's Secret
+  Manager for the Safe Browsing key). It says which version, which installation level it needs and which
+  this one is at, that **no update is installed from the page until then, neither that version nor any
+  later one** (a level is never lowered), and the steps: Cloud Shell, the folder you installed from,
+  `bash deploy/update.sh` (with a Copy button). Since when it has waited, too.
+- **The update form stays on the page, switched off** (its fields and the button disabled, "manual
+  install required"); the server refuses the update as well ("Manual install required."), and the update
+  build still checks it.
+- **Detection:** the installation's level is now read where the build reads it, the `spruce-install-level`
+  label `install.sh` puts on the services (Cloud Run; never below the running version's own, which is used
+  when Cloud Run can't be read, as before). So a rolled-back build no longer blocks an update its
+  installation allows. Shown as **Installation level** on the page.
+- **In the background:** the hourly job (the worker) looks at the newest approved version too, so the
+  admins are alerted (`update-manual`, emailed to `ALERT_EMAIL`) once per version that needs a manual
+  install, without anyone opening the page. `state/manualInstall` keeps which version and since when; it is
+  cleared once the manual install raised the installation's level, and the page installs updates again by
+  itself.
+- Demo mode: **Settings → Update** has a link to a made-up version that needs a manual install.
+- Tests: `test/update.test.js`.
+
 ## 0.5.23: Google Safe Browsing from the dashboard: the API key and on/off on Settings → Safe Browsing
 
 **Needs `bash deploy/install.sh` from Cloud Shell** (`installLevel` 4): it sets up Secret Manager for the key.

@@ -21,11 +21,11 @@ function createCloudRun({ fetch: f = fetch, googleAuth = null } = {}) {
         return text ? JSON.parse(text) : {};
     }
     return {
-        // { iap, image, url } of a service.
+        // { iap, image, url, labels } of a service (labels: spruce-version, spruce-install-level…).
         async service(project, region, name) {
             const s = await call(`projects/${project}/locations/${region}/services/${name}`);
             const c = (s.template && s.template.containers && s.template.containers[0]) || {};
-            return { iap: !!s.iapEnabled, image: c.image || '', url: s.uri || '' };
+            return { iap: !!s.iapEnabled, image: c.image || '', url: s.uri || '', labels: s.labels || {} };
         },
         // The members with roles/run.invoker on a service.
         async invokers(project, region, name) {

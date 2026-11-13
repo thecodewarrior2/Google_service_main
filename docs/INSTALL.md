@@ -289,8 +289,18 @@ and **Update to …** installs it like `update.sh` does, without Cloud Shell:
   `bash deploy/update.sh` or `upgrade.sh`, which creates what it needs (below). Until then the page
   says it isn't set up.
 - **Some versions need Cloud Shell anyway:** one that changes the installation itself (new
-  permissions, jobs or settings) has a higher `installLevel`. The page says so, and offers no button:
-  run `bash deploy/update.sh` instead.
+  permissions, jobs or settings) has a higher `installLevel` than the installation (the
+  `spruce-install-level` label `install.sh` puts on the services; the page shows it as **Installation
+  level**). The page then shows **Manual install required**: which version, why, and the steps. The update
+  form stays on the page, switched off, and nothing is installed from the page, neither that version nor any
+  later one, until it is installed from Cloud Shell:
+
+  ```bash
+  bash deploy/update.sh
+  ```
+
+  From the folder you installed or last upgraded from. The admins get an alert once per such version (the
+  hourly job notices it too). Once it is installed, the page installs updates again by itself.
 - **What it uses:** a Cloud Scheduler job, `spruce-update`, which starts a Cloud Build as the
   `spruce-updater` service account. The dashboard can only record the request and run that job; it
   can't build or deploy anything itself. The build checks the request again: asked for in the last

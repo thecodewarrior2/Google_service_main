@@ -1038,6 +1038,11 @@ class Service {
             } else out = { health, skipped: 'checked within the day' };
             if (out.feeds) { try { await this.listsAlert(out.feeds); } catch (e) { this.log.error('phishing lists, alert:', e); } }
         }
+        // An approved version that needs a manual install (0.5.24): noted, and the admins alerted once.
+        if (this.releases) {
+            try { const m = await require('./update').checkManualInstall({ cfg: this.cfg, store: this.store, releases: this.releases, cloudrun: this.cloudrun || null, alert: (t) => this.alert('update-manual', t) }); if (m) out.manualInstall = m.manual.version; }
+            catch (e) { /* GitHub not reachable: the page says so */ }
+        }
         const budgetMs = Math.min(30 * 1000, 90 * 1000 - (Date.now() - started));
         if (budgetMs > 0) { try { out.purged = await this.purge({ budgetMs }); } catch (e) { out.purged = { error: String(e.message || e).slice(0, 200) }; } }
         return out;

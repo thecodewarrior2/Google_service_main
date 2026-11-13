@@ -350,3 +350,9 @@ ul.benefits { margin: 8px 0; padding-left: 20px; }
 ul.benefits li { margin: 6px 0; }
 /* Settings → Safe Browsing: its forms sit under their card's text, not indented like the policy rows'. */
 .sb-form { margin-left: 0; }
+/* 0.5.24: Settings → Update, a manual install waiting. */
+.manual-install { border-color: var(--critical); }
+.manual-install .manual-head { display: flex; align-items: center; gap: 2px; }
+.manual-install .manual-head h2 { margin: 0; }
+.manual-install p { margin: 8px 0; }
+.card.locked .policy-form { opacity: 0.6; }
