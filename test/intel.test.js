@@ -39,9 +39,15 @@ function fakeNet(opts = {}) {
             const entries = JSON.parse(init.body).threatInfo.threatEntries;
             return json({ matches: entries.filter(e => /phish-page/.test(e.url)).map(e => ({ threatType: 'SOCIAL_ENGINEERING', threat: { url: e.url } })) });
         }
-        if (u.host === 'openphish.com') return text(['https://listed-site.example/login', 'https://www.maple-schools.example/hacked/login.php', ...Array.from({ length: 30 }, (_, i) => `https://other${i}.example/x`)].join('\n'));
+        if (u.host === 'raw.githubusercontent.com' && u.pathname.startsWith('/openphish/')) return text(['https://listed-site.example/login', 'https://www.maple-schools.example/hacked/login.php', ...Array.from({ length: 30 }, (_, i) => `https://other${i}.example/x`)].join('\n'));
         if (u.host === 'phishing.army') return text(['# comment', 'phish-domain.example', 'maple-schools.example', 'paypal.com', 'storage.googleapis.com', ...Array.from({ length: 30 }, (_, i) => `bad${i}.example`)].join('\n'));
+        // HaGeZi's wildcard format ("*.domain"), with its header.
+        if (u.host === 'raw.githubusercontent.com' && u.pathname.startsWith('/hagezi/')) return text(['# Title: HaGeZi\'s Threat Intelligence Feeds - medium version', '# Expires: 8 hours', '*.tif-listed.example', '*.paypal.com', ...Array.from({ length: 30 }, (_, i) => `*.tif${i}.example`)].join('\n'));
         if (u.host === 'raw.githubusercontent.com') return text(['Scammer@Freemail.example', 'service@paypal.com', ...Array.from({ length: 30 }, (_, i) => `s${i}@scam.example`)].join('\n'));
+        // TweetFeed's JSON: domains researchers reported, with their tags.
+        if (u.host === 'api.tweetfeed.live') return json([{ date: '2026-11-01 00:00:00', user: 'researcher', type: 'domain', value: 'reported-site.example', tags: ['#phishing'] },
+            { type: 'url', value: 'https://not-a-domain-entry.example/x' }, { type: 'domain', value: 'google.com', tags: ['#phishing'] },
+            ...Array.from({ length: 30 }, (_, i) => ({ type: 'domain', value: `rep${i}.example`, tags: ['#malware'] }))]);
         if (u.host === 'data.iana.org') return json({ services: [[['example'], ['https://rdap.registry.example/']]] });
         if (u.host === 'rdap.registry.example') {
             const d = decodeURIComponent(u.pathname.split('/domain/')[1] || '');
@@ -98,7 +104,7 @@ test('phishing lists: synced once a day into the shared store, sanitized like th
     let now = Date.now();
     const feeds = createFeeds({ http: createHttp({ fetch: net.fetch }), store, engine: E, now: () => now, log: { error() {} } });
     const out = await feeds.sync();
-    assert.deepEqual(out.feeds.map(f => f.id), ['openphish', 'phishingarmy', 'sefinekemails']);
+    assert.deepEqual(out.feeds.map(f => f.id), ['openphish', 'phishingarmy', 'hagezitif', 'tweetfeed', 'sefinekemails']);
     assert.ok(out.feeds.every(f => f.count > 20), JSON.stringify(out));
     const blob = await store.getBlob('feed_phishingarmy');
     const entries = zlib.gunzipSync(blob.bytes).toString().split('\n');
@@ -110,12 +116,21 @@ test('phishing lists: synced once a day into the shared store, sanitized like th
     assert.equal(await feeds.addressHit('scammer@freemail.example'), 'Sefinek scam-sender list');
     assert.equal(await feeds.addressHit('service@paypal.com'), null, 'a brand\'s own address is never on the list');
     assert.equal(await feeds.urlHit('https://fine.example/'), null);
+    // 0.5.21: HaGeZi ("*.domain": the domain and every name under it) and TweetFeed (its JSON's domains, a
+    // community report: confidence 'report'); neither keeps a protected brand's domain.
+    assert.equal(await feeds.domainHit('login.tif-listed.example'), 'HaGeZi Threat Intelligence Feeds');
+    assert.equal(await feeds.urlHit('https://reported-site.example/a'), 'TweetFeed (researchers\' reports)');
+    assert.equal(await feeds.domainHit('paypal.com'), null);
+    assert.equal(await feeds.domainHit('google.com'), null);
+    assert.equal(await feeds.urlHit('https://not-a-domain-entry.example/x'), null, 'TweetFeed\'s URL entries aren\'t its domain list');
+    assert.equal(feeds.confidenceOf('TweetFeed (researchers\' reports)'), 'report');
+    assert.equal(feeds.confidenceOf('HaGeZi Threat Intelligence Feeds'), 'list');
     const n = net.calls.length;
     await feeds.sync();
     assert.equal(net.calls.length, n, 'not again within a day');
     now += 21 * 60 * 60 * 1000;
     await feeds.sync();
-    assert.equal(net.calls.length, n + 3, 'the next day');
+    assert.equal(net.calls.length, n + 5, 'the next day');
     // A broken download keeps the previous copy.
     const store2 = new MemoryStore();
     const tiny = createFeeds({ http: createHttp({ fetch: async () => text('one.example\ntwo.example') }), store: store2, engine: E, log: { error() {} } });
@@ -203,4 +218,30 @@ test('settings: Cloudflare only by default; Safe Browsing only when turned on, a
     assert.equal(r.checks.safeBrowsing, 0);
     assert.equal(r.checks.notChecked, 0);
     assert.equal(r.links.find(l => /evil-login/.test(l.url)).severity, 'danger', 'Cloudflare still flags');
+});
+
+test('0.5.21: a list match is dangerous; a community report (TweetFeed) is a sign of 2, never "dangerous" on its own', async () => {
+    const raw = (from, html, dmarc = 'pass') => Buffer.from([`From: "Billing" <${from}>`, 'To: reader@maple-schools.example', 'Subject: Your invoice',
+        `Authentication-Results: mx.google.com; dmarc=${dmarc} header.from=${from.split('@')[1]}`, 'Content-Type: text/html', '', html].join('\r\n'));
+    const ctx = (intel) => ({ mailbox: 'reader@maple-schools.example', orgDomains: ['maple-schools.example'], intel });
+    const net = fakeNet();
+    const intel = createIntel({ cfg: loadConfig({ STORE: 'memory' }), store: new MemoryStore(), engine: E, fetch: net.fetch, log: { error() {} } });
+    await intel.feeds.sync();
+    // HaGeZi's list: dangerous, as the other lists.
+    let r = await analyze(await readMessage(raw('billing@fine.example', '<p>Your invoice is ready.</p><a href="https://pay.tif-listed.example/invoice">View invoice</a>')), ctx(intel));
+    assert.equal(r.links[0].severity, 'danger');
+    assert.match(r.links[0].reason, /listed as phishing by HaGeZi Threat Intelligence Feeds/);
+    // TweetFeed: the link is marked for caution, and a sign of 2; the email isn't flagged for it alone.
+    r = await analyze(await readMessage(raw('billing@fine.example', '<p>Your invoice is ready.</p><a href="https://reported-site.example/invoice">View invoice</a>')), ctx(intel));
+    assert.equal(r.links[0].severity, 'caution');
+    assert.match(r.links[0].reason, /^reported as phishing or malware by TweetFeed \(researchers' reports\)/);
+    const sign = r.signals.find(s => s.kind === 'reported-link');
+    assert.equal(sign && sign.weight, 2, JSON.stringify(r.signals));
+    assert.ok(!r.signals.some(s => s.kind === 'dangerous-links'));
+    assert.notEqual(r.status, 'flagged');
+    // A sender domain reported there: 2, not the 5 of a listed one.
+    r = await analyze(await readMessage(raw('billing@rep3.example', '<p>Your invoice is ready.</p>')), ctx(intel));
+    assert.equal((r.signals.find(s => s.kind === 'sender-domain-reported') || {}).weight, 2, JSON.stringify(r.signals));
+    r = await analyze(await readMessage(raw('billing@tif4.example', '<p>Your invoice is ready.</p>')), ctx(intel));
+    assert.equal((r.signals.find(s => s.kind === 'sender-domain-listed') || {}).weight, 5);
 });

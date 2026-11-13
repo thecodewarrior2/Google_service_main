@@ -1,6 +1,7 @@
 'use strict';
-// The phishing lists the extension uses (its PHISH_FEEDS: OpenPhish's community feed of phishing URLs,
-// Phishing Army's list of phishing domains, Sefinek's list of scam-sender addresses), matched here.
+// The phishing lists (PHISH_FEEDS in vendor/spruce/shared.js: OpenPhish's community feed of phishing URLs,
+// Phishing Army's list of phishing domains, HaGeZi's Threat Intelligence Feeds, TweetFeed's domains reported
+// by security researchers, Sefinek's list of scam-sender addresses), matched here.
 //
 // Downloaded ONCE A DAY for the whole district by a Cloud Scheduler task (/tasks/sync-feeds), out of
 // respect for the projects that publish them for free, and kept in the store (gzip, shared by every
@@ -8,7 +9,8 @@
 // Matching is local: nothing about an email is sent anywhere.
 //
 // Licenses (docs/PRIVACY.md): OpenPhish community feed terms; Phishing Army CC BY-NC 4.0
-// (non-commercial use, as a school district's own protection is); Sefinek MIT.
+// (non-commercial use, as a school district's own protection is); HaGeZi GPL-3.0 (the list is used, not
+// redistributed); TweetFeed CC0 1.0; Sefinek MIT.
 const zlib = require('zlib');
 
 const SYNC_MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;     // at most about once a day
@@ -19,11 +21,23 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     let sets = null, versions = {}, lastCheck = 0, loading = null;
     const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } };
 
+    // A download as lines: plain text as it is; TweetFeed's JSON ([{ type: 'domain', value, tags }]) as its
+    // domains (a download that isn't that JSON gives nothing, so the previous copy is kept).
+    function linesOf(feed, text) {
+        if (feed.format !== 'tweetfeed-json') return String(text).split('\n');
+        let data;
+        try { data = JSON.parse(String(text)); } catch (e) { return []; }
+        return Array.isArray(data) ? data.filter(x => x && x.type === 'domain' && typeof x.value === 'string').map(x => x.value) : [];
+    }
+    // How sure a list is (PHISH_FEEDS confidence): 'report' for community reports, else 'list'.
+    const CONFIDENCE = new Map(E.PHISH_FEEDS.map(f => [f.name, f.confidence || 'list']));
+    const confidenceOf = (name) => CONFIDENCE.get(name) || 'list';
+
     // The extension's sanitizeFeed: what an entry must look like, and what a list may never contain (the
     // protected brands' own domains, cloud-storage hosts, whole personal-mail domains).
     function sanitize(feed, text) {
         const out = new Set();
-        for (const raw of String(text).split('\n')) {
+        for (const raw of linesOf(feed, text)) {
             const line = raw.trim();
             if (!line || line.startsWith('#') || line.startsWith('!')) continue;
             if (feed.kind === 'url') {
@@ -125,7 +139,7 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
         for (const feed of E.PHISH_FEEDS) { const i = await store.blobInfo(`feed_${feed.id}`); out.push({ id: feed.id, name: feed.name, kind: feed.kind, updated: i ? i.updated : null, count: i ? i.count : 0 }); }
         return out;
     }
-    return { sync, ready, urlHit, domainHit, addressHit, status, sanitize };
+    return { sync, ready, urlHit, domainHit, addressHit, status, sanitize, confidenceOf };
 }
 
 module.exports = { createFeeds, SYNC_MIN_INTERVAL_MS };

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.21: Two more phishing lists, updated once a day: HaGeZi and TweetFeed
+
+- **HaGeZi Threat Intelligence Feeds** (medium version: about 366,000 phishing, malware and scam domains
+  gathered from many feeds; GPL-3.0). Downloaded once a day with the others, kept as the others are; a
+  link or sender domain on it counts as on the other lists (a listed link is dangerous). The full version
+  (1.4 million domains) is too large to keep in each instance's memory.
+- **TweetFeed** (domains security researchers reported on X in the last 30 days, about 2,500; CC0 1.0;
+  its JSON read by `feeds.js`). Its authors warn that community reports aren't always right, so it is a
+  report, not a list (`confidence: 'report'`): a reported link is amber and a sign of 2 (`reported-link`),
+  a reported sender domain a sign of 2 (`sender-domain-reported`), never "dangerous" on its own. A domain
+  on both a list and TweetFeed counts as listed.
+- **OpenPhish** moved its community feed to GitHub; its old address redirected there. The new address
+  is used directly.
+- Every list is cleaned as before: never a protected brand's domain, a cloud-storage host or a whole
+  personal-mail domain (checked on the real lists: no whole hosting platform either).
+- Not added: **URLhaus** (abuse.ch). Since October 2026 its downloads need an abuse.ch key (free for
+  non-commercial use); keyless downloads answer "410 Gone".
+- Tests: `test/intel.test.js` (made-up list contents).
+
+
 ## 0.5.20: The extension's own code removed from the engine
 
 No change in how mail is judged (every test, and the AI model's reference answers, the same).

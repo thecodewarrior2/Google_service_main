@@ -63,14 +63,21 @@ async function networkChecks(E, intel, facts, judged, ctx) {
     ]);
     checks.lists = !!intel.feeds;
 
-    // Links: the first finding that flags one makes it dangerous.
+    // Links: the first finding that flags one makes it dangerous. A community report (a list whose confidence
+    // is 'report', such as TweetFeed: 0.5.21) only marks it for caution, and counts as a sign below.
+    const isReport = (name) => !!(intel.feeds && typeof intel.feeds.confidenceOf === 'function' && intel.feeds.confidenceOf(name) === 'report');
+    const reported = [];
     for (const j of web) {
         const found = [];
         for (const h of [hostOf(j.finalUrl), hostOf(j.url)]) { const r = hostResults.get(h); if (r && r.verdict === 'unsafe') found.push(`${r.reason} (${h})`); }
         for (const u of [j.finalUrl, j.url]) { const r = u && urlResults.get(u); if (r && r.verdict === 'unsafe') found.push(r.reason); }
         const listed = (linkListed.find(([x]) => x === j) || [])[1];
-        if (listed) found.push(`listed as phishing by ${listed}`);
+        if (listed && !isReport(listed)) found.push(`listed as phishing by ${listed}`);
         if (found.length) { j.severity = 'danger'; j.reason = found[0]; j.network = true; }
+        else if (listed) {
+            reported.push({ j, by: listed });
+            if (j.severity !== 'danger') { j.severity = 'caution'; j.reason = `reported as phishing or malware by ${listed}${j.reason ? `; ${j.reason}` : ''}`; j.network = true; }
+        }
     }
     // The reputation check (0.5.18): a mismatched link through the service that sent the email, which the
     // lookups checked and found nothing against, and whose domain isn't new: a warning (caution), not a danger.
@@ -101,7 +108,12 @@ async function networkChecks(E, intel, facts, judged, ctx) {
     if (senderOnList) signals.push({ weight: 5, kind: 'scam-sender-list', text: `The sender's address is on a list of known scam senders (${senderOnList}).` });
     const sd = hostResults.get(senderDomain);
     if (sd && sd.verdict === 'unsafe') signals.push({ weight: 5, kind: 'sender-domain-blocked', text: `The sender's domain ${senderDomain} is blocked by Cloudflare Security as malware or phishing.` });
+    else if (senderDomainListed && isReport(senderDomainListed)) signals.push({ weight: 2, kind: 'sender-domain-reported', text: `The sender's domain ${senderDomain} was reported as phishing or malware by ${senderDomainListed} (community reports).` });
     else if (senderDomainListed) signals.push({ weight: 5, kind: 'sender-domain-listed', text: `The sender's domain ${senderDomain} is listed as phishing by ${senderDomainListed}.` });
+    if (reported.length) {
+        const r = reported[0], host = hostOf(r.j.finalUrl || r.j.url);
+        signals.push({ weight: 2, kind: 'reported-link', text: `${reported.length === 1 ? `A link's site (${host}) was` : `${reported.length} links' sites were`} reported as phishing or malware by ${r.by} in the last 30 days (community reports: a sign, not proof).` });
+    }
     else if (sd && sd.verdict === 'nonexistent') signals.push({ weight: 3, kind: 'sender-domain-missing', text: `The sender's domain ${senderDomain} doesn't exist, so the address is made up.` });
     if (typeof senderAge === 'number') {
         checks.ages++;

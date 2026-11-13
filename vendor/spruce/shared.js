@@ -409,9 +409,19 @@ function cloudStoragePage(urlString) {
 // OpenPhish: exact phishing URLs. Phishing Army: phishing hostnames (CC BY-NC 4.0). Sefinek: scam and
 // phishing sender addresses (MIT).
 // ---------------------------------------------------------------------------
+// Downloaded once a day (src/intel/feeds.js). confidence 'report' (0.5.21): community reports, not a curated
+// list: a match is a sign, never "dangerous" on its own (src/engine/network.js). format: how the download is
+// read ('lines' when not said).
 const PHISH_FEEDS = [
-    { id: 'openphish',    name: 'OpenPhish community feed', url: 'https://openphish.com/feed.txt', kind: 'url', license: 'OpenPhish Terms of Use', home: 'https://openphish.com' },
+    // (OpenPhish moved its community feed to GitHub in 2026; its old address redirects there.)
+    { id: 'openphish',    name: 'OpenPhish community feed', url: 'https://raw.githubusercontent.com/openphish/public_feed/refs/heads/main/feed.txt', kind: 'url', license: 'OpenPhish Terms of Use', home: 'https://openphish.com' },
     { id: 'phishingarmy', name: 'Phishing Army (extended)', url: 'https://phishing.army/download/phishing_army_blocklist_extended.txt', kind: 'domain', license: 'CC BY-NC 4.0', home: 'https://phishing.army' },
+    // HaGeZi's Threat Intelligence Feeds, medium version (about 366,000 phishing, malware and scam domains,
+    // gathered from many feeds; the full one, 1.4 million, is too large to keep in memory). "*.domain": the
+    // domain and every name under it.
+    { id: 'hagezitif',    name: 'HaGeZi Threat Intelligence Feeds', url: 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium.txt', kind: 'domain', license: 'GPL-3.0', home: 'https://github.com/hagezi/dns-blocklists' },
+    // TweetFeed: domains security researchers reported on X in the last 30 days (#phishing, #malware…).
+    { id: 'tweetfeed',    name: 'TweetFeed (researchers\' reports)', url: 'https://api.tweetfeed.live/v1/month/domain', kind: 'domain', format: 'tweetfeed-json', confidence: 'report', license: 'CC0 1.0', home: 'https://tweetfeed.live' },
     // Sender addresses used for scams and phishing (exact addresses only), for the sender checks (Gmail).
     { id: 'sefinekemails', name: 'Sefinek scam-sender list', url: 'https://raw.githubusercontent.com/sefinek/Blacklisted-Emails/main/blacklist/LIST.txt', kind: 'address', license: 'MIT', home: 'https://github.com/sefinek/Blacklisted-Emails', requires: 'enableSenderAddressCheck' }
 ];
