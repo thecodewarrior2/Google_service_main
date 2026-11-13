@@ -279,8 +279,8 @@ class Service {
         }));
     }
     // A change made on the dashboard (the server checks the project ID, and the agreement for enforce mode).
-    // In force at once here, everywhere within POLICY_REFRESH_MS; noted in Activity, and emailed as an alert
-    // (the time zone: noted only).
+    // In force at once here, everywhere within POLICY_REFRESH_MS; noted in Activity → What admins did (not
+    // emailed, 0.5.28: an alert is a problem).
     async setPolicy(key, raw, by) {
         if (!POLICY_KEYS.includes(key)) throw Object.assign(new Error('That setting can\'t be changed on the dashboard.'), { status: 400 });
         const value = policyValue(key, raw, { orgDomains: this.cfg.orgDomains, aiThreshold: this.cfg.aiThreshold, aiSuspicious: this.cfg.aiSuspicious });
@@ -312,8 +312,7 @@ class Service {
               + (key === 'timeZone' ? ' The weekly summary uses it now; the nightly jobs move to it the next time deploy/install.sh runs.' : '')
               + (key === 'retentionDays' ? (value < before ? ` Records older than ${value} days are deleted over the next hours, the oldest first.`
                   : ` Records saved from now on are kept ${value} days; the ones already saved keep the date they had (${before} days after they arrived).`) : '');
-        if (key === 'timeZone') await this.store.addEvent({ kind: 'settings', text });
-        else await this.alert('settings', text, { policy: key });
+        await this.adminNotice('settings', text, { policy: key });
         return { key, value, before };
     }
 
@@ -749,6 +748,18 @@ class Service {
         await this.store.addEvent(Object.assign({ kind, text, alert: true }, extra));
         if (this.log.warn) this.log.warn(JSON.stringify({ severity: 'WARNING', spruceAlert: kind, message: text }));
     }
+    // Alerts are the problems the admins are emailed about (0.5.28): a list that missed its download, a
+    // service or the AI model that stopped working, the brake, a campaign paused… An admin's own action (a
+    // policy change, an update started, a Safe Browsing key) isn't one: it is recorded in Activity → What
+    // admins did, and not emailed.
+    async adminNotice(kind, text, extra = {}) { await this.store.addEvent(Object.assign({ kind, text, admin: true }, extra)); }
+    // An alert at most once a day (per kind and UTC day, whichever instance sees it first): for a problem that
+    // lasts (a lookup service down, the AI model not loading).
+    async alertDaily(kind, text, extra = {}) {
+        if (!(await this.store.setStateIfUnset(`alert-${kind}-${new Date(this.now()).toISOString().slice(0, 10)}`, { at: this.now() }))) return false;
+        await this.alert(kind, text, extra);
+        return true;
+    }
 
     async brakeOn() { return !!(await this.store.getState('brake')); }
     // The admin resumes: the hour's count starts again (a new counter), and with moveHeld the copies the
@@ -1042,6 +1053,9 @@ class Service {
             } else out = { health, skipped: 'checked within the day' };
             if (out.feeds) { try { await this.listsAlert(out.feeds); } catch (e) { this.log.error('phishing lists, alert:', e); } }
         }
+        // An update from Settings → Update that failed, or stopped (0.5.28): the build records it in Activity;
+        // the admins are emailed here, once (the build itself can't send the email).
+        try { await this.updateProblems(); } catch (e) { this.log.error('the last update\'s outcome:', e); }
         // An approved version that needs a manual install (0.5.24): noted, and the admins alerted once.
         if (this.releases) {
             try { const m = await require('./update').checkManualInstall({ cfg: this.cfg, store: this.store, releases: this.releases, cloudrun: this.cloudrun || null, alert: (t) => this.alert('update-manual', t) }); if (m) out.manualInstall = m.manual.version; }
@@ -1066,13 +1080,27 @@ class Service {
             + `The previous copy is still used, and the download is tried again every 3 hours. Dashboard: Settings → About shows each list's state, with a Re-check button.`);
         return true;
     }
+    async updateProblems() {
+        const up = await this.store.getState('update');
+        if (!up || !up.at) return null;
+        const stalled = ['requested', 'building'].includes(up.phase) && this.now() - up.at > require('./update').RUNNING_MS;
+        if (up.phase !== 'failed' && !stalled) return null;
+        if (!(await this.store.setStateIfUnset(`updateProblemEmailed-${up.at}`, { at: this.now() }))) return null;
+        const text = up.phase === 'failed'
+            ? `The update from ${up.from || 'the installed version'} to ${up.version} failed: ${up.message || 'it stopped'}. Nothing changed, unless the deploy stopped half-way (then bash deploy/rollback.sh goes back). Cloud Build's history has the log (tag spruce-update).`
+            : `The update to ${up.version} asked for by ${up.by || 'an admin'} didn't finish within 45 minutes. Cloud Build's history (tag spruce-update) says why; Settings → Update shows it too.`;
+        // (a failed one is already in Activity, recorded by the build: emailed only; a stalled one is recorded too)
+        if (up.phase === 'failed') { if (this.log.warn) this.log.warn(JSON.stringify({ severity: 'WARNING', spruceAlert: 'update-failed', message: text })); }
+        else await this.alert('update-failed', text);
+        return text;
+    }
     // An admin's "Re-check" (Settings → About): every list that missed its download, or isn't up to date, is
     // downloaded again now; one downloaded within the day is left as it is (the projects publish them for free).
     async recheckLists(by) {
         if (!this.intel || !this.intel.feeds) return { error: 'The phishing lists are off (PHISHING_LISTS=off).', status: 400 };
         const out = await this.intel.feeds.sync({ retryFailed: true });
         const got = out.feeds.filter(r => r.count != null), failed = out.feeds.filter(r => r.error);
-        await this.store.addEvent({ kind: 'lists', text: `${by} re-checked the phishing lists: ${got.length ? `${got.map(r => r.name).join(', ')} downloaded` : 'none needed a download'}${failed.length ? `; ${failed.map(r => r.name).join(', ')} still missed ${failed.length === 1 ? 'its' : 'their'} download` : ''}.` });
+        await this.store.addEvent({ kind: 'lists', admin: true, text: `${by} re-checked the phishing lists: ${got.length ? `${got.map(r => r.name).join(', ')} downloaded` : 'none needed a download'}${failed.length ? `; ${failed.map(r => r.name).join(', ')} still missed ${failed.length === 1 ? 'its' : 'their'} download` : ''}.` });
         return { feeds: out.feeds, recovered: out.recovered || [], lists: await this.intel.feeds.status() };
     }
 

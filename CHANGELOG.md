@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.28: Alerts are the problems the admins are emailed about; an admin's own changes are what admins did
+
+- **What an alert is.** An alert is a problem the admins are emailed about (to `ALERT_EMAIL`), such as a
+  list that missed its download or a service that stopped working. Status → Activity → **Alerts** lists those
+  only, each marked "alert, emailed to the admins".
+- **An admin's own change is not an alert.** A policy change (and the allowlist), an update started from
+  Settings → Update, and a Safe Browsing key saved or removed are noted in Activity → **What admins did**,
+  and no longer emailed. Older records of them move there too.
+- **Problems that weren't emailed now are:**
+  - **Cloudflare Security or Safe Browsing down:** every lookup failing for 30 minutes (`OUTAGE_MS`; our
+    own request limits don't count);
+  - **Google refusing the Safe Browsing key** (revoked, restricted, quota): at once;
+  - **the AI model not working in the worker** (not loaded, or its self-check failing) when an instance
+    starts;
+  - **an update from the dashboard that failed** (the build records it in Activity but can't send email: the
+    hourly job emails it), **or never finished** (45 minutes).
+
+  A problem that lasts is emailed at most once a day (`alertDaily`).
+- **Unchanged:** an automatic alert of an admin-related kind (a large campaign, a failed update) is an alert,
+  not something an admin did.
+- docs/ARCHITECTURE.md lists every alert.
+- Tests: `test/activity.test.js`.
+
 ## 0.5.27: The dashboard's days are the organization's, not UTC's
 
 - **The fix.** Every day the dashboard counts was a UTC day: the chart's columns, its tooltip ("Emails

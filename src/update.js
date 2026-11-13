@@ -130,7 +130,7 @@ async function startUpdate({ cfg, store, releases, scheduler, service, admin, bo
         await store.setState('update', { phase: 'failed', version: to, from, by: admin.email, at, message: `the spruce-update job couldn't be started: ${String(e.message).slice(0, 200)}` });
         return { error: `The update couldn't be started: ${String(e.message).slice(0, 200)}`, status: 502 };
     }
-    await service.alert('update', `${admin.email} started an update from ${from} to ${to} on the dashboard (confirmed with the project ID and their own email address, and agreed). Both services are rebuilt and redeployed with their settings as they are; it takes about 10 minutes.`, { version: to });
+    await service.adminNotice('update', `${admin.email} started an update from ${from} to ${to} on the dashboard (confirmed with the project ID and their own email address, and agreed). Both services are rebuilt and redeployed with their settings as they are; it takes about 10 minutes.`, { version: to });
     return { started: { from, to } };
 }
 

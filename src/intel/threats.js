@@ -21,12 +21,27 @@ const CF_REFERENCE = 'https://cloudflare-dns.com/dns-query';
 const SB_URL = 'https://safebrowsing.googleapis.com/v4/threatMatches:find';
 const SB_TYPES = { MALWARE: 'malware', SOCIAL_ENGINEERING: 'phishing or a deceptive site', UNWANTED_SOFTWARE: 'unwanted software', POTENTIALLY_HARMFUL_APPLICATION: 'a harmful app' };
 const CLEAN_TTL = 6 * 60 * 60 * 1000, BAD_TTL = 24 * 60 * 60 * 1000;
+// A lookup service whose every lookup has failed for this long is "down" (0.5.28): the admins are alerted
+// (setAlert: the service's, at most once a day). Our own request limits ("service busy") don't count.
+const OUTAGE_MS = 30 * 60 * 1000;
 const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/;
 
 // sbKey: src/intel/sbkey.js (the key in use, and where each lookup's outcome is noted); without it, the
 // environment's cfg.safeBrowsingKey.
-function createThreats({ http, cfg, engine, version = '0', sbKey = null }) {
+function createThreats({ http, cfg, engine, version = '0', sbKey = null, now = () => Date.now() }) {
     const hostCache = new TtlCache(), urlCache = new TtlCache();
+    // Since when every lookup of each service has failed (null: it works), and who to tell.
+    const down = { cloudflare: null, safeBrowsing: null };
+    let onOutage = null;
+    const NAMES = { cloudflare: 'Cloudflare Security', safeBrowsing: 'Google Safe Browsing' };
+    async function outcome(name, ok) {
+        if (ok) { down[name] = null; return; }
+        if (!down[name]) { down[name] = now(); return; }
+        if (now() - down[name] >= OUTAGE_MS && onOutage) {
+            try { await onOutage(name, `${NAMES[name]}'s lookups have all failed for ${Math.round((now() - down[name]) / 60000)} minutes: ${name === 'cloudflare' ? 'link sites and sender domains' : 'links'} aren't checked with it meanwhile (they are "not checked", never "safe"; the other checks still run). It usually comes back by itself; Status → Service status shows how it is going.`); }
+            catch (e) { /* told next time */ }
+        }
+    }
     const useCf = cfg.cloudflareThreats !== false;
     // On: the setting (dashboard or SAFE_BROWSING), read at each lookup; and a key (a saved one is read then).
     const sbOn = () => cfg.safeBrowsing !== false && (sbKey ? !!cfg.safeBrowsing : !!cfg.safeBrowsingKey);
@@ -63,7 +78,11 @@ function createThreats({ http, cfg, engine, version = '0', sbKey = null }) {
                 const r = await cloudflare(h);
                 if (r.verdict !== 'unknown') hostCache.set(h, r, r.verdict === 'unsafe' ? BAD_TTL : CLEAN_TTL);
                 out.set(h, r);
-            } catch (e) { out.set(h, { verdict: 'unknown', by: 'Cloudflare Security', reason: `not checked (${e.name === 'ServiceBusyError' ? 'service busy' : 'lookup failed'})` }); }
+                await outcome('cloudflare', true);
+            } catch (e) {
+                out.set(h, { verdict: 'unknown', by: 'Cloudflare Security', reason: `not checked (${e.name === 'ServiceBusyError' ? 'service busy' : 'lookup failed'})` });
+                if (e.name !== 'ServiceBusyError') await outcome('cloudflare', false);
+            }
         }));
         return out;
     }
@@ -113,14 +132,19 @@ function createThreats({ http, cfg, engine, version = '0', sbKey = null }) {
                 for (const o of originals) out.set(o, r);
             }
             if (sbKey) await sbKey.noteResult(true, null);
+            await outcome('safeBrowsing', true);
         } catch (e) {
             for (const originals of sent.values()) for (const o of originals) out.set(o, { verdict: 'unknown', by: 'Google Safe Browsing', reason: `not checked (${e.name === 'ServiceBusyError' ? 'service busy' : 'lookup failed'})` });
-            // Google refusing the key (revoked, restricted, quota) is worth telling the admins; a network blip isn't.
+            // Google refusing the key (revoked, restricted, quota): the admins are told at once (sbkey.js); a network
+            // blip isn't worth it, but every lookup failing for OUTAGE_MS is.
             if (sbKey && e.sbAnswered) await sbKey.noteResult(false, e.message);
+            else if (e.name !== 'ServiceBusyError') await outcome('safeBrowsing', false);
         }
         return out;
     }
-    return { checkHosts, checkUrls, forLookup, enabled: { cloudflare: useCf, get safeBrowsing() { return sbOn(); } } };
+    return { checkHosts, checkUrls, forLookup, enabled: { cloudflare: useCf, get safeBrowsing() { return sbOn(); } },
+        // fn(service, text): when a service has been down for OUTAGE_MS (the server passes the service's daily alert)
+        setAlert(fn) { onOutage = fn; }, down };
 }
 
-module.exports = { createThreats, SINKHOLE_RE };
+module.exports = { createThreats, SINKHOLE_RE, OUTAGE_MS };

@@ -744,7 +744,7 @@
         const allowed = ((d.policy && d.policy.allowDomains && d.policy.allowDomains.value) || d.allowDomains || []).length;
         const addresses = d.policy && d.policy.allowAddresses ? d.policy.allowAddresses.value.length : d.allowAddresses;
         return [h('h1', { text: 'Policy' }), h('p', { class: 'sub', text: 'What is moved to Spam, and when. The settings below can be changed here, each change confirmed with the Google Cloud project ID; the rest is set when the service is deployed (deploy/settings.env, docs/DEPLOY.md).' }),
-            policyCard(d, POLICY_ROWS, 'Policy', 'Each change needs the Google Cloud project ID, applies within 30 seconds, is noted in Status → Activity, and is emailed as an alert (a time zone change is only noted). When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.'),
+            policyCard(d, POLICY_ROWS, 'Policy', 'Each change needs the Google Cloud project ID, applies within 30 seconds, and is noted in Status → Activity → What admins did. When deploy/settings.env says something else, deploy/install.sh (and upgrade.sh) asks which to keep, and writes the answer into settings.env.'),
             h('section', { class: 'card spaced' }, h('h2', { text: 'How it decides' }), h('dl', { class: 'kv' },
                 kvRow('Moved: sender outside', d.moveOnRules ? `either one is enough: the AI scores ${pct(d.aiThreshold)} or more, or the rules flag it (a rules score of 5 or more). The AI score needs no rule, link check or other sign to agree.`
                     : `when the AI scores ${pct(d.aiThreshold)} or more (MOVE_ON_RULES is off: the rules alone don't move mail).`),
@@ -762,7 +762,7 @@
     }
     async function allowlist() {
         const d = await settingsData();
-        return [h('h1', { text: 'Allowlist' }), h('p', { class: 'sub', text: 'Senders whose mail is never moved or marked suspicious, whatever the checks find, as long as Gmail\'s DMARC check passes for them (a forged address is judged like any other). Each change needs the Google Cloud project ID, and is emailed as an alert.' }),
+        return [h('h1', { text: 'Allowlist' }), h('p', { class: 'sub', text: 'Senders whose mail is never moved or marked suspicious, whatever the checks find, as long as Gmail\'s DMARC check passes for them (a forged address is judged like any other). Each change needs the Google Cloud project ID, and is noted in Status → Activity → What admins did.' }),
             h('div', { class: 'alert warning' }, h('div', {}, h('b', { text: 'Add only senders you trust. ' }), 'If one of their accounts is taken over, the phishing it sends isn\'t caught. Your own domains can\'t be added: a staff account taken over would never be moved. Single addresses in them can.')),
             policyCard(d, ALLOW_ROWS, 'Allowlisted senders', 'A change applies within 30 seconds and is noted in Status → Activity. When deploy/settings.env (ALLOW_DOMAINS, ALLOW_ADDRESSES) says something else, deploy/install.sh asks which to keep, and writes the answer into settings.env.')];
     }
@@ -870,7 +870,7 @@
                 kvRow('Safe Browsing', sb.on ? 'On: the links in each email are also looked up with Google' : 'Off'),
                 kvRow('API key', keyText),
                 kvRow('Lookups', lookups),
-                kvRow('Changes', 'Each needs the Google Cloud project ID, applies everywhere within 30 seconds, is noted in Status → Activity, and is emailed as an alert.')),
+                kvRow('Changes', 'Each needs the Google Cloud project ID, applies everywhere within 30 seconds, and is noted in Status → Activity → What admins did. Google refusing the key is an alert: the admins are emailed.')),
                 h('div', { class: 'actions' }, switchForm)),
             keyCard,
             h('section', { class: 'card spaced' }, h('h2', { text: 'Getting a key' }),
@@ -970,12 +970,16 @@
     async function activity(params) {
         const kind = params.get('kind') || '';
         const d = await api(`/api/activity?${q({ days: String(days), kind })}`);
-        const sel = h('select', { 'aria-label': 'Kind' }, [['', 'Everything'], ['alert', 'Alerts'], ['admin', 'What admins did'], ['error', 'Errors and gaps'], ['watch', 'Watching mailboxes']]
+        const sel = h('select', { 'aria-label': 'Kind' }, [['', 'Everything'], ['alert', 'Alerts (problems, emailed)'], ['admin', 'What admins did'], ['error', 'Errors and gaps'], ['watch', 'Watching mailboxes']]
             .map(([v, l]) => h('option', { value: v, text: l, selected: v === kind })));
         sel.addEventListener('change', () => go(`#/activity?${q({ kind: sel.value })}`));
         return [h('h1', { text: 'Activity' }), h('p', { class: 'sub', text: `Alerts, what admins did, errors and the watching of mailboxes, last ${days} days (newest first, up to 500).` }),
             h('div', { class: 'toolbar' }, sel),
-            h('section', { class: 'card' }, d.events.length ? h('ul', { class: 'events' }, d.events.map(e => h('li', { class: e.alert ? 'alerted' : '' }, h('time', { text: `${when(e.at)}${e.alert ? ' · alert' : ''}` }), e.text)))
+            // An alert (a problem the admins were emailed about) in red; an admin's own change is never one (0.5.28).
+            h('section', { class: 'card' }, d.events.length ? h('ul', { class: 'events' }, d.events.map(e => {
+                const alerted = e.alert && !e.adminAction;
+                return h('li', { class: alerted ? 'alerted' : '' }, h('time', { text: `${when(e.at)}${alerted ? ' · alert, emailed to the admins' : ''}` }), ' ', e.text);
+            }))
                 : h('div', { class: 'empty', text: 'Nothing in this period.' }))];
     }
 

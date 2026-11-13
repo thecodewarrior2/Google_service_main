@@ -79,9 +79,17 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   Inbox: the service's rules never move a suspicious email, an admin's decision can. Nothing is ever
   withheld from a mailbox. The counters are spread so one busy
   campaign doesn't make every move wait for one Firestore document; the daily stats are spread too.
-- **Alerts.** The service logs each alert as a structured line (`spruceAlert`, `message`) and adds it to
-  Recent activity. Cloud Monitoring emails them, and any failed Cloud Scheduler job, to `ALERT_EMAIL`
-  (log-based alert policies made by `deploy/install.sh`). The hourly `spruce-sync-feeds` job runs a
+- **Alerts.** An alert is a problem the admins are emailed about (0.5.28). The service logs each one as a
+  structured line (`spruceAlert`, `message`) and adds it to Activity → Alerts; Cloud Monitoring emails them,
+  and any failed Cloud Scheduler job, to `ALERT_EMAIL` (log-based alert policies made by `deploy/install.sh`).
+  They are: a phishing list that missed its download; Cloudflare Security or Safe Browsing whose every
+  lookup failed for 30 minutes, or Google refusing the Safe Browsing key; the AI model not working in the
+  worker; no notification from Gmail for `QUIET_HOURS`, or watches about to end; the directory not readable;
+  the brake; a campaign whose moving paused, a large campaign, a mass share from one outside account; a
+  user taking a flagged email out of Spam or into the Inbox; an update from the dashboard that failed or
+  never finished; an approved version that needs a manual install. A problem that lasts is emailed at most
+  once a day. An admin's own change (a policy change, an update started, a Safe Browsing key) is not an
+  alert: it is noted in Activity → What admins did, and not emailed. The hourly `spruce-sync-feeds` job runs a
   health check: no notification from Gmail for `QUIET_HOURS`, or watches about to end. It also downloads
   the phishing lists once a day, and a list whose download failed again 3 hours later
   (`state/feedHealth` keeps each list's last download); a list that newly fails, and once a day one that

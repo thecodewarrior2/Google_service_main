@@ -96,7 +96,8 @@ test('the button: the agreement, the project ID and the admin\'s own address; th
     const req = await s.store.getState('updateRequest');
     assert.deepEqual([req.version, req.commit, req.by], ['9.9.9', SHA, `it.head@${ORG}`]);
     assert.equal((await s.store.getState('update')).phase, 'requested');
-    assert.match(s.warned[0].message, /^it\.head@maple-schools\.example started an update from .* to 9\.9\.9 on the dashboard \(confirmed with the project ID and their own email address, and agreed\)/);
+    assert.deepEqual(s.warned, [], '0.5.28: an update started is what an admin did, not an alert');
+    assert.ok((await s.store.listEvents(0)).some(e => e.kind === 'update' && e.admin && !e.alert && /^it\.head@maple-schools\.example started an update from .* to 9\.9\.9 on the dashboard \(confirmed with the project ID and their own email address, and agreed\)/.test(e.text)));
     // While it runs: not again.
     r = await s.press(OK);
     assert.equal(r.status, 409); assert.match(r.error, /under way/);

@@ -36,7 +36,7 @@ test('retention: 35 days by default, 14 to 365; changed on the dashboard, noted 
     const ev = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
     assert.ok(ev.includes(`it.head@${ORG} changed how long records are kept from 35 days to 60 days on the dashboard (confirmed with the project ID). Records saved from now on are kept 60 days; the ones already saved keep the date they had (35 days after they arrived).`));
     assert.ok(ev.includes(`it.head@${ORG} changed how long records are kept from 60 days to 30 days on the dashboard (confirmed with the project ID). Records older than 30 days are deleted over the next hours, the oldest first.`));
-    assert.deepEqual(warned.map(w => w.spruceAlert), ['settings', 'settings']);
+    assert.deepEqual(warned, [], '0.5.28: noted under What admins did, not emailed');
     // Another instance (the worker) takes it at its next refresh; Settings shows where it comes from.
     const other = new Service({ cfg: loadConfig(ENV), store, gmail: {}, log: { error() {} } });
     await other.refreshPolicy({ force: true });

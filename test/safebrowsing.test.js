@@ -202,7 +202,7 @@ test('dashboard: save a key (project ID; tested; turned on), it never comes back
         assert.equal(st.checks.safeBrowsing, true);
         assert.ok(st.safeBrowsing.saved && st.safeBrowsing.saved.by);
         assert.ok(!JSON.stringify(st).includes(GOOD) && !everything(store).includes(GOOD), 'not in any answer, nor in the records');
-        const ev = (await store.listEvents(0)).filter(e => e.alert && e.kind === 'settings').map(e => e.text);
+        const ev = (await store.listEvents(0)).filter(e => e.admin && !e.alert && e.kind === 'settings').map(e => e.text);   // (0.5.28: what admins did, not emailed)
         assert.ok(ev.some(t => /saved a new Google Safe Browsing API key on the dashboard/.test(t)));
         assert.ok(ev.some(t => /turned on Google Safe Browsing on the dashboard/.test(t)));
         // Status says it works.

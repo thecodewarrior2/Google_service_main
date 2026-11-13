@@ -46,6 +46,7 @@ function createSafeBrowsingKey({ cfg, store, secrets = null, http = null, now = 
     const envKey = cfg.safeBrowsingKey || '';
     let cache = { version: undefined, key: null }, checkedAt = 0, loading = null;
     let health = null, healthWrittenAt = 0;
+    let onRefused = null;   // fn(text): Google refusing the key is an alert (0.5.28; the server passes the daily alert)
 
     async function refresh() {
         checkedAt = now();
@@ -106,6 +107,10 @@ function createSafeBrowsingKey({ cfg, store, secrets = null, http = null, now = 
     async function noteResult(ok, error, { force = false } = {}) {
         const changed = !health || health.ok !== ok;
         health = { ok, at: now(), error: ok ? null : String(error || '').slice(0, 160) };
+        if (!ok && onRefused) {
+            try { await onRefused(`Google Safe Browsing refuses the saved API key (${health.error}): links aren't looked up with Google until it works again (they are "not checked", never "safe"; the other checks still run). Settings → Safe Browsing: check the key in the Google Cloud console, or save a new one.`); }
+            catch (e) { /* told next time */ }
+        }
         if (!force && !changed && now() - healthWrittenAt < HEALTH_EVERY_MS) return;
         healthWrittenAt = now();
         try { await store.setState(HEALTH, health); } catch (e) { /* noted next time */ }
@@ -117,7 +122,7 @@ function createSafeBrowsingKey({ cfg, store, secrets = null, http = null, now = 
         return { available: !!secrets, saved: m && m.set ? { by: m.by || '', at: m.at || null } : null, removed: m && !m.set && m.at ? { by: m.by || '', at: m.at } : null,
             envKey: !!envKey, health: h || null, offline };
     }
-    return { get, test, save, remove, noteResult, status };
+    return { get, test, save, remove, noteResult, status, setAlert(fn) { onRefused = fn; } };
 }
 
 module.exports = { createSafeBrowsingKey, memorySecrets, keyProblem, KEY_RE, TEST_URL, META, HEALTH };

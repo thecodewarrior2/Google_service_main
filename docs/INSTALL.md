@@ -189,8 +189,7 @@ When it finishes, it prints the **dashboard address**.
 - **Mode, AI move threshold, AI suspicious line, brake and time zone** can also be changed on the
   dashboard: **Settings → Policy → Change** (and the allowlist on **Settings → Allowlist**).
   - Each change needs the Google Cloud project ID, and switching to enforce mode also needs **I agree**.
-  - A change applies everywhere within 30 seconds, is noted in Status → Activity, and is emailed as an
-    alert (a time zone change is only noted).
+  - A change applies everywhere within 30 seconds and is noted in Status → Activity → What admins did.
   - The next `install.sh` (or `upgrade.sh`, `update.sh`) compares the dashboard with
     `deploy/settings.env`:
 
@@ -251,7 +250,8 @@ When it finishes, it prints the **dashboard address**.
      API key, restrict it to that API).
   2. Paste it on the page with the project ID. It is tried with Google first, then kept in Secret Manager
      only (never shown again); tick **Turn Safe Browsing on** to start at once.
-  3. **Turn off** stops it; **Remove the key** destroys it. Each change is emailed as an alert.
+  3. **Turn off** stops it; **Remove the key** destroys it. Each change is noted in Activity; Google refusing
+     the key, or Safe Browsing not answering for 30 minutes, is an alert (the admins are emailed).
 
   From 0.5.23. An existing installation upgrades to it from Cloud Shell, once: `bash deploy/update.sh` once
   it is approved, or `bash deploy/upgrade.sh` from an unzipped copy (see "Upgrading to a new version"). The
@@ -283,8 +283,8 @@ and **Update to …** installs it like `update.sh` does, without Cloud Shell:
 2. Tick **I agree**, type the Google Cloud project ID and the email address you are signed in with.
 3. Click **Update to …**. Both services are rebuilt from that version and redeployed with their
    settings as they are, in about 10 minutes. Mail keeps being checked meanwhile. The page shows
-   requested, building, then done or failed. Its start is emailed as an alert; Activity says how it
-   ended.
+   requested, building, then done or failed. Activity notes who started it and how it ended; a failure,
+   or a build that never finished, is an alert (the admins are emailed).
 
 - **Set it up once from Cloud Shell:** the first version with this page (0.3.9) is installed with
   `bash deploy/update.sh` or `upgrade.sh`, which creates what it needs (below). Until then the page

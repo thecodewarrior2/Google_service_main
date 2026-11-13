@@ -34,7 +34,7 @@ function buildDigest(records, stats, events, ctx) {
     const unreviewed = week.filter(r => (r.action === 'move' || r.action === 'would-move') && !r.markedBy).length;
     const strong = week.filter(r => (r.action === 'move' || r.action === 'would-move') && r.evidence === 'strong').length;
     const top = A.campaigns(records, now, 7).slice(0, 5);
-    const alerts = events.filter(e => e.alert && e.at >= from).length;
+    const alerts = events.filter(e => e.alert && !A.isAdminAction(e) && e.at >= from).length;   // (not an admin's own change, 0.5.28)
     const period = `${dateIn(from, ctx.timeZone)} to ${dateIn(now, ctx.timeZone)}`;
     const enforce = ctx.mode === 'enforce';
     const subject = `S.P.R.U.C.E+ weekly summary: ${enforce ? `${n(s.moved)} moved to Spam` : `${n(s.wouldMove)} would be moved`}, ${period}`;

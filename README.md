@@ -243,8 +243,7 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     suspicious line is never above the move threshold.
     - Each change needs the Google Cloud project ID; five wrong ones lock it for 10 minutes.
     - Switching to enforce mode also needs **I agree**, next to how many Readiness checks pass.
-    - A change applies everywhere within 30 seconds, is noted in Activity, and is emailed as an alert
-      (a time zone change is only noted).
+    - A change applies everywhere within 30 seconds and is noted in Activity (What admins did).
     - Each setting says where its value comes from: settings.env, or changed here, by whom and when.
   - **Allowlist:** the domains and addresses never moved (when Gmail's DMARC check passes for them),
     changed the same way, one per line. Your own domains can't be added; single addresses in them can.
@@ -263,8 +262,8 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - both services are rebuilt from that version and redeployed with their settings as they are, by a
       Cloud Build the dashboard can only start (it can't deploy anything itself). It takes about
       10 minutes, and the page follows it: requested, building, done or failed;
-    - its start is noted in Activity and emailed as an alert; how it ended is in Activity (a failure as
-      an alert) and on the page.
+    - its start is noted in Activity (What admins did); how it ended is in Activity and on the page, and a
+      failure, or a build that never finished, is an alert: the admins are emailed.
 
     A version that changes the installation itself (new permissions, jobs or settings) is installed
     from Cloud Shell, `bash deploy/update.sh`: the page says so instead of offering the button. So is

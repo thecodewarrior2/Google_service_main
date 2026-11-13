@@ -226,9 +226,20 @@
         return [cols.map(c => c[0]).join(','), ...records.map(r => cols.map(c => cell(c[1](r))).join(','))].join('\r\n') + '\r\n';
     }
 
-    // Recent activity, by kind: alerts, what admins did, errors, and the watching of mailboxes.
-    const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest', 'training', 'clear', 'update'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
+    // An admin's own action (0.5.28): a policy change, an update started, a Safe Browsing key saved or removed.
+    // Listed under "What admins did", never "Alerts": an alert is a problem the admins are emailed about.
+    // (Before 0.5.28 these were also emailed and marked as alerts: told apart by their kind, and an update's by
+    // its text.)
+    function isAdminAction(e) {
+        return !!e && (e.admin === true || e.kind === 'settings' || (e.kind === 'update' && !!e.alert && / started an update from /.test(String(e.text || ''))));
+    }
+    // Recent activity, by kind: alerts (what needs looking at), what admins did, errors, and the watching of
+    // mailboxes. An automatic alert of an admin-related kind (a large campaign, an update that failed) is an
+    // alert, not something an admin did.
+    const ADMIN_KINDS = ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest', 'training', 'clear', 'update'];
+    const ACTIVITY = { alert: (e) => !!e.alert && !isAdminAction(e), admin: (e) => isAdminAction(e) || (ADMIN_KINDS.includes(e.kind) && !e.alert),
+        error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
-    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity };
+    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity, isAdminAction };
 });

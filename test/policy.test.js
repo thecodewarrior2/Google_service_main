@@ -46,7 +46,8 @@ test('a change applies at once here, within the refresh everywhere, is noted and
     assert.ok(ev.includes(`it.head@${ORG} changed the AI move threshold from 90% to 92% on the dashboard (confirmed with the project ID).`));
     assert.ok(ev.includes(`it.head@${ORG} changed the brake from automatic (half the watched mailboxes, at least 100) to 250 moves an hour on the dashboard (confirmed with the project ID).`));
     assert.ok(ev.some(t => /changed the time zone from UTC to America\/Chicago .*the nightly jobs move to it the next time deploy\/install\.sh runs\./.test(t)));
-    assert.deepEqual(warned.map(w => w.spruceAlert), ['settings', 'settings', 'settings'], 'emailed as alerts, the time zone aside');
+    assert.deepEqual(warned, [], '0.5.28: an admin\'s own change is not an alert: not emailed');
+    assert.ok((await store.listEvents()).filter(e => e.kind === 'settings').every(e => e.admin === true && !e.alert), 'what admins did');
     // Another instance (its own copy of the settings) sees them at its next refresh.
     const b = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {} } });
     assert.equal(b.cfg.mode, 'monitor');
@@ -135,7 +136,7 @@ test('the allowlist on the dashboard: lists checked (never the organization\'s o
     const texts = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
     assert.ok(texts.includes(`it.head@${ORG} changed the allowlisted domains on the dashboard (confirmed with the project ID): added news.example, vendor.example. Mail from them is never moved when Gmail's DMARC check passes for it.`));
     assert.ok(texts.includes(`it.head@${ORG} changed the allowlisted domains on the dashboard (confirmed with the project ID): added bus-company.example; removed news.example. Mail from them is never moved when Gmail's DMARC check passes for it.`));
-    assert.equal(warned.length, 3, 'each emailed as an alert');
+    assert.equal(warned.length, 0, '0.5.28: noted under What admins did, not emailed');
     // Another instance, at its refresh.
     const b = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {} } });
     await b.refreshPolicy({ force: true });
@@ -162,7 +163,7 @@ test('the AI suspicious line on the dashboard: never above the move threshold, n
     await svc.setPolicy('aiSuspicious', 0.8, `it.head@${ORG}`);   // (equal to the threshold: allowed)
     const texts = (await store.listEvents()).filter(e => e.kind === 'settings').map(e => e.text);
     assert.ok(texts.includes(`it.head@${ORG} changed the AI suspicious line from 65% to 75% on the dashboard (confirmed with the project ID).`));
-    assert.equal(warned.length, 3, 'each emailed as an alert');
+    assert.equal(warned.length, 0, '0.5.28: noted under What admins did, not emailed');
     const b = new Service({ cfg: loadConfig(ENV), store, gmail: gmail(), log: { error() {} } });
     await b.refreshPolicy({ force: true });
     assert.deepEqual([b.cfg.aiSuspicious, b.cfg.aiThreshold], [0.8, 0.8]);

@@ -113,6 +113,11 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
     // The hourly job looks for an approved version that needs a manual install (0.5.24), with these.
     if (service && typeof service === 'object' && !cfg.demo) { if (!service.releases) service.releases = releases; if (!service.cloudrun) service.cloudrun = cloudrun; }
+    // A lookup service that stopped working is an alert, at most once a day (0.5.28).
+    if (service && service.intel && typeof service.alertDaily === 'function') {
+        if (service.intel.threats && service.intel.threats.setAlert) service.intel.threats.setAlert((name, text) => service.alertDaily(`${name}-down`, text));
+        if (service.intel.sbKey && service.intel.sbKey.setAlert) service.intel.sbKey.setAlert((text) => service.alertDaily('safe-browsing-key', text));
+    }
     // The last 32 days at first, older records when a page shows them (Last 90 days), never past how long
     // records are kept (RETENTION_DAYS, or Settings → Policy: the copy forgets them too).
     const cache = new RecordCache(store, { keepDays: () => Math.min(92, cfg.retentionDays || 35) });
@@ -370,7 +375,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             let saved;
             try { saved = await sbKey().save(key, admin.email); }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw new Error('saving the Safe Browsing key failed: ' + String(e.message || '').slice(0, 200)); }
-            await service.alert('settings', `${admin.email} saved a new Google Safe Browsing API key on the dashboard (confirmed with the project ID${saved.tested ? '; Google accepted it' : ''}). It is kept in Secret Manager; older keys there were destroyed.`);
+            await service.adminNotice('settings', `${admin.email} saved a new Google Safe Browsing API key on the dashboard (confirmed with the project ID${saved.tested ? '; Google accepted it' : ''}). It is kept in Secret Manager; older keys there were destroyed.`);
             let turnedOn = false;
             if (body.turnOn === true && !cfg.safeBrowsing) { await service.setPolicy('safeBrowsing', true, admin.email); turnedOn = true; }
             return { saved: true, tested: saved.tested, turnedOn, safeBrowsing: await safeBrowsingInfo() };
@@ -383,7 +388,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             if (cfg.safeBrowsing) await service.setPolicy('safeBrowsing', false, admin.email);
             try { await sbKey().remove(admin.email); }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw new Error('removing the Safe Browsing key failed: ' + String(e.message || '').slice(0, 200)); }
-            await service.alert('settings', `${admin.email} removed the Google Safe Browsing API key on the dashboard (confirmed with the project ID): every copy in Secret Manager was destroyed, and Safe Browsing is off.`);
+            await service.adminNotice('settings', `${admin.email} removed the Google Safe Browsing API key on the dashboard (confirmed with the project ID): every copy in Secret Manager was destroyed, and Safe Browsing is off.`);
             return { removed: true, safeBrowsing: await safeBrowsingInfo() };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
@@ -540,7 +545,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             } finally { exporting = false; }
         },
         // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
-        'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500) }),
+        // (adminAction: an admin's own change, emailed like an alert but not one: shown as "emailed", 0.5.28)
+        'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500).map(e => Object.assign({}, e, { adminAction: A.isAdminAction(e) })) }),
         // "Ready for enforce mode?"
         'GET /api/readiness': async (q) => {
             const { records } = await load(q);
@@ -679,6 +685,12 @@ async function reportEngine({ cfg, store }) {
     if (cfg.role === 'admin') return st;
     const ok = st.state === 'ready' && !!(st.check && st.check.ok);
     await store.setState('engine-worker', Object.assign({}, st, { ok, at: Date.now(), version: VERSION, revision: process.env.K_REVISION || '' }));
+    // The AI model not working is an alert (0.5.28), once a day whichever instance starts.
+    if (!ok && await store.setStateIfUnset(`alert-ai-model-${new Date().toISOString().slice(0, 10)}`, { at: Date.now() })) {
+        const text = `The AI model doesn't work in the worker (${st.state}${st.error ? `: ${String(st.error).slice(0, 160)}` : st.check && !st.check.ok ? ': its self-check failed' : ''}): emails are judged by the rule checks alone meanwhile. Status → Service status shows it; installing the version again (bash deploy/update.sh) usually fixes it.`;
+        await store.addEvent({ kind: 'ai-model', text, alert: true });
+        console.warn(JSON.stringify({ severity: 'WARNING', spruceAlert: 'ai-model', message: text }));
+    }
     return st;
 }
 
