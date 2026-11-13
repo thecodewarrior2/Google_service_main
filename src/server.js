@@ -372,7 +372,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const n = nDays(q), now = Date.now();
             return { summary: A.summary(records, stats, now, n), trend: A.trend(records, stats, now, n), topReasons: A.topReasons(records, now, n).slice(0, 8),
                      campaigns: A.campaigns(records, now, n).slice(0, 5), alerts: (await store.listEvents(now - 7 * A.DAY)).slice(0, 10),
-                     brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode,
+                     brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode, aiThreshold: cfg.aiThreshold,
                      // The phishing lists that missed their download (0.5.22): the overview's banner.
                      missedLists: await missedLists(),
                      // Phishing found after delivery, not yet marked seen (0.5.35): the overview's banner.

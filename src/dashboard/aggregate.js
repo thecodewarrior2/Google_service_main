@@ -65,19 +65,27 @@
             flagged: rs.filter(r => r.action === 'flag').length, released: released.length, userReleased: userReleased.length,
             falseAlarms: rs.filter(r => r.falseAlarm === true).length, usersAffected: users.size, campaigns: camps.size,
             releaseRate: moved.length ? released.length / moved.length : 0, errors: sum('errors'),
-            byTrigger: Object.fromEntries(Object.keys(TRIGGERS).map(k => [k, rs.filter(r => (r.action === 'move' || r.action === 'would-move') && r.trigger === k).length]))
+            byTrigger: Object.fromEntries(Object.keys(TRIGGERS).map(k => [k, rs.filter(r => (r.action === 'move' || r.action === 'would-move') && r.trigger === k).length])),
+            // (0.5.45) what would move them, apart: monitor mode's answer to "how much do rules + AI add?"
+            wouldMoveBy: Object.fromEntries(Object.keys(TRIGGERS).map(k => [k, rs.filter(r => r.action === 'would-move' && (r.trigger || 'rules') === k).length])),
+            movedBy: Object.fromEntries(Object.keys(TRIGGERS).map(k => [k, moved.filter(r => (r.trigger || 'rules') === k).length]))
         };
     }
 
     function trend(records, stats, now, n) {
         const ds = days(now, n);
-        const byDay = Object.fromEntries(ds.map(d => [d, { day: d, scanned: 0, rules: 0, ai: 0, 'rules+ai': 0, wouldMove: 0, flagged: 0, released: 0 }]));
+        // Each day: moved by trigger (rules, ai, rules+ai), would move (monitor mode, or held) by trigger
+        // ('wm:rules'…), and both together by trigger ('by:rules'…: the chart's columns, 0.5.45).
+        const blank = (d) => Object.assign({ day: d, scanned: 0, wouldMove: 0, flagged: 0, released: 0 },
+            ...Object.keys(TRIGGERS).map(t => ({ [t]: 0, [`wm:${t}`]: 0, [`by:${t}`]: 0 })));
+        const byDay = Object.fromEntries(ds.map(d => [d, blank(d)]));
         for (const s of stats) if (byDay[s.day]) byDay[s.day].scanned = s.scanned || 0;
         for (const r of records) {
             const d = byDay[dayOf(r.processedAt)];
             if (!d) continue;
-            if (isMove(r)) d[r.trigger || 'rules']++;
-            else if (r.action === 'would-move') d.wouldMove++;
+            const t = TRIGGERS[r.trigger] ? r.trigger : 'rules';
+            if (isMove(r)) { d[t]++; d[`by:${t}`]++; }
+            else if (r.action === 'would-move') { d.wouldMove++; d[`wm:${t}`]++; d[`by:${t}`]++; }
             else d.flagged++;
             if (r.state === 'released' && r.releasedAt && byDay[dayOf(r.releasedAt)]) byDay[dayOf(r.releasedAt)].released++;
         }

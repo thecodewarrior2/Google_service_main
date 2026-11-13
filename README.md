@@ -194,7 +194,10 @@ The dashboard has four tabs: **Overview**, **Email**, **Status** and **Settings*
 Settings each have a menu on the left (a row of buttons above the page on a phone).
 
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per
-  day by trigger; top reasons; largest campaigns; alerts.
+  day by trigger; top reasons; largest campaigns; alerts. The daily chart (0.5.45) shows every email checked
+  behind the emails moved (or, in monitor mode, that would be moved), each colored by what triggered it: rules +
+  AI, the AI score alone, the rules alone, an admin's confirmation; **Zoom in to the moved ones** fits the scale to
+  them. In monitor mode the big number says how many would move by each trigger.
 - **Email**, with the number of emails waiting for review on the tab:
   - **Review:** emails nobody has reviewed, one at a time, in two queues (the menu shows how many are
     left in the first). The copies of one email (a campaign: the same email to many people) are one item,

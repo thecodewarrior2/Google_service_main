@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.45: Monitor mode says what would move each email; the daily chart shows the emails checked behind
+
+- **Would move, by trigger.** In monitor mode everything landed under one "Would move". Now the Overview's daily
+  chart colors each email moved, or that would be moved, by what triggered it: **rules + AI**, **the AI score
+  alone**, **the rules alone**, or **an admin's confirmation** (moved and would-move together; hover a day, or the
+  table, to see them apart). The big number says, in monitor mode, how many would move by each ("38 would be moved:
+  20 by rules + AI, 8 by the AI score alone, 10 by the rules alone"), and a line under the chart gives the shares
+  for the period: how much the AI and rules together decide, and how much either alone.
+- **Emails checked behind.** The chart draws every email checked per day behind the moved ones, in its own neutral
+  color, on the same scale (one axis, never two). Moved emails are a small share of what is checked, so **Zoom in to
+  the moved ones** fits the axis to them (the checked ones aren't drawn then; remembered in the browser). The table
+  view lists checked, and moved and would-move per trigger, day by day.
+- Tests: `test/activity.test.js`.
+
 ## 0.5.44: Phishing-training emails can be let through (Settings → Phishing training)
 
 Training emails from KnowBe4, Wizer and similar services are let through unchecked when an admin sets rules for

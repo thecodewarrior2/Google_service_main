@@ -150,37 +150,52 @@
     }
     // Stacked columns, one per day; series: [{ key, name, color }]. totals: the tooltip also gives the day's
     // emails checked (first) and moved back (last), when the rows have them (Overview's trend).
-    function stackedColumns(rows, series, { label = 'day', totals = false } = {}) {
+    // back: a column drawn behind the stack, on the same axis (the emails checked, 0.5.45), unless zoom (the
+    // axis fits the stack alone; the back column isn't drawn, never cut). One axis always.
+    function stackedColumns(rows, series, { label = 'day', totals = false, back = null, zoom = false } = {}) {
         const W = chartWidth(), H = 230, L = 38, B = 24, T = 10, R = 8;
         const pw = W - L - R, ph = H - B - T;
-        const ax = niceAxis(Math.max(1, ...rows.map(r => series.reduce((a, se) => a + (r[se.key] || 0), 0)))), max = ax.max;
+        const stackMax = Math.max(1, ...rows.map(r => series.reduce((a, se) => a + (r[se.key] || 0), 0)));
+        const showBack = !!back && !zoom;
+        const ax = niceAxis(showBack ? Math.max(stackMax, ...rows.map(r => r[back.key] || 0)) : stackMax), max = ax.max;
         const band = pw / rows.length, bw = Math.max(3, Math.min(24, band * 0.62));
+        const backW = Math.max(bw + 4, Math.min(band - 2, bw + 12));
         const y = (v) => T + ph - (v / max) * ph;
-        const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Emails per ${label}, by reason` });
+        const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Emails per ${label}${showBack ? ', checked and moved' : ''}, by reason` });
         for (let i = 0; i <= ax.n; i++) {
             const v = ax.step * i, yy = y(v);
             svg.append(s('line', { class: i === 0 ? 'baseline' : 'gridline', x1: L, x2: W - R, y1: yy, y2: yy }));
             svg.append(s('text', { x: L - 6, y: yy + 3.5, 'text-anchor': 'end' }, compact(v)));
         }
         const every = Math.max(1, Math.ceil(rows.length / Math.max(3, Math.floor(pw / 90))));
+        // what each column holds: moved, would move, or both (the tooltip and the table say which)
+        const split = (r, se) => {
+            if (!se.trig) return num(r[se.key] || 0);
+            const m = r[se.trig] || 0, w = r[`wm:${se.trig}`] || 0;
+            return m && w ? `${num(m)} moved, ${num(w)} would move` : w ? `${num(w)} would move` : m ? `${num(m)} moved` : '0';
+        };
         rows.forEach((r, i) => {
             const x = L + i * band + (band - bw) / 2;
             let acc = 0;
             const segs = series.filter(se => (r[se.key] || 0) > 0);
-            const checked = totals && typeof r.scanned === 'number' ? [{ name: 'Emails checked', value: num(r.scanned) }] : [];
-            const back = totals && typeof r.released === 'number' ? [{ name: 'Moved back', value: num(r.released) }] : [];
+            const checked = (totals || back) && typeof r.scanned === 'number' ? [{ name: 'Emails checked', value: num(r.scanned), color: back ? css(back.color) : undefined }] : [];
+            const moved = totals && typeof r.released === 'number' ? [{ name: 'Moved back', value: num(r.released) }] : [];
             const g = s('g', { class: 'bar', tabindex: 0, role: 'img',
-                'aria-label': `${dayLabel(r.day)}: ${[...checked, ...series.map(se => ({ name: se.name, value: r[se.key] || 0 })), ...back].map(x => `${x.name} ${x.value}`).join(', ')}` });
+                'aria-label': `${dayLabel(r.day)}: ${[...checked, ...series.map(se => ({ name: se.name, value: split(r, se) })), ...moved].map(x => `${x.name} ${x.value}`).join(', ')}` });
+            if (showBack && (r[back.key] || 0) > 0) {
+                const yb = y(r[back.key]);
+                g.append(s('path', { class: 'back-col', d: colPath(L + i * band + (band - backW) / 2, yb, backW, y(0) - yb, true), fill: css(back.color) }));
+            }
             segs.forEach((se, j) => {
                 const v = r[se.key];
                 const y0 = y(acc), y1 = y(acc + v);
                 const top = j === segs.length - 1;
                 const hgt = Math.max(0, y0 - y1 - (j > 0 ? 2 : 0));           // 2px surface gap between segments
-                if (hgt > 0) g.append(s('path', { d: colPath(x, y1, bw, hgt, top), fill: css(se.color) }));
+                if (hgt > 0) g.append(s('path', { d: colPath(x, y1, bw, Math.max(hgt, showBack ? 1.5 : 0), top), fill: css(se.color) }));
                 acc += v;
             });
             g.append(s('rect', { class: 'hit', x: L + i * band, y: T, width: band, height: ph }));
-            const rowsTip = [...checked, ...series.map(se => ({ name: se.name, value: num(r[se.key] || 0), color: css(se.color) })), ...back];
+            const rowsTip = [...checked, ...series.map(se => ({ name: se.name, value: split(r, se), color: css(se.color) })), ...moved];
             g.addEventListener('pointermove', (e) => showTip(e, dayLabel(r.day), rowsTip));
             g.addEventListener('focus', (e) => showTip(e, dayLabel(r.day), rowsTip));
             g.addEventListener('pointerleave', hideTip); g.addEventListener('blur', hideTip);
@@ -272,12 +287,15 @@
     const q = (o) => Object.entries(o).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 
     // --- Views -----------------------------------------------------------------------------------
+    // The daily chart's columns (0.5.45): by what triggered the move, moved or (monitor mode, or held by a
+    // brake) would be moved; the emails checked behind them, on the same scale.
     const TREND_SERIES = [
-        { key: 'rules+ai', name: 'Moved: rules + AI', color: '--s1' },
-        { key: 'ai', name: 'Moved: AI score only', color: '--s2' },
-        { key: 'rules', name: 'Moved: rules only', color: '--s3' },
-        { key: 'wouldMove', name: 'Would move (monitor)', color: '--s4' }
+        { key: 'by:rules+ai', trig: 'rules+ai', name: 'Rules + AI', color: '--s1' },
+        { key: 'by:ai', trig: 'ai', name: 'AI score only', color: '--s2' },
+        { key: 'by:rules', trig: 'rules', name: 'Rules only', color: '--s3' },
+        { key: 'by:admin', trig: 'admin', name: 'Confirmed by an admin', color: '--s4' }
     ];
+    const CHECKED_SERIES = { key: 'scanned', name: 'Emails checked', color: '--total' };
 
     async function overview() {
         const d = await api(`/api/overview?days=${days}`);
@@ -313,7 +331,9 @@
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
-        const hero = d.mode === 'enforce' ? { label: 'Moved to Spam', value: sm.moved, note: movedBack } : { label: 'Would be moved', value: sm.wouldMove, note: 'monitor mode: recorded only' };
+        const wb = sm.wouldMoveBy || {};
+        const hero = d.mode === 'enforce' ? { label: 'Moved to Spam', value: sm.moved, note: movedBack }
+            : { label: 'Would be moved', value: sm.wouldMove, note: `monitor mode, recorded only: ${num(wb['rules+ai'] || 0)} by rules + AI, ${num(wb.ai || 0)} by the AI score alone, ${num(wb.rules || 0)} by the rules alone` };
         out.push(h('div', { class: 'grid kpis' },
             h('div', { class: 'card kpi hero' }, h('div', { class: 'label', text: hero.label }), h('div', { class: 'value', text: num(hero.value) }), h('div', { class: 'note', text: hero.note })),
             kpi('Emails checked', compact(sm.scanned), `last ${days} days`),
@@ -321,17 +341,35 @@
             kpi('Campaigns', num(sm.campaigns), 'same sender and subject'),
             kpi(d.mode === 'enforce' ? 'Recorded, not moved' : 'Moved', num(d.mode === 'enforce' ? sm.wouldMove : sm.moved), d.mode === 'enforce' ? 'monitor phase or brake' : sm.moved ? movedBack : ''),
             kpi('Suspicious only', num(sm.flagged), 'amber, below the move rules')));
-        // Trend
-        const chartBox = h('div', { class: 'chart' }, stackedColumns(d.trend, TREND_SERIES, { totals: true }));
+        // Trend (0.5.45): the emails checked behind, on the same scale; Zoom in fits the axis to the moved ones.
+        let zoom = false;
+        try { zoom = localStorage.getItem('spruce.trendZoom') === 'on'; } catch (e) { /* not kept */ }
         let asTable = false;
+        const chartBox = h('div', { class: 'chart' });
+        const draw = () => {
+            chartBox.textContent = '';
+            chartBox.append(asTable ? dataTable([{ name: 'Day', get: r => dayLabel(r.day) }, { name: 'Checked', num: true, get: r => num(r.scanned) },
+                ...TREND_SERIES.flatMap(se => [{ name: `${se.name}: moved`, num: true, get: r => num(r[se.trig] || 0) }, { name: `${se.name}: would move`, num: true, get: r => num(r[`wm:${se.trig}`] || 0) }]),
+                { name: 'Moved back', num: true, get: r => num(r.released) }], d.trend.slice().reverse())
+                : stackedColumns(d.trend, TREND_SERIES, { totals: true, back: CHECKED_SERIES, zoom }));
+        };
+        draw();
         const toggle = h('button', { class: 'linkbtn', type: 'button', text: 'Show as table' });
-        toggle.addEventListener('click', () => {
-            asTable = !asTable; toggle.textContent = asTable ? 'Show as chart' : 'Show as table'; chartBox.textContent = '';
-            chartBox.append(asTable ? dataTable([{ name: 'Day', get: r => dayLabel(r.day) }, { name: 'Checked', num: true, get: r => num(r.scanned) }, ...TREND_SERIES.map(se => ({ name: se.name, num: true, get: r => num(r[se.key]) })), { name: 'Moved back', num: true, get: r => num(r.released) }], d.trend.slice().reverse())
-                                    : stackedColumns(d.trend, TREND_SERIES, { totals: true }));
+        const zoomBtn = h('button', { class: 'linkbtn', type: 'button', 'aria-pressed': String(zoom), text: zoom ? 'Show emails checked' : 'Zoom in to the moved ones' });
+        toggle.addEventListener('click', () => { asTable = !asTable; toggle.textContent = asTable ? 'Show as chart' : 'Show as table'; zoomBtn.hidden = asTable; draw(); });
+        zoomBtn.addEventListener('click', () => {
+            zoom = !zoom; zoomBtn.setAttribute('aria-pressed', String(zoom)); zoomBtn.textContent = zoom ? 'Show emails checked' : 'Zoom in to the moved ones';
+            try { localStorage.setItem('spruce.trendZoom', zoom ? 'on' : 'off'); } catch (e) { /* not kept */ }
+            draw();
         });
+        // How much each trigger adds (moved or would move), in words.
+        const bt = sm.byTrigger || {}, totalBy = (bt['rules+ai'] || 0) + (bt.ai || 0) + (bt.rules || 0);
+        const share = (n) => (totalBy ? ` (${pct(n / totalBy)})` : '');
+        const triggerNote = totalBy ? h('p', { class: 'small muted trigger-note', text: `In these ${days} days, of ${num(totalBy)} emails moved or that would be moved: ${num(bt['rules+ai'] || 0)} by the rules and the AI together${share(bt['rules+ai'] || 0)}, ${num(bt.ai || 0)} by the AI score alone${share(bt.ai || 0)} (the AI score alone moves an email at ${pct(d.aiThreshold || 0.9)}), and ${num(bt.rules || 0)} by the rules alone${share(bt.rules || 0)}.` }) : null;
         out.push(h('div', { class: 'grid two' },
-            h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Emails moved per day' }), h('div', { class: 'sub', text: 'By what triggered the move; hover a day for its numbers and the emails checked that day.' })), toggle), legend(TREND_SERIES), chartBox),
+            h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Emails checked and moved per day' }),
+                h('div', { class: 'sub', text: `Behind: every email checked. In front: the emails moved${d.mode === 'enforce' ? '' : ', or in monitor mode that would be moved,'} by what triggered it. On one scale the moved ones are a small share: zoom in to see them. Hover a day for its numbers.` })),
+                h('div', { class: 'chart-actions' }, zoomBtn, toggle)), legend([CHECKED_SERIES, ...TREND_SERIES]), chartBox, triggerNote),
             h('section', { class: 'card' }, h('h2', { text: 'Top reasons' }), h('div', { class: 'sub', text: 'Signs found in moved and would-move emails.' }),
                 d.topReasons.length ? hbars(d.topReasons.map(r => ({ name: r.reason, value: r.count }))) : h('div', { class: 'empty', text: 'Nothing moved in this period.' }))));
         out.push(h('div', { class: 'grid two' },
