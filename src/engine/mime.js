@@ -18,7 +18,10 @@ function receiverAuth(rawHead, receiverHost = 'mx.google.com') {
         if (v.split(';')[0].trim().toLowerCase() !== receiverHost) continue;
         const get = (k) => { const r = new RegExp(`\\b${k}=([a-z]+)`, 'i').exec(v); return r ? r[1].toLowerCase() : null; };
         const from = /header\.from=([^\s;]+)/i.exec(v);
-        return { dmarc: get('dmarc'), spf: get('spf'), dkim: get('dkim'), arc: get('arc'), headerFrom: from ? from[1].toLowerCase() : null };
+        // Every domain whose DKIM signature the receiver verified (header.i=@mail.beehiiv.com or header.d=…):
+        // a third party among them is the service that sent the email (0.5.19).
+        const dkimDomains = [...new Set([...v.matchAll(/dkim=pass\b[^;]*?\bheader\.[id]=@?([A-Za-z0-9.-]+\.[A-Za-z]{2,})/gi)].map(m => m[1].toLowerCase()))];
+        return { dmarc: get('dmarc'), spf: get('spf'), dkim: get('dkim'), arc: get('arc'), headerFrom: from ? from[1].toLowerCase() : null, dkimDomains };
     }
     return null;
 }

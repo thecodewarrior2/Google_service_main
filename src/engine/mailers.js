@@ -1,41 +1,29 @@
 'use strict';
-// Marketing mail services' own click-tracking domains (0.5.18): a newsletter's link whose text shows a brand's
-// site (open.spotify.com) goes through the service that sent it (link.mail.beehiiv.com/v2/c/…), which records
-// the click and then sends the reader on. Where it ends isn't in the link: following it would click it as the
-// reader. These domains are the services' own, registered for years; the engine's built-in click trackers
-// (vendor/spruce/shared.js espTrackers: Mailchimp, SendGrid, Klaviyo…) are never even counted as mismatched,
-// so this list holds the others. A link through one of them is only a warning, and only when the reputation
-// lookups find nothing against the domain and it isn't new (network.js); otherwise it is judged as before.
-// Kept to the services' click and redirect domains (a registrable domain each), with the service's name.
-const MARKETING_MAILERS = new Map(Object.entries({
-    'beehiiv.com': 'beehiiv',
-    'substack.com': 'Substack',
-    'mailerlite.com': 'MailerLite', 'mlsend.com': 'MailerLite', 'mlsend2.com': 'MailerLite',
-    'hubspotlinks.com': 'HubSpot',
-    'mjt.lu': 'Mailjet',
-    'createsend.com': 'Campaign Monitor', 'createsend1.com': 'Campaign Monitor', 'cmail19.com': 'Campaign Monitor', 'cmail20.com': 'Campaign Monitor',
-    'gr8.com': 'GetResponse',
-    'eomail1.com': 'EmailOctopus', 'eomail4.com': 'EmailOctopus',
-    'customeriomail.com': 'Customer.io',
-    'e2ma.net': 'Emma',
-    'bmetrack.com': 'Benchmark Email',
-    'maillist-manage.com': 'Zoho Campaigns', 'maillist-manage.net': 'Zoho Campaigns'
-}));
-// (Not here: platforms where anyone can publish pages, such as site builders: a mail service's click
-// tracker only forwards to the sender's link.)
+// A newsletter's link through the mail service that sent it (0.5.19; 0.5.18 used a hand-kept list of
+// services, which this replaces). A link whose text shows a brand's site (open.spotify.com) can go through
+// the sending service's click tracker (link.mail.beehiiv.com/v2/c/…), which records the click and sends the
+// reader on; where it ends isn't in the link, and following it would click it as the reader. The sending
+// service is known without any list: the receiver (Gmail) verified its DKIM signature on the email, and it is
+// a third party, not the sender's own domain. A link through it is a warning, and only when the reputation
+// lookups find nothing against that domain and it isn't new (network.js); otherwise it is judged as before.
 
-// The mail service whose click tracker a host is ('beehiiv'), or null. registrableDomain: the engine's.
-function mailerOf(host, registrableDomain) {
-    const h = String(host || '').toLowerCase();
-    const reg = registrableDomain ? registrableDomain(h) : h;
-    return MARKETING_MAILERS.get(reg) || null;
+// The service that sent the email, if the link's host is one: { domain } or null.
+//   facts.auth.dkimDomains: the domains whose DKIM signature the receiver verified (mime.receiverAuth);
+//   registrableDomain: the engine's.
+function sendingService(host, facts, registrableDomain) {
+    const reg = registrableDomain(String(host || '').toLowerCase());
+    const auth = (facts && facts.auth) || {};
+    const from = registrableDomain(String((facts && facts.senderAddress) || '').toLowerCase().split('@')[1] || '');
+    if (!reg || !from || reg === from) return null;                   // the sender's own domain: no third party
+    const signers = (auth.dkimDomains || []).map(d => registrableDomain(d)).filter(Boolean);
+    return signers.includes(reg) ? { domain: reg } : null;
 }
 
 // A "link text shows another site" finding: the link's host, or null.
 const MISMATCH_RE = /^link text shows \S+(?: \(a well-known brand\))? but the link goes to ([^\s;,)]+)$/;
 function mismatchHost(reason) { const m = MISMATCH_RE.exec(String(reason || '')); return m ? m[1].toLowerCase() : null; }
 
-// Not new: a mail service's domain registered at least this long ago (a new look-alike of one is not it).
+// Not new: the service's domain registered at least this long ago (a brand-new sender's own setup is not one).
 const MAILER_MIN_AGE_DAYS = 180;
 
-module.exports = { MARKETING_MAILERS, mailerOf, mismatchHost, MAILER_MIN_AGE_DAYS };
+module.exports = { sendingService, mismatchHost, MAILER_MIN_AGE_DAYS };

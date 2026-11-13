@@ -34,8 +34,11 @@ test('a genuine newsletter (DMARC pass, hidden preheader, its own links) stays c
 
 test('only the receiving server\'s own verification results count (a sender can add its own header)', () => {
     const head = 'Authentication-Results: evil.example; dmarc=pass header.from=bank.example\r\nAuthentication-Results: mx.google.com;\r\n dkim=none; spf=fail smtp.mailfrom=x@evil.example; dmarc=fail header.from=bank.example';
-    assert.deepEqual(receiverAuth(head), { dmarc: 'fail', spf: 'fail', dkim: 'none', arc: null, headerFrom: 'bank.example' });
+    assert.deepEqual(receiverAuth(head), { dmarc: 'fail', spf: 'fail', dkim: 'none', arc: null, headerFrom: 'bank.example', dkimDomains: [] });
     assert.equal(receiverAuth('Authentication-Results: evil.example; dmarc=pass'), null);
+    // The verified signers (0.5.19): the receiver's own passing DKIM results only.
+    const signed = 'Authentication-Results: evil.example; dkim=pass header.i=@mail.beehiiv.com\r\nAuthentication-Results: mx.google.com;\r\n dkim=pass header.i=@news.sender.example header.s=s1;\r\n dkim=fail header.d=other.example; dmarc=pass header.from=news.sender.example';
+    assert.deepEqual(receiverAuth(signed).dkimDomains, ['news.sender.example']);
 });
 
 test('HTML reading: hidden text, filler after a gap, pictures only, quoted history, links', () => {

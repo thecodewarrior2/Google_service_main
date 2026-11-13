@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.19: The sending mail service known from the email's signature, not a list
+
+- 0.5.18's hand-kept list of marketing mail services is gone. The service that sent a newsletter is
+  known from the email itself: the third party whose DKIM signature Gmail verified (the receiver's own
+  Authentication-Results, `dkim=pass header.i=@mail.beehiiv.com`; `mime.receiverAuth` now keeps those
+  domains, `dkimDomains`), never the sender's own domain. A link whose text shows a well-known site but
+  goes through that service's domain gets the same reputation check as in 0.5.18 (Cloudflare and the
+  phishing lists clean, Safe Browsing too when on, registered 180 days ago or more): a warning, 1 point.
+  It covers every such service, including ones nobody listed; a link to one in an email it didn't send,
+  or a scammer's own domain signing its own email, stays dangerous.
+- The URI blocklists (SURBL, URIBL, Spam Eating Monkey) were looked at for the reputation: they refuse or
+  fail queries from shared resolvers such as Google's, where the service runs (URIBL answers "refused" to
+  its own test entry through Google's DNS), and they only say a domain is bad, not which service sent an
+  email.
+- Tests: `test/mailers.test.js`, `test/engine.test.js` (made-up mail).
+
+
 ## 0.5.18: A reputation check before a newsletter's link is called dangerous
 
 - **A newsletter sent through beehiiv was moved to Spam**: its "Listen on open.spotify.com" link goes

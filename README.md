@@ -99,11 +99,13 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
 
 **Reputation check before a newsletter's link is called dangerous.** A link whose text shows a well-known
-site but goes somewhere else is dangerous, except when it goes through a known marketing mail service's
-click tracker (`src/engine/mailers.js`: beehiiv, Substack, MailerLite, HubSpot, Mailjet, Campaign
-Monitor…; Mailchimp, SendGrid, Klaviyo and others were never counted) and the lookups vouch for that
-service: Cloudflare and the phishing lists checked its domain and found nothing (nor did Safe Browsing,
-when on), and its registry date isn't recent (180 days or more). Then it is a warning: the link is amber,
+site but goes somewhere else is dangerous, except when it goes through the click tracker of the mail
+service that sent the email, and the lookups vouch for that service. The sending service needs no list:
+it is the third party whose DKIM signature Gmail verified on the email (link.mail.beehiiv.com in an email
+signed by mail.beehiiv.com for a podcast's own domain; never the sender's own domain). The lookups:
+Cloudflare and the phishing lists checked its domain and found nothing (nor did Safe Browsing, when on),
+and its registry date isn't recent (180 days or more). (The engine's own click-tracker recognition, such
+as Mailchimp's and SendGrid's, still applies.) Then it is a warning: the link is amber,
 and the email gets 1 point, never enough to move it alone. Blocked, listed, recently registered, or not
 checked (a lookup that didn't answer): dangerous, as before.
 
