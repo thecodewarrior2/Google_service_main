@@ -102,6 +102,8 @@ function loadConfig(env = process.env) {
         // site or sender an email of the last RECHECK_DAYS days has, and suspicious mail an hour and a day
         // after it arrived.
         recheck: bool(env.RECHECK, true),
+        // Help → About & credits shows a Donate button (0.5.46), as the extension does; DONATE_BUTTON=off hides it.
+        donateButton: bool(env.DONATE_BUTTON, true),
         // The look-alike watch (0.5.36; on by default): look-alikes of ORG_DOMAINS asked of Cloudflare's public
         // DNS resolver, a pass a day; the new ones are alerts and strong signs in mail.
         lookalikeWatch: bool(env.LOOKALIKE_WATCH, true),

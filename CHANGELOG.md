@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.46: A Help tab, an architecture deep dive, and About & credits with a Donate button
+
+- **Help (a new tab)**, like the S.P.R.U.C.E+ extension's: How it works, The dashboard, Alerts, Your privacy,
+  Google Workspace settings, Install & troubleshooting, Settings reference, Costs, Architecture deep dive, and
+  About & credits. Each page is this version's own doc (README.md, docs/*.md), read from the image, so Help always
+  matches what is installed. Links between the docs open the matching Help page; web links a new tab. The page
+  renders the Markdown as text (never HTML): headings, lists (numbered too), tables, code, links.
+- **The architecture deep dive** (docs/ARCHITECTURE.md) now walks through an email step by step, the checks
+  (what each reads, its signs and weights, where the code is), what is stored where (every Firestore collection,
+  how long), the hourly job in order, re-checking delivered mail, the look-alike watch, the optional services,
+  and the security model, before the design choices.
+- **About & credits:** the version and model, who made it, the open-source libraries and data sources with their
+  licenses and terms, and a **Donate** button (the extension's), which `DONATE_BUTTON=off` hides.
+- **The image now holds `docs/` and `README.md`** (Dockerfile, .dockerignore, .gcloudignore), for Help.
+- Tests: `test/server.test.js`.
+
 ## 0.5.45: Monitor mode says what would move each email; the daily chart shows the emails checked behind
 
 - **Would move, by trigger.** In monitor mode everything landed under one "Would move". Now the Overview's daily

@@ -466,3 +466,25 @@ test('text from emails wraps inside its card: long links, addresses and subjects
     for (const sel of ['.signals li', 'dl.kv']) assert.ok(rules.some(r => r.sel.includes(sel) && /grid-template-columns:[^;]*minmax\(0, 1fr\)/.test(r.body)), `${sel}'s text column can shrink`);
     assert.ok(rules.some(r => r.sel.includes('.alert .grow') && /min-width:\s*0/.test(r.body)), 'an alert\'s text can shrink');
 });
+
+test('0.5.46: Help shows this version\'s own docs (only those listed, only the sections listed); About & credits has a Donate button unless turned off', async () => {
+    const cfg = loadConfig({ DEMO: '1', ORG_DOMAINS: 'maple-schools.example' });
+    const { store } = await buildDemo({ cfg, now: Date.now() });
+    const service = new Service({ cfg, store, gmail });
+    const srv = http.createServer(createApp({ cfg, store, service }));
+    await new Promise(r => srv.listen(0, r));
+    const get = (p) => new Promise((resolve, reject) => http.get({ port: srv.address().port, path: p }, (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) })); }).on('error', reject));
+    try {
+        const how = await get('/api/help?doc=howitworks');
+        assert.equal(how.body.title, 'How it works');
+        assert.match(how.body.markdown, /^S\.P\.R\.U\.C\.E Mail Protection Service checks every new email/);
+        assert.match(how.body.markdown, /## How it decides/);
+        assert.ok(!/Two repositories|## Try it|## Layout/.test(how.body.markdown), 'only the sections listed');
+        const arch = await get('/api/help?doc=architecture');
+        assert.match(arch.body.markdown, /## An email, step by step[\s\S]*## The checks[\s\S]*## What is stored where[\s\S]*## Security/);
+        assert.equal((await get('/api/help?doc=settings')).body.markdown.split('\n')[0], '## Settings (environment variables)');
+        for (const bad of ['../package.json', 'CLAUDE', 'secrets', '']) assert.ok([404].includes((await get(`/api/help?doc=${encodeURIComponent(bad)}`)).status) || bad === '', bad);
+        assert.equal((await get('/api/settings')).body.donateButton, true);
+    } finally { srv.close(); }
+    assert.equal(loadConfig({ DEMO: '1', DONATE_BUTTON: 'off' }).donateButton, false);
+});

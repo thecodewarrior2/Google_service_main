@@ -1354,19 +1354,42 @@
     }
     // A changelog entry's Markdown, as page elements (text only, never HTML): paragraphs, lists (nested by
     // indentation), tables, code blocks, **bold** and `code`.
+    // (0.5.46) Links too: a web address opens in a new tab; a link to one of the docs the Help tab shows opens it
+    // there; any other is its text.
+    const HELP_FILES = { 'README.md': 'help', 'ALERTS.md': 'helpalerts', 'PRIVACY.md': 'helpprivacy', 'WORKSPACE.md': 'helpworkspace', 'INSTALL.md': 'helpinstall', 'DEPLOY.md': 'helpsettings', 'COSTS.md': 'helpcosts', 'ARCHITECTURE.md': 'helparchitecture' };
+    function mdLink(label, href) {
+        if (/^https:\/\/[^\s]+$/i.test(href)) return h('a', { href, target: '_blank', rel: 'noopener noreferrer', text: label });
+        const file = (/([A-Z]+\.md)(#.*)?$/.exec(href) || [])[1];
+        if (file && HELP_FILES[file]) return h('a', { href: `#/${HELP_FILES[file]}`, text: label });
+        return document.createTextNode(label);
+    }
     function inlineMd(text) {
-        const out = [], re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+        const out = [], re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
         let last = 0, m;
         while ((m = re.exec(text))) {
             if (m.index > last) out.push(text.slice(last, m.index));
-            out.push(m[0].startsWith('**') ? h('b', { text: m[0].slice(2, -2) }) : h('code', { text: m[0].slice(1, -1) }));
+            if (m[0].startsWith('[')) { const lm = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(m[0]); out.push(mdLink(lm[1], lm[2])); }
+            else out.push(m[0].startsWith('**') ? h('b', { text: m[0].slice(2, -2) }) : h('code', { text: m[0].slice(1, -1) }));
             last = re.lastIndex;
         }
         if (last < text.length) out.push(text.slice(last));
         return out;
     }
+    // A paragraph's or list item's wrapped lines joined first (0.5.46: **bold** and links can wrap in the docs).
+    function joinWrapped(text) {
+        const out = [];
+        let code = false;
+        const block = (l) => /^\s*(```|\||#{1,4}\s|- |\d+\. )/.test(l);
+        for (const line of String(text || '').split('\n')) {
+            if (/^\s*```/.test(line)) { code = !code; out.push(line); continue; }
+            const prev = out.length ? out[out.length - 1] : '';
+            if (!code && line.trim() && prev.trim() && !block(line) && !/^\s*(```|\|)/.test(prev) && !/^#{1,4}\s/.test(prev.trim())) { out[out.length - 1] = `${prev} ${line.trim()}`; continue; }
+            out.push(line);
+        }
+        return out;
+    }
     function markdown(text) {
-        const root = h('div', { class: 'md' }), lines = String(text || '').split('\n');
+        const root = h('div', { class: 'md' }), lines = joinWrapped(text);
         let stack = [], para = null, i = 0;
         const lastLi = () => (stack.length ? stack[stack.length - 1].last : null);
         while (i < lines.length) {
@@ -1386,12 +1409,17 @@
                     h('tbody', {}, body.slice(1).map(r => h('tr', {}, r.map(c => h('td', {}, inlineMd(c)))))));
                 ((indent && lastLi()) || root).append(h('div', { class: 'table-wrap' }, t)); para = null; continue;
             }
-            const li = /^( *)- (.*)$/.exec(line);
+            // (0.5.46) headings: #… → h2 to h5 (the page's own h1 is the title)
+            const hd = /^(#{1,4})\s+(.*)$/.exec(line);
+            if (hd && !indent) { stack = []; para = null; root.append(h(`h${Math.min(5, hd[1].length + 1)}`, { class: 'md-h' }, inlineMd(hd[2]))); i++; continue; }
+            const li = /^( *)(- |\d+\. )(.*)$/.exec(line);
             if (li) {
+                const ordered = li[2] !== '- ';
                 while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
                 let top = stack[stack.length - 1];
-                if (!top || top.indent < indent) { const ul = h('ul'); ((top && top.last) || root).append(ul); top = { indent, ul, last: null }; stack.push(top); }
-                top.last = h('li', {}, inlineMd(li[2])); top.ul.append(top.last); para = null; i++; continue;
+                if (top && top.indent === indent && top.ordered !== ordered) { stack.pop(); top = stack[stack.length - 1]; }
+                if (!top || top.indent < indent) { const ul = h(ordered ? 'ol' : 'ul'); ((top && top.last) || root).append(ul); top = { indent, ul, last: null, ordered }; stack.push(top); }
+                top.last = h('li', {}, inlineMd(li[3])); top.ul.append(top.last); para = null; i++; continue;
             }
             if (indent && lastLi()) { lastLi().append(' ', ...inlineMd(line.trim())); i++; continue; }
             stack = [];
@@ -1952,14 +1980,70 @@
                     h('li', {}, 'Test, then Turn on (with the project ID). Changes are noted in Status → Activity → What admins did.')))];
     }
 
+    // --- Help (0.5.46) -------------------------------------------------------------------------------------
+    // The installed version's own docs (the server reads them from the image: /api/help), and About & credits.
+    async function helpDocPage(id) {
+        const d = await api(`/api/help?doc=${encodeURIComponent(id)}`);
+        return [h('h1', { text: d.title }),
+            h('p', { class: 'sub' }, `This version's own ${d.source}. `, h('a', { href: '#/help', text: 'How it works' }), ' · ', h('a', { href: '#/helparchitecture', text: 'Architecture deep dive' }), ' · ', h('a', { href: '#/credits', text: 'About & credits' })),
+            h('section', { class: 'card help-doc' }, markdown(d.markdown))];
+    }
+    const DONATE_URL = 'https://www.paypal.com/donate/?hosted_button_id=NA8SK5RBLWGW6';
+    async function creditsPage() {
+        const d = await settingsData();
+        const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+        const item = (name, href, what) => h('li', {}, link(name, href), ` ${what}`);
+        return [h('h1', { text: 'About & credits' }),
+            h('section', { class: 'card' },
+                h('p', {}, h('b', { text: 'S.P.R.U.C.E Mail Protection Service' }), ` for Google Workspace · version ${d.version}. The checks and the AI model (${d.model.name} ${d.model.version}) come from the S.P.R.U.C.E+ browser extension (Spam & Phishing Risk URL Checker Extension+).`),
+                h('p', { class: 'credits' },
+                    h('b', { text: 'Lead developer & author: ' }), 'the S.P.R.U.C.E+ project (', link('thecodewarrior2', 'https://github.com/thecodewarrior2'), ')', h('br'),
+                    h('b', { text: 'Design, code, review and security hardening of the service: ' }), 'Claude (Anthropic)', h('br'),
+                    h('b', { text: 'The extension it grew from: ' }), 'AI assisted with Google Gemini; reviewed and redesigned with Claude (Anthropic); inspired by ', link('Trocker', 'https://github.com/trockerapp/trocker'), ' and the open-source privacy community.'),
+                h('p', { class: 'small muted', text: 'Provided as is, as a best-effort layer of protection, without any warranty. It works with your Google Workspace\'s own email security and your people\'s care, never instead of them.' }),
+                d.donateButton !== false ? h('p', { class: 'donate-row' }, link('♥ Donate', DONATE_URL), h('span', { class: 'small muted', text: ' S.P.R.U.C.E is free, with no ads and no tracking. Donations support its development.' })) : null),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Built on' }),
+                h('p', { class: 'small muted', text: 'Open-source libraries, used under their licenses (each package\'s own license file):' }),
+                h('ul', { class: 'plain-list' },
+                    item('ONNX Runtime', 'https://onnxruntime.ai', '(MIT): runs the AI model.'),
+                    item('pdf.js', 'https://mozilla.github.io/pdf.js/', 'by Mozilla (Apache-2.0): PDF attachments.'),
+                    item('jsQR', 'https://github.com/cozmo/jsQR', '(Apache-2.0), pngjs (MIT) and jpeg-js (BSD-3-Clause): QR codes in pictures.'),
+                    item('fflate', 'https://github.com/101arrowz/fflate', '(MIT): Office files and archives.'),
+                    item('mailparser', 'https://github.com/nodemailer/mailparser', '(MIT) and htmlparser2 (MIT): reading emails and web pages.'),
+                    item('Google Cloud client libraries', 'https://github.com/googleapis/google-cloud-node', '(Apache-2.0): Firestore and Google sign-in.')),
+                h('p', { class: 'small muted', text: 'Data, used under their publishers\' terms (Settings → About shows each list\'s state):' }),
+                h('ul', { class: 'plain-list' },
+                    item('OpenPhish', 'https://openphish.com', 'community phishing feed (OpenPhish Terms of Use).'),
+                    item('Phishing Army', 'https://phishing.army', 'blocklist (CC BY-NC 4.0).'),
+                    item('HaGeZi DNS Blocklists', 'https://github.com/hagezi/dns-blocklists', 'Threat Intelligence Feeds (GPL-3.0; used, not redistributed).'),
+                    item('TweetFeed', 'https://tweetfeed.live', 'by Daniel López, researchers\' reports (CC0 1.0).'),
+                    item('Sefinek Blacklisted-Emails', 'https://github.com/sefinek/Blacklisted-Emails', '(MIT): scam sender addresses.'),
+                    item('Cloudflare Security DNS', 'https://developers.cloudflare.com/1.1.1.1/', 'and Cloudflare\'s public resolver: blocked sites; the look-alike watch.'),
+                    item('Google Safe Browsing', 'https://safebrowsing.google.com', '(optional, your key).'),
+                    item('Spamhaus', 'https://www.spamhaus.com', 'Data Query Service (optional, your key; no AI training on its data).'),
+                    item('abuse.ch', 'https://abuse.ch', 'URLhaus and ThreatFox (optional, your key; not-for-profit use; no AI training on its data).'),
+                    item('IANA', 'https://www.iana.org/domains/root/db', 'registry directory (RDAP): when domains were registered.'),
+                    item('TinyPhishLLM', 'https://github.com/thecodewarrior2/TinyPhishLLM', 'holds the phish-tiny AI model (its own public repository; each version of the service pins one commit).')),
+                h('p', { class: 'small muted', text: 'Phishing-technique research from public reports by security researchers (SANS ISC, Barracuda, Trustwave, Hoxhunt, KnowBe4, Malware on Tap and others).' })),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'License' }),
+                h('p', { class: 'small', text: 'The service\'s own code has no open-source license yet (package.json: UNLICENSED). Its third-party components keep their own licenses, listed above.' }),
+                h('p', { class: 'small muted', text: 'Google Workspace, Gmail and Google Cloud are trademarks of Google LLC. Other product names are trademarks of their owners. This service is not affiliated with or endorsed by any of them.' }))];
+    }
+
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, spamhaus: spamhausPage, abusech: abusechPage, clicks: clicksPage, phishtraining: phishTrainingPage, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, spamhaus: spamhausPage, abusech: abusechPage, clicks: clicksPage, phishtraining: phishTrainingPage, update: updatePage, about,
+        // Help (0.5.46)
+        help: () => helpDocPage('howitworks'), helpdashboard: () => helpDocPage('dashboard'), helpalerts: () => helpDocPage('alerts'), helpprivacy: () => helpDocPage('privacy'),
+        helpworkspace: () => helpDocPage('workspace'), helpinstall: () => helpDocPage('install'), helpsettings: () => helpDocPage('settings'), helpcosts: () => helpDocPage('costs'),
+        helparchitecture: () => helpDocPage('architecture'), credits: creditsPage };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['rechecked', 'Re-checked'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['lookalikes', 'Look-alikes'], ['activity', 'Activity']] },
+        help: { label: 'Help', pages: [['help', 'How it works'], ['helpdashboard', 'The dashboard'], ['helpalerts', 'Alerts'], ['helpprivacy', 'Your privacy'], ['helpworkspace', 'Google Workspace settings'],
+            ['helpinstall', 'Install & troubleshooting'], ['helpsettings', 'Settings reference'], ['helpcosts', 'Costs'], ['helparchitecture', 'Architecture deep dive'], ['credits', 'About & credits']] },
         settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['spamhaus', 'Spamhaus'], ['abusech', 'abuse.ch'], ['clicks', 'Link clicks'], ['phishtraining', 'Phishing training'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };

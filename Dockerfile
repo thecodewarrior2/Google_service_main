@@ -13,6 +13,9 @@ RUN npm ci --omit=dev \
 COPY src ./src
 COPY public ./public
 COPY vendor ./vendor
+# The Help tab shows the installed version's own docs (0.5.46).
+COPY docs ./docs
+COPY README.md ./README.md
 # The AI model (phish-tiny) from TinyPhishLLM, its own public repository, at the commit VENDOR.json pins,
 # each file checked against its SHA-256 (tools/fetch-model.js): the build stops if a file differs or can't
 # be downloaded. Files already here with the right SHA-256 are kept. Nothing is downloaded at run time.

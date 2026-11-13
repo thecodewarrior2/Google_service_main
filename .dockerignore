@@ -4,10 +4,11 @@ test
 tools
 # …except the one that downloads the AI model into the image (Dockerfile).
 !tools/fetch-model.js
-docs
 deploy
 .git
 *.md
+# …except the README, which the Help tab shows with docs/ (0.5.46).
+!README.md
 .env
 *.key.json
 service-account*.json

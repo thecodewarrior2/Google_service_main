@@ -115,6 +115,37 @@ function demoReleases({ manual = false } = {}) {
         changelog: [{ version: '9.9.9', title: manual ? 'A made-up newer version that changes the installation (demo mode)' : 'A made-up newer version (demo mode)', body: '- Demo mode doesn\'t read GitHub: this entry is made up, so you can try the page.\n- The real page shows google_service_main\'s changelog: everything newer than the version installed, then the rest.' }, ...own] }) };
 }
 
+// The Help tab (0.5.46): the installed version's own docs, from files in the image, only these, and only these
+// sections of them ('': what comes before the first section). Read once.
+const HELP_DOCS = {
+    howitworks: { title: 'How it works', file: 'README.md', sections: ['', 'How it decides'] },
+    dashboard: { title: 'The dashboard', file: 'README.md', sections: ['The dashboard'] },
+    alerts: { title: 'Alerts', file: 'docs/ALERTS.md' },
+    privacy: { title: 'Your privacy', file: 'docs/PRIVACY.md' },
+    workspace: { title: 'Google Workspace settings', file: 'docs/WORKSPACE.md' },
+    install: { title: 'Install, upgrade and troubleshooting', file: 'docs/INSTALL.md' },
+    settings: { title: 'Settings reference', file: 'docs/DEPLOY.md', sections: ['Settings (environment variables)'] },
+    costs: { title: 'Costs', file: 'docs/COSTS.md' },
+    architecture: { title: 'Architecture deep dive', file: 'docs/ARCHITECTURE.md' }
+};
+const helpCache = new Map();
+function helpDoc(id) {
+    const d = HELP_DOCS[id];
+    if (!d) return null;
+    if (helpCache.has(id)) return helpCache.get(id);
+    let text;
+    try { text = fs.readFileSync(path.resolve(__dirname, '..', d.file), 'utf8'); }
+    catch (e) { return { error: 'This installation\'s image doesn\'t have its docs (an image built before 0.5.46). They are in the repository: ' + d.file + '.', status: 404 }; }
+    if (d.sections) {
+        const parts = text.split(/^## /m);
+        const head = parts[0].replace(/^# .*\n/, '').replace(/\*\*Two repositories\.\*\*[\s\S]*?\n\n/, '');
+        text = d.sections.map(name => (name === '' ? head : (() => { const p = parts.slice(1).find(x => x.split('\n')[0].trim() === name); return p ? `## ${p}` : ''; })())).join('\n\n');
+    } else text = text.replace(/^# .*\n/, '');
+    const out = { id, title: d.title, source: d.file, markdown: text.trim() };
+    helpCache.set(id, out);
+    return out;
+}
+
 function createApp({ cfg, store, service, scheduler = null, cloudrun = null, releases = null }) {
     releases = releases || (cfg.demo ? demoReleases() : createReleases({ repo: cfg.releasesRepo }));
     // The hourly job looks for an approved version that needs a manual install (0.5.24), with these.
@@ -406,6 +437,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             if (bad) return bad;
             return service.setTrainingDomains(body.domains, admin.email);
         },
+        // Help (0.5.46): one of the docs above, as Markdown (the page renders it as text, never HTML).
+        'GET /api/help': async (q) => helpDoc(String(q.get('doc') || 'howitworks')) || { error: 'There is no such help page.', status: 404 },
         // Status → Look-alikes (0.5.36): the watch's state and what it found; an admin's mark on one (with the
         // project ID: "ours" or "harmless" takes a sign away).
         'GET /api/lookalikes': async () => {
@@ -478,7 +511,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      // Each watched mailbox, and when Gmail last said it changed: none since the watch
                      // started means no notifications arrive for it.
                      mailboxes: listed && listed.map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
-                     renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION,
+                     renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION, donateButton: cfg.donateButton,
                      policy, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: await safeBrowsingOn(), phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      // Settings → Safe Browsing (0.5.23): on or off, whether a key is saved (who, when), how the lookups go. Never the key.

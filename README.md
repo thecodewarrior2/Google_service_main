@@ -190,8 +190,11 @@ The dashboard keeps itself up to date: the page you're on is fetched again every
 the tab is visible (not while you're typing in it, or using it otherwise). The bar under the tabs says
 when it last updated, and **Pause updates** stops it.
 
-The dashboard has four tabs: **Overview**, **Email**, **Status** and **Settings**. Email, Status and
-Settings each have a menu on the left (a row of buttons above the page on a phone).
+The dashboard has five tabs: **Overview**, **Email**, **Status**, **Settings** and **Help**. Email, Status,
+Settings and Help each have a menu on the left (a row of buttons above the page on a phone). **Help** (0.5.46)
+shows this version's own docs (how it works, the dashboard, alerts, privacy, Google Workspace settings, install
+and troubleshooting, the settings reference, costs, the architecture deep dive) and **About & credits**, with a
+Donate button (`DONATE_BUTTON=off` hides it).
 
 - **Overview:** emails checked, moved and moved back (by admins and by users); users affected; moves per
   day by trigger; top reasons; largest campaigns; alerts. The daily chart (0.5.45) shows every email checked

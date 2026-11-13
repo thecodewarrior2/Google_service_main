@@ -111,11 +111,13 @@ test('0.5.26: Cloud Build gets every file the Dockerfile copies (.gcloudignore),
         const docker = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
         const sources = [...docker.matchAll(/^COPY\s+(.+)\s+\S+$/gm)].flatMap(m => m[1].split(/\s+/));
         assert.ok(sources.includes('tools/fetch-model.js') && sources.includes('src'), sources.join(' '));
-        const files = [...sources.map(s => (/\.[a-z]+$|^\.npmrc$|^Dockerfile$/.test(s) ? s : `${s}/x.js`)), 'Dockerfile', 'tools/release.js', 'test/a.test.js', 'docs/a.md', 'deploy/install.sh'];
+        const files = [...sources.map(s => (/\.[a-z]+$|^\.npmrc$|^Dockerfile$/.test(s) ? s : `${s}/x.js`)), 'Dockerfile', 'tools/release.js', 'test/a.test.js', 'docs/a.md', 'deploy/install.sh', 'CHANGELOG.md', 'CLAUDE.md'];
         for (const f of files) { fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), 'x'); }
         execFileSync('git', ['init', '-q'], { cwd: dir });
         const uploaded = execFileSync('git', ['ls-files', '-o', `--exclude-from=${path.join(ROOT, '.gcloudignore')}`], { cwd: dir }).toString().split('\n').filter(Boolean);
         for (const s of sources) assert.ok(uploaded.some(u => u === s || u.startsWith(`${s}/`)), `${s} is uploaded to Cloud Build`);
-        for (const left of ['tools/release.js', 'test/a.test.js', 'docs/a.md', 'deploy/install.sh']) assert.ok(!uploaded.includes(left), `${left} is left out`);
+        for (const left of ['tools/release.js', 'test/a.test.js', 'deploy/install.sh', 'CHANGELOG.md', 'CLAUDE.md']) assert.ok(!uploaded.includes(left), `${left} is left out`);
+        // (0.5.46) the docs and the README go up: the Help tab shows them
+        for (const kept of ['docs/a.md', 'README.md']) assert.ok(uploaded.includes(kept), `${kept} is uploaded`);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -345,6 +345,7 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `ALLOW_DOMAINS`, `ALLOW_ADDRESSES` | none | never moved, when Gmail's DMARC check passed for the sender's domain (also on the dashboard: Settings → Allowlist). Your own domains can't be allowlisted |
 | `RECHECK` | `true` | re-check delivered mail (0.5.35): emails left in the Inbox keep one-way hashes of their link sites and sender; when a phishing list's daily download adds one, every copy still in an Inbox is checked again in full (and moved, or recorded in monitor mode, as on arrival); suspicious mail is looked at again an hour and a day after it arrived. Also on the dashboard: Settings → Policy, "Re-check delivered mail" |
 | `LOOKALIKE_WATCH` | `true` | the look-alike watch (0.5.36): look-alikes of `ORG_DOMAINS` asked of Cloudflare's public DNS resolver, a pass a day (Status → Look-alikes); the new ones are alerts and strong signs in mail |
+| `DONATE_BUTTON` | `true` | the Donate button on Help → About & credits (0.5.46); `off` hides it |
 | `RECHECK_DAYS` | `7` | how far back (1 to 30 days) delivered mail is looked for when a list adds a site or sender |
 | `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
 | `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before moving the rest pauses for an admin's decision (they stay in the Inbox meanwhile); strong evidence never pauses |

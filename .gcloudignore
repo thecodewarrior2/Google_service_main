@@ -6,10 +6,11 @@ test/
 tools/*
 # …except the one that downloads the AI model into the image (Dockerfile).
 !tools/fetch-model.js
-docs/
 deploy/
 .git/
-*.md
+# Markdown files at the top, except the README; docs/ goes up: the Help tab shows them (0.5.46).
+/*.md
+!/README.md
 .env
 *.key.json
 service-account*.json

@@ -34,6 +34,150 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
        ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```
 
+## An email, step by step
+
+1. **Gmail says a mailbox changed.** Each watched mailbox has a Gmail watch (`users.watch`, renewed daily by the
+   `spruce-renew-watches` job; a watch lasts 7 days). Gmail publishes `{ emailAddress, historyId }` to the
+   Pub/Sub topic `gmail-spruce`, which pushes it to the worker's `/pubsub` with an OIDC token the worker
+   verifies (`src/auth/verify.js`).
+2. **What is new in that mailbox.** `handleNotification` reads the mailbox's history since its last position
+   (`history.list`, `src/gmail/client.js`): messages added to the Inbox, and messages that got the Inbox label
+   back (a user taking one out of Spam). The position only moves forward, once every message is done.
+3. **One instance claims each message** (`seen/{user|id}` in Firestore, `store.claim`), reads it raw
+   (`messages.get`, format raw) and skips what isn't new Inbox mail: sent mail, drafts, what Gmail already put
+   in Spam, the service's own weekly summary.
+4. **The message is read** (`src/engine/mime.js`): the headers and Gmail's own DMARC, SPF and DKIM results,
+   the sender and the other address lines, the links (with their text), the text a person sees and how the
+   email is laid out (hidden filler, image-only bodies), the attachments (kept in memory only).
+5. **A phishing-training email** matching Settings → Phishing training (`src/simulations.js`, 0.5.44) is let
+   through here: counted, nothing else.
+6. **The checks** (`src/engine/analyze.js`, with the engine in `vendor/spruce/`) add up signs, each with a
+   weight (below). The sum is the rules' score: 3 is amber (suspicious), 5 is flagged.
+7. **The AI model** (phish-tiny, `src/engine/model.js`) scores the email from 0 to 100%, unless the sender is
+   inside the organization (and "AI on inside mail" is off) or the email is clearly not in English.
+8. **The policy decides** (`src/policy.js`, `decide`): allowlisted and DMARC passing, nothing; the rules
+   flagged it, or the AI scored it at the move threshold (90%; from outside, or inside with "AI alone moves
+   inside mail"), move; a rules score of 3 or an AI score from the suspicious line (65%), suspicious; in
+   monitor mode a move is recorded as "would move".
+9. **The brakes** (`brakes`, below) may hold a move: an admin's decision on the campaign, the campaign
+   pause on weak evidence, the domain-wide brake.
+10. **It is carried out:** `messages.modify` adds `SPAM` and `SPRUCE/Moved` and takes `INBOX` off; in
+    monitor mode `MONITOR_LABEL` if set; for a suspicious email, the Suspicious label when that setting is on.
+11. **It is recorded** (`records/{user|id}`), only when something happened (moved, would move, suspicious):
+    the sender, the subject (`STORE_SUBJECTS`), the signs, the flagged links, the AI score and its short
+    quotes, the decision and why. The day's counters (`stats`) count every email.
+12. **It is marked done** (`seen`), with, for an email left in the Inbox, up to 24 one-way hashes of its link
+    sites and sender, to find it again when a phishing list later adds one (0.5.35, below).
+
+## The checks
+
+| Group | What it reads | Signs (weights) | Where |
+|---|---|---|---|
+| Headers | Gmail's DMARC, SPF and DKIM results; forged or spam headers | DMARC failing, a forged inside address, spam headers (2 to 5) | `headerAnomalies`, `insideSpoofSigns` |
+| The sender's name | the display name against the address | a brand's name on another address (5), your own address in the name, a colleague's name from outside when the email claims to be from inside (3, 0.5.43) | `nameAddressSigns`, `colleagueInContext` |
+| The other address lines | Reply-To, Cc, To | replies to an outside address under a colleague's name (3), a colleague copied in at an outside (1) or look-alike (3) address | `colleagueLineSigns` |
+| The words | the subject and the visible text | scam phrases, requests for passwords, codes, money or remote access, claims to be safe, a fake reply chain (2) | `subjectScamSigns`, `bodyScamSigns`, `highRiskRequestSigns`, `fakeReplySigns` |
+| The layout | how the email is built | hidden filler after a blank gap, an image-only body | `layoutSigns` |
+| The sender | how new and how known | a new sender from outside, a young or look-alike domain, the look-alike watch's domains (2 to 5) | `senderContextSigns`, `src/engine/network.js`, `watchedLookalikeSigns` |
+| The links | each link, unwrapped offline (redirects, security gateways, shorteners' known forms) | look-alike brand domains, text showing another site, hidden user names; then Cloudflare, Safe Browsing, the phishing lists (and abuse.ch's), site age, Spamhaus | `detectLinkProblem`, `src/engine/network.js` |
+| Attachments | pictures, PDFs, Office files, web pages and SVGs sent as files, archives (in memory) | a QR code's or a document's links (checked like the email's), a sign-in form or script in a file (4 to 5), double extensions, programs, password-protected archives, macros (2 to 3) | `src/engine/attachments.js` |
+| Platforms | Drive, Docs, Classroom, DocuSign… notifications | judged by the person behind them; mass shares from one outside account | `src/engine/notifications.js` |
+
+What confirms a flag from outside the email (a blocked or listed link, a listed or blocked sender, a brand-new
+look-alike domain, DMARC failing) makes it **strong evidence**: the campaign pause never holds it.
+
+## What is stored where
+
+Firestore, in your own project and region (`src/store/firestore.js`). Each document that expires carries
+`expireAt`, and Firestore's TTL policies delete it then.
+
+| Collection | Holds | Kept |
+|---|---|---|
+| `users` | each watched mailbox: its sync position, last notification, watch's end | while watched |
+| `seen` | each message checked: claimed, done or failed; for one left in the Inbox, its re-check hashes and arrival time | `RETENTION_DAYS` |
+| `records` | each email moved, would move or suspicious (above); an admin's or user's decisions; re-checks | `RETENTION_DAYS` |
+| `stats` | the day's counters: checked, moved, would move, suspicious, moved back, training emails, errors | kept |
+| `senders` | a 64-bit hash of each sender address and when it was first seen | kept |
+| `campaigns` | the campaign pause and an admin's decision on a campaign | `RETENTION_DAYS` |
+| `moveCounts` | the brake's hourly counters; the mass-share counters | 2 days |
+| `events` | Activity: alerts, admins' actions, errors | `AUDIT_DAYS` |
+| `blobs` | the phishing lists, gzipped, shared by every instance | replaced daily |
+| `cache` | registry dates of domains | 30 days |
+| `state` | one document per setting or state: the policy changed on the dashboard (`policy-*`), the brake, the lists' health, each optional service's key metadata (never the key) and health, the re-check queue, the look-alike watch, the phishing-training rules (secret values as hashes), the last update, the weekly summary and retraining switches… | until changed |
+
+Secrets (the Safe Browsing, Spamhaus and abuse.ch keys) are only in Secret Manager.
+
+## The hourly job
+
+Cloud Scheduler calls the worker's `/tasks/sync-feeds` every hour (`syncFeeds` in `src/pipeline.js`), within
+the worker's 120-second request time. In order:
+
+1. **The health check:** no notification from Gmail for `QUIET_HOURS`, watches about to end, errors in the
+   hour; each an alert.
+2. **The weekly summary**, on Monday from 7 AM, when it is on.
+3. **The phishing lists:** downloaded once a day for everyone (and abuse.ch's, when on); a list that missed its
+   download is tried again 3 hours later. What a download adds is looked for in delivered mail (below).
+4. **Re-checks:** suspicious mail an hour and a day old is queued; the queue is checked for up to 40 seconds
+   (the rest the next hour).
+5. **Link clicks** (when on): Gmail's logs for the re-checked mail, up to 15 seconds.
+6. **The look-alike watch:** the next 80 look-alike names, up to 12 seconds (a pass a day).
+7. **Updates:** an update from the dashboard that failed or stalled, an approved version that needs a manual
+   install; each alerted once.
+8. **Cleanup** of what Firestore's TTL doesn't delete, with the time left (at most 30 seconds).
+
+`spruce-renew-watches` runs daily: it reads the pilot group again and renews every watch.
+
+## Re-checking delivered mail
+
+Phishing sites are often listed hours after their email arrived (0.5.35, `src/recheck.js`). A list's download
+reports what it added since its previous copy; those entries are hashed the same way as the emails' link
+sites and senders, and Firestore finds the `seen` markers holding any of them (`array-contains-any`, 30 at a
+time). Each email found is read from Gmail again and checked in full, and the policy acts as on arrival
+(through the brakes): moved, would move, or suspicious. An email its reader archived or deleted, or one an
+admin decided on, is never moved. Email → Re-checked lists them with who got each copy and whether they opened
+it; with Link clicks on, Gmail's logs (Admin SDK Reports API) add who clicked a link in it.
+
+## The look-alike watch
+
+`src/lookalike.js` (0.5.36) makes a fixed list of look-alikes of `ORG_DOMAINS`: letters left out, doubled,
+swapped or replaced by look-alikes, other endings, a district's usual forms (`name-k12.org`,
+`nameschools.com`), a role added. Each hour the next 80 are asked of Cloudflare's public resolver (does the
+name exist, with mail servers, with a website); a pass a day. The first pass takes stock; a name that
+appears later, or one registered in the last 30 days, is an alert and a strong sign in mail from it, replies
+to it and links to it. Admins mark each one: the district's own, harmless, or a threat.
+
+## Optional services
+
+All off by default, each turned on on its own Settings page with a key kept in Secret Manager:
+
+- **Google Safe Browsing** (Lookup API v4): link addresses (no `#` part; one-time links without their query),
+  the key in a header. Free for non-commercial use.
+- **Spamhaus** (the free Data Query Service): the DBL and ZRD, by DNS, `<name>.<key>.dbl.dq.spamhaus.net`,
+  through Cloud Run's resolver; at most `SPAMHAUS_DAILY_MAX` lookups a day for every instance together, each
+  name once an hour; a refused lookup asked again (a new key takes up to an hour to sync across Spamhaus's
+  servers).
+- **abuse.ch**: URLhaus's 30-day export and ThreatFox's last 7 days, downloaded daily like the phishing lists.
+- **Link clicks**: Gmail's log events, as an admin with the Reports privilege.
+
+Their data is never exported for retraining: their terms don't allow it to train an AI model.
+
+## Security
+
+- **Who can reach what.** The dashboard (`spruce-admin`) is behind Identity-Aware Proxy, and the server checks
+  every request's signed IAP header against `ADMIN_EMAILS` and `ADMIN_GROUP` too. The worker is private: only
+  `spruce-invoker`'s OIDC tokens (Pub/Sub, Cloud Scheduler) are accepted, their audience and account checked.
+- **No key files.** Domain-wide delegation tokens are signed by IAM (`iamcredentials.signJwt`) for
+  `spruce-delegate`, last an hour and stay in memory.
+- **Changes need the project ID.** Every policy change, key, mark or update asks for the Google Cloud project
+  ID (and enforce mode, or letting the AI alone move inside mail, a ticked agreement). Each wrong answer is
+  noted (never what was typed); five lock the admin out for 10 minutes and are an alert.
+- **The dashboard can't deploy.** Settings → Update only starts the fixed `spruce-update` job, which builds
+  an approved commit of `google_service_main` and checks it again.
+- **The page itself:** a strict Content Security Policy (no inline scripts, nothing from elsewhere), no
+  framing, `no-store`; every change is a POST with a custom header, which a page on another site can't send.
+- **Little kept.** No email bodies or attachments; subjects and the AI's quotes can be turned off; senders as
+  hashes; secrets only in Secret Manager.
+
 ## Why these choices
 
 - **After delivery (Gmail API), not in the mail path.** Nothing in mail routing changes, so the service
