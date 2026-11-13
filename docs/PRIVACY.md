@@ -75,8 +75,12 @@ And:
 - **the worker's AI engine:** the model, engine version and self-check of the newest worker instance
   (`state/engine-worker`), for Status. Nothing about any email.
 
-**Retention:** records, message IDs and Activity entries are deleted after `RETENTION_DAYS` (35 by
-default, 14 to 365; also changed on the dashboard, Settings → Policy). Each is deleted on its own date,
+**Retention:** records and message IDs are deleted after `RETENTION_DAYS` (35 by
+default, 14 to 365; also changed on the dashboard, Settings → Policy). Activity entries (alerts, admins'
+actions, errors: mailbox addresses, sender domains and admins' addresses, never email text) are kept
+`AUDIT_DAYS` (365 by default, 30 to 1,825; from 0.5.29), for audits; with `AUDIT_LOG=on` (off by default) a
+copy of each also goes to Cloud Logging, in the project's own log bucket `spruce-audit`, kept
+`AUDIT_LOG_DAYS`. Each is deleted on its own date,
 that many days after its email arrived, by Firestore's TTL policies, so the oldest go first and the
 rest stay; nothing is cleared all at once. Shortening it deletes the older ones within hours (the hourly
 cleanup).

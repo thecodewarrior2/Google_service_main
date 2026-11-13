@@ -84,12 +84,20 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   and any failed Cloud Scheduler job, to `ALERT_EMAIL` (log-based alert policies made by `deploy/install.sh`).
   They are: a phishing list that missed its download; Cloudflare Security or Safe Browsing whose every
   lookup failed for 30 minutes, or Google refusing the Safe Browsing key; the AI model not working in the
-  worker; no notification from Gmail for `QUIET_HOURS`, or watches about to end; the directory not readable;
+  worker; Gmail refusing the service (domain-wide delegation removed), an email left unchecked after three
+  tries, or 25 errors in an hour (0.5.29); an admin's account locked after five wrong project IDs (0.5.29); no notification from Gmail for `QUIET_HOURS`, or watches about to end; the directory not readable;
   the brake; a campaign whose moving paused, a large campaign, a mass share from one outside account; a
   user taking a flagged email out of Spam or into the Inbox; an update from the dashboard that failed or
   never finished; an approved version that needs a manual install. A problem that lasts is emailed at most
   once a day. An admin's own change (a policy change, an update started, a Safe Browsing key) is not an
-  alert: it is noted in Activity → What admins did, and not emailed. The hourly `spruce-sync-feeds` job runs a
+  alert: it is noted in Activity → What admins did, and not emailed. With `PUBSUB_BACKLOG_ALERT=on` (off by
+  default: Google charges for it), Cloud Monitoring also emails when Gmail's notifications wait in Pub/Sub over
+  30 minutes.
+- **Audit trail (0.5.29).** Activity is kept `AUDIT_DAYS` (a year by default), apart from the email records;
+  admins' downloads of the email list or of Activity, and their first visit to the dashboard each day, are
+  noted too. `GET /api/activity` takes any period kept, a kind and words to look for; `/api/activity.csv`
+  downloads it (noted). With `AUDIT_LOG=on` (off by default) each entry is also a structured log line
+  (`spruceAudit`), which a sink routes to the log bucket `spruce-audit`, kept `AUDIT_LOG_DAYS`. The hourly `spruce-sync-feeds` job runs a
   health check: no notification from Gmail for `QUIET_HOURS`, or watches about to end. It also downloads
   the phishing lists once a day, and a list whose download failed again 3 hours later
   (`state/feedHealth` keeps each list's last download); a list that newly fails, and once a day one that

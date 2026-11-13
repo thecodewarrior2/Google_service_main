@@ -127,8 +127,8 @@ class MemoryStore {
     }
     async getState(name) { return this.state.has(name) ? JSON.parse(JSON.stringify(this.state.get(name))) : null; }
     async setState(name, value) { this.state.set(name, value === null ? null : JSON.parse(JSON.stringify(value))); }
-    async addEvent(ev) { this.events.push(Object.assign({ at: Date.now() }, ev)); if (this.events.length > 2000) this.events.shift(); }
-    async listEvents(sinceMs = 0) { return this.events.filter(e => e.at >= sinceMs).sort((a, b) => b.at - a.at); }
+    async addEvent(ev) { const e = Object.assign({ at: Date.now() }, ev); this.events.push(e); if (this.events.length > 5000) this.events.shift(); if (this.onEvent) this.onEvent(e); }
+    async listEvents(sinceMs = 0, { limit = 500 } = {}) { return this.events.filter(e => e.at >= sinceMs).sort((a, b) => b.at - a.at).slice(0, limit); }
     // Files shared by every instance (the phishing lists): bytes plus a little information.
     async putBlob(name, bytes, info) { this.blobs = this.blobs || new Map(); this.blobs.set(name, { bytes: Buffer.from(bytes), info: Object.assign({}, info) }); }
     async getBlob(name) { const b = this.blobs && this.blobs.get(name); return b ? { bytes: Buffer.from(b.bytes), info: Object.assign({}, b.info) } : null; }
@@ -137,10 +137,10 @@ class MemoryStore {
     async getCached(kind, key) { const m = this.cached && this.cached.get(`${kind}|${key}`); return m && m.exp > Date.now() ? m.value : null; }
     async setCached(kind, key, value, ttlMs) { this.cached = this.cached || new Map(); this.cached.set(`${kind}|${key}`, { value, exp: Date.now() + ttlMs }); }
     async countActions(sinceMs, action) { let n = 0; for (const r of this.records.values()) if (r.processedAt >= sinceMs && r.action === action) n++; return n; }
-    async purge(beforeMs) {
+    async purge(beforeMs, { eventsBeforeMs = beforeMs } = {}) {
         let n = 0;
         for (const [k, r] of this.records) if (r.processedAt < beforeMs) { this.records.delete(k); n++; }
-        this.events = this.events.filter(e => e.at >= beforeMs);
+        this.events = this.events.filter(e => e.at >= eventsBeforeMs);
         return n;
     }
 }

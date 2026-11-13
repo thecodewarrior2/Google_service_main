@@ -164,6 +164,14 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     }
     const groupCheck = cfg.adminGroups.length && service.gmail && service.gmail.hasMember ? adminGroupCheck(cfg, service.gmail) : null;
     const since = (q) => Date.now() - Math.min(90, Math.max(1, Number(q.get('days')) || 30)) * A.DAY;
+    // Activity's period: up to how long it is kept (AUDIT_DAYS); its kind and words to look for.
+    const activityFor = async (q) => {
+        const days = Math.min(cfg.auditDays || 365, Math.max(1, Math.round(Number(q.get('days')) || 30)));
+        const words = String(q.get('q') || '').trim().toLowerCase().slice(0, 200);
+        let events = A.activity(await store.listEvents(Date.now() - days * A.DAY, { limit: 10000 }), String(q.get('kind') || ''));
+        if (words) events = events.filter(e => `${e.text || ''} ${e.user || ''} ${e.kind || ''} ${e.by || ''}`.toLowerCase().includes(words));
+        return { events, days };
+    };
     const nDays = (q) => Math.min(90, Math.max(1, Number(q.get('days')) || 30));
     // A page's records (all of its period: the cache holds slim copies of every one) and daily counters.
     const load = async (q) => ({ records: await cache.list(since(q) - A.DAY), stats: await statsFor(A.dayOf(since(q)), A.dayOf(Date.now())) });
@@ -279,9 +287,24 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     const wrongIds = new Map();
     const wrong = {
         locked: (who) => (wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS).length >= POLICY_TRIES,
-        add: (who) => wrongIds.set(who, [...(wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS), Date.now()]),
+        add: (who) => {
+            const tries = [...(wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS), Date.now()];
+            wrongIds.set(who, tries);
+            // Locked (0.5.29): an alert, since it may not have been them.
+            if (tries.length === POLICY_TRIES && service && service.alert) service.alert('lockout', `${who} typed a wrong Google Cloud project ID or email address ${POLICY_TRIES} times within ${Math.round(POLICY_LOCK_MS / 60000)} minutes: changes from that account are locked for ${Math.round(POLICY_LOCK_MS / 60000)} minutes. If it wasn't them, someone may be using their signed-in session: ask them, and sign them out of Google (Admin console → Users → Sign out).`).catch(() => {});
+        },
         clear: (who) => wrongIds.delete(who)
     };
+    // Who opened the dashboard (0.5.29): once a day per admin (the organization's day), in What admins did.
+    const opened = new Map();
+    async function noteOpened(email) {
+        const day = A.dayIn(Date.now(), cfg.timeZone);
+        if (!email || opened.get(email) === day) return;
+        opened.set(email, day);
+        const today = await store.listEvents(Date.now() - 26 * 3600 * 1000, { limit: 2000 });
+        if (today.some(e => e.kind === 'signin' && e.by === email && A.dayIn(e.at, cfg.timeZone) === day)) return;
+        await store.addEvent({ kind: 'signin', by: email, admin: true, text: `${email} opened the dashboard.` });
+    }
     const once = (key, gap = ACTIONS_GAP_MS) => { const t = lastAction.get(key) || 0; if (Date.now() - t < gap) return false; lastAction.set(key, Date.now()); return true; };
     // Google Safe Browsing (0.5.23): the key's state (src/intel/sbkey.js), never the key itself.
     const sbKey = () => (service.intel && service.intel.sbKey) || null;
@@ -443,9 +466,11 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             return { found };
         },
         // The records shown on Messages (same filters), as a CSV file.
-        'GET /api/export.csv': async (q) => {
+        'GET /api/export.csv': async (q, body, admin) => {
             const { records } = await load(q);
             const list = A.filterRecords(records, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since: since(q) });
+            // (recorded: it holds every listed email's sender, subject and mailbox, 0.5.29)
+            if (admin && service.adminNotice) await service.adminNotice('export', `${admin.email} downloaded ${list.length} email record${list.length === 1 ? '' : 's'} as CSV (Email → Messages, last ${nDays(q)} days${['user', 'campaign', 'action', 'state', 'q'].some(k => q.get(k)) ? ', filtered' : ''}).`);
             return { csv: A.toCsv(list), filename: `spruce-messages-${A.dayOf(Date.now())}.csv` };
         },
         // "Check an email": what the service would decide for a pasted email, and why. Nothing of it is
@@ -546,7 +571,17 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         },
         // Everything in Recent activity for the period, by kind (alert, admin, error, watch).
         // (adminAction: an admin's own change, emailed like an alert but not one: shown as "emailed", 0.5.28)
-        'GET /api/activity': async (q) => ({ events: A.activity(await store.listEvents(since(q)), String(q.get('kind') || '')).slice(0, 500).map(e => Object.assign({}, e, { adminAction: A.isAdminAction(e) })) }),
+        // Activity (0.5.29): any period it is kept for (AUDIT_DAYS), a kind, words to look for; the newest 500
+        // shown, and all of them (up to 10,000) as CSV, which is recorded.
+        'GET /api/activity': async (q) => {
+            const { events, days } = await activityFor(q);
+            return { events: events.slice(0, 500).map(e => Object.assign({}, e, { adminAction: A.isAdminAction(e) })), total: events.length, days, maxDays: cfg.auditDays };
+        },
+        'GET /api/activity.csv': async (q, body, admin) => {
+            const { events, days } = await activityFor(q);
+            if (admin && service.adminNotice) await service.adminNotice('export', `${admin.email} downloaded ${events.length} Activity entr${events.length === 1 ? 'y' : 'ies'} as CSV (last ${days} days${q.get('kind') || q.get('q') ? ', filtered' : ''}).`);
+            return { csv: A.activityCsv(events), filename: `spruce-activity-${A.dayOf(Date.now())}.csv` };
+        },
         // "Ready for enforce mode?"
         'GET /api/readiness': async (q) => {
             const { records } = await load(q);
@@ -591,7 +626,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                 try { note = JSON.parse(Buffer.from(String((body.message && body.message.data) || ''), 'base64').toString('utf8')); } catch (e) { return send(res, 204, ''); }
                 // Something left to do (a failed try, a message another instance is still on): Pub/Sub
                 // delivers the notification again later (the subscription's retry delay), and it is tried again.
-                const out = await service.handleNotification(note);
+                let out;
+                try { out = await service.handleNotification(note); }
+                catch (e) { if (service.gmailTrouble) await service.gmailTrouble(e, String((note && note.emailAddress) || 'a mailbox')); throw e; }   // (0.5.29)
                 return out && out.held ? send(res, 503, { retry: 'later' }) : send(res, 204, '');
             }
             const TASKS = { 'POST /tasks/renew-watches': () => service.renewWatches(), 'POST /tasks/purge': async () => ({ deleted: await service.purge() }), 'POST /tasks/stop-watches': () => service.stopAll(), 'POST /tasks/sync-feeds': () => service.syncFeeds() };
@@ -603,6 +640,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             // Everything else is the dashboard: admins only.
             const admin = await verifyAdmin(req, cfg, groupCheck);
             if (!admin.ok) return send(res, admin.status || 403, { error: admin.why });
+            await noteOpened(admin.email).catch(() => {});
             if (api[route]) {
                 if (req.method === 'POST' && req.headers['x-requested-with'] !== 'spruce-dashboard') return send(res, 403, { error: 'missing request header' });
                 // The policy settings changed on the dashboard (at most every 30 s), before anything reads them.
@@ -653,6 +691,9 @@ async function main() {
         const { DelegatedAuth } = require('./gmail/auth');
         const { GmailClient } = require('./gmail/client');
         store = createStore(cfg);
+        // AUDIT_LOG (0.5.29, off by default): each Activity entry also as a log line, which install.sh routes to
+        // a log bucket kept a year (spruce-audit). No email text: what the entry says.
+        if (cfg.auditLog) store.onEvent = (e) => console.log(JSON.stringify({ severity: e.alert ? 'WARNING' : 'NOTICE', spruceAudit: e.kind || 'event', message: String(e.text || ''), alert: !!e.alert, admin: !!e.admin, mailbox: e.user || undefined, by: e.by || undefined }));
         gmail = new GmailClient(new DelegatedAuth(cfg));
         // The network checks: where mail is judged (the worker), and for "Check an email" (the dashboard).
         intel = require('./intel').createIntel({ cfg, store, engine: spruce.load(), version: require('../package.json').version });

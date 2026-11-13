@@ -392,3 +392,41 @@ test('0.5.23: install.sh sets up Secret Manager for the Safe Browsing key: the A
         assert.ok(!has(again.calls, /^gcloud secrets create/));
     } finally { w.cleanup(); }
 });
+
+test('0.5.29: the options Google charges for are off by default; on, install.sh sets them up and says they cost', { skip: !hasBash }, () => {
+    const w = workspace();
+    try {
+        const off = w.run('install.sh');
+        assert.equal(off.code, 0, off.out);
+        assert.ok(!has(off.calls, /logging (buckets|sinks) create/), 'no log bucket or sink by default');
+        assert.ok(!has(off.calls, /oldest_unacked_message_age/) && !fs.readdirSync(w.fake).some(f => /^policy-/.test(f) && /oldest_unacked/.test(fs.readFileSync(path.join(w.fake, f), 'utf8'))), 'no backlog alert by default');
+        assert.match(off.out, /Google charges about \$0\.70 a month for the two alert policies/);
+        assert.match(fs.readFileSync(path.join(w.fake, 'env-spruce-worker.yaml'), 'utf8'), /AUDIT_LOG: "?false/);
+        // Turned on, with a longer Activity.
+        fs.appendFileSync(path.join(w.dir, 'deploy', 'settings.env'), 'PUBSUB_BACKLOG_ALERT=on\nAUDIT_LOG=on\nAUDIT_DAYS=400\n');
+        for (const f of fs.readdirSync(w.fake)) if (/^policy-/.test(f)) fs.unlinkSync(path.join(w.fake, f));
+        const on = w.run('install.sh');
+        assert.equal(on.code, 0, on.out);
+        assert.match(on.out, /PUBSUB_BACKLOG_ALERT=on: Google Cloud charges for this alert policy \(about \$0\.40 a month/);
+        assert.match(on.out, /AUDIT_LOG=on: Google Cloud charges for keeping logs past 30 days/);
+        const backlog = fs.readdirSync(w.fake).filter(f => /^policy-/.test(f)).map(f => JSON.parse(fs.readFileSync(path.join(w.fake, f), 'utf8'))).find(p => /waiting/.test(p.displayName));
+        assert.ok(backlog, 'the backlog alert policy');
+        assert.match(backlog.conditions[0].conditionThreshold.filter, /subscription_id = "gmail-spruce-push" AND metric\.type = "pubsub\.googleapis\.com\/subscription\/oldest_unacked_message_age"/);
+        assert.equal(backlog.conditions[0].conditionThreshold.thresholdValue, 1800);
+        assert.ok(has(on.calls, /^gcloud logging buckets create spruce-audit --location=global --retention-days=365/));
+        assert.ok(has(on.calls, /^gcloud logging sinks create spruce-audit logging\.googleapis\.com\/projects\/test-proj\/locations\/global\/buckets\/spruce-audit --log-filter=resource\.type="cloud_run_revision" AND jsonPayload\.spruceAudit:\*/));
+        const env = fs.readFileSync(path.join(w.fake, 'env-spruce-admin.yaml'), 'utf8');
+        assert.match(env, /AUDIT_LOG: "?true/); assert.match(env, /AUDIT_DAYS: "?400/);
+        // Turned off again: the backlog policy and the sink removed (nothing left charging); the bucket kept.
+        fs.appendFileSync(path.join(w.dir, 'deploy', 'settings.env'), 'PUBSUB_BACKLOG_ALERT=off\nAUDIT_LOG=off\n');
+        const again = w.run('install.sh', { FAKE_BACKLOG: 'exists', FAKE_AUDIT_SINK: 'exists' });
+        assert.equal(again.code, 0, again.out);
+        assert.ok(has(again.calls, /^gcloud monitoring policies delete projects\/test-proj\/alertPolicies\/9/));
+        assert.ok(has(again.calls, /^gcloud logging sinks delete spruce-audit/));
+        assert.ok(!has(again.calls, /logging buckets delete/), 'the audit copies are never deleted by install.sh');
+        // A wrong value stops it.
+        fs.appendFileSync(path.join(w.dir, 'deploy', 'settings.env'), 'AUDIT_LOG=maybe\n');
+        const bad = w.run('install.sh');
+        assert.notEqual(bad.code, 0); assert.match(bad.out, /AUDIT_LOG must be on or off/);
+    } finally { w.cleanup(); }
+});

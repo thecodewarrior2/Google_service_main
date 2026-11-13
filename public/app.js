@@ -967,14 +967,25 @@
     }
 
     // --- Activity: alerts, what admins did, errors, the watching of mailboxes ---------------------
+    // Activity (0.5.29): its own period, up to how long it is kept (AUDIT_DAYS, a year by default), a kind,
+    // words to look for, and all of it as CSV for an audit (recorded under What admins did).
     async function activity(params) {
-        const kind = params.get('kind') || '';
-        const d = await api(`/api/activity?${q({ days: String(days), kind })}`);
+        const kind = params.get('kind') || '', words = params.get('q') || '';
+        const period = Number(params.get('days')) || 30;
+        const d = await api(`/api/activity?${q({ days: String(period), kind, q: words })}`);
+        const nav = (patch) => go(`#/activity?${q(Object.assign({ days: String(period), kind, q: words }, patch))}`);
         const sel = h('select', { 'aria-label': 'Kind' }, [['', 'Everything'], ['alert', 'Alerts (problems, emailed)'], ['admin', 'What admins did'], ['error', 'Errors and gaps'], ['watch', 'Watching mailboxes']]
             .map(([v, l]) => h('option', { value: v, text: l, selected: v === kind })));
-        sel.addEventListener('change', () => go(`#/activity?${q({ kind: sel.value })}`));
-        return [h('h1', { text: 'Activity' }), h('p', { class: 'sub', text: `Alerts, what admins did, errors and the watching of mailboxes, last ${days} days (newest first, up to 500).` }),
-            h('div', { class: 'toolbar' }, sel),
+        sel.addEventListener('change', () => nav({ kind: sel.value }));
+        const spans = [7, 30, 90, 180, 365, d.maxDays].filter((x, i, a) => x && x <= d.maxDays && a.indexOf(x) === i);
+        const per = h('select', { 'aria-label': 'Period' }, spans.map(x => h('option', { value: String(x), text: x === d.maxDays && x !== 365 ? `Last ${x} days (all kept)` : `Last ${x} days`, selected: x === d.days })));
+        per.addEventListener('change', () => nav({ days: per.value }));
+        const find = h('input', { type: 'search', value: words, placeholder: 'Look for an admin, a mailbox, a word…', 'aria-label': 'Look for', autocomplete: 'off', spellcheck: 'false' });
+        find.addEventListener('keydown', (e) => { if (e.key === 'Enter') nav({ q: find.value.trim() }); });
+        const csv = MEMORY ? null : h('a', { class: 'btn', href: `/api/activity.csv?${q({ days: String(d.days), kind, q: words })}`, download: '' }, 'Download CSV');
+        return [h('h1', { text: 'Activity' }), h('p', { class: 'sub', text: `Alerts, what admins did, errors and the watching of mailboxes, newest first. Kept ${d.maxDays} days (AUDIT_DAYS); the email records themselves are kept as long as Settings → Policy says.` }),
+            h('div', { class: 'toolbar' }, sel, per, find, csv),
+            d.total > d.events.length ? h('div', { class: 'small muted', text: `The newest ${num(d.events.length)} of ${num(d.total)} shown; Download CSV has them all (downloading it is noted under What admins did).` }) : null,
             // An alert (a problem the admins were emailed about) in red; an admin's own change is never one (0.5.28).
             h('section', { class: 'card' }, d.events.length ? h('ul', { class: 'events' }, d.events.map(e => {
                 const alerted = e.alert && !e.adminAction;

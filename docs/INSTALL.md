@@ -256,6 +256,17 @@ When it finishes, it prints the **dashboard address**.
   From 0.5.23. An existing installation upgrades to it from Cloud Shell, once: `bash deploy/update.sh` once
   it is approved, or `bash deploy/upgrade.sh` from an unzipped copy (see "Upgrading to a new version"). The
   upgrade runs `install.sh`, which sets up Secret Manager for the key.
+- **Audits: Status → Activity.** Every alert, every admin's action (policy and allowlist changes, decisions on
+  emails and campaigns, updates, the Safe Browsing key, downloads of the email list or of Activity, opening the
+  dashboard, once a day each) and every error, kept a year (`AUDIT_DAYS`, 30 to 1,825 days; the email records
+  themselves are kept `RETENTION_DAYS`). Choose the period, a kind, words to look for, and **Download CSV**
+  for an auditor. Two options Google charges for, both **off by default** (`deploy/settings.env`, then
+  `bash deploy/upgrade.sh` or `install.sh`; the installer says what each costs):
+  - `PUBSUB_BACKLOG_ALERT=on`: an email when Gmail's notifications have waited over 30 minutes in Pub/Sub
+    (the worker isn't taking them). About $0.40 a month.
+  - `AUDIT_LOG=on`: a copy of Activity in Cloud Logging, in its own log bucket (`spruce-audit`) kept
+    `AUDIT_LOG_DAYS` (365 by default), where a Firestore wipe or `clear-data.sh` can't reach it. A few cents
+    a year. Turning it off stops the copies; the bucket keeps what it has until its retention ends.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version
@@ -411,7 +422,8 @@ amounts change; check its pricing pages):
 | Firestore | 50,000 reads and 20,000 writes a day, 1 GB | a few thousand writes a day |
 | Pub/Sub | 10 GB | well under 1 GB |
 | Cloud Scheduler | 3 jobs per billing account | 3 jobs (one runs hourly: the health check and cleanup) |
-| Cloud Monitoring alerts | log-based alerts read no metrics | 2 alert policies, expected free (the budget alert would say otherwise) |
+| Cloud Monitoring alerts | none: Google charges $0.35 a month for each alert policy (its published price) | 2 alert policies: about $0.70 a month (`ALERT_EMAIL=off`: none) |
+| Optional, off by default | none | `PUBSUB_BACKLOG_ALERT=on`: about $0.40 a month more; `AUDIT_LOG=on`: a few cents a year (logs kept past 30 days, $0.01 per GiB a month) |
 | Cloud Build (only when Docker can't upload) | 2,500 build-minutes | a few minutes per install |
 | Cloud Storage (only with Cloud Build) | 5 GB in `us-east1`, `us-central1` and `us-west1` | about 5 MB per install (the uploaded source) |
 | Artifact Registry | 0.5 GB | 3 builds (the installer deletes older ones) |

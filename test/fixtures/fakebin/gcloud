@@ -40,6 +40,9 @@ case "$a" in
   "beta monitoring channels create"*) echo projects/test-proj/notificationChannels/42 ;;
   "monitoring policies create"*) f="${a##*--policy-from-file=}"; f="${f%% *}"; cp "$f" "$FAKE_DIR/policy-$(ls "$FAKE_DIR" | wc -l).json" ;;
   "run deploy "*) [ "${FAKE_DEPLOY:-ok}" = ok ] || exit 1; n="${a#run deploy }"; n="${n%% *}"; f="${a##*--env-vars-file=}"; f="${f%% *}"; [ ! -f "$f" ] || cp "$f" "$FAKE_DIR/env-$n.yaml" ;;
+  "logging buckets describe"*) [ "${FAKE_AUDIT_BUCKET:-none}" = exists ] || exit 1 ;;
+  "logging sinks describe"*) [ "${FAKE_AUDIT_SINK:-none}" = exists ] || exit 1 ;;
+  "monitoring policies list --filter=displayName=\"SPRUCE Mail Protection Service: Gmail's notifications are waiting\""*) [ "${FAKE_BACKLOG:-none}" = exists ] && echo projects/test-proj/alertPolicies/9 ;;
   "secrets describe"*) [ "${FAKE_SECRET:-none}" = exists ] || exit 1 ;;
   "builds submit"*) [ "${FAKE_BUILD:-ok}" = ok ] || { echo "ERROR: build failed" >&2; exit 1; } ;;
 esac

@@ -212,7 +212,8 @@ Keep `MODE` the same on both services. The admin service shows the mode; the wor
 ### Old documents (Firestore TTL)
 
 The service writes `expireAt` (a Timestamp) on what expires: records and checked-message markers after
-`RETENTION_DAYS`, Activity entries after the same, the brake's counters after 2 days, campaign states
+`RETENTION_DAYS`, Activity entries after `AUDIT_DAYS` (a year by default, 0.5.29; written earlier: after
+`RETENTION_DAYS`), the brake's counters after 2 days, campaign states
 after `RETENTION_DAYS` of quiet, remembered registry dates when they run out. Firestore deletes them by
 itself, typically within a day (billed as deletes). `deploy/install.sh` sets the policies; by hand:
 
@@ -348,7 +349,10 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `DASHBOARD_URL` | none | the dashboard's address, in the weekly summary (install.sh: `https://spruce-admin-NUMBER.REGION.run.app`) |
 | `GOOGLE_CLOUD_PROJECT`, `CLOUD_RUN_REGION` | none | where the services run, for the dashboard's Status page |
 | `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |
-| `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none |
+| `ALERT_EMAIL` (installer; shown on the dashboard) | the `ADMIN_GROUP` | where Cloud Monitoring emails alerts; `off` for none (Google charges about $0.70 a month for the two alert policies) |
+| `AUDIT_DAYS` | `365` | how long Status → Activity is kept, 30 to 1,825 days (0.5.29) |
+| `PUBSUB_BACKLOG_ALERT` (installer) | off | on: an email when Gmail's notifications wait in Pub/Sub over 30 minutes; a metric alert policy Google charges about $0.40 a month for |
+| `AUDIT_LOG`, `AUDIT_LOG_DAYS` (installer) | off, `365` | on: a copy of Activity in the log bucket `spruce-audit` (a sink on `jsonPayload.spruceAudit`), kept that long; Google charges a few cents a year |
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Moved back` | labels added to mail moved to Spam, and to mail an admin moved back to the Inbox (`SPRUCE/Released` before 0.3.7) |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |

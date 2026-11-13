@@ -236,7 +236,11 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     - time in monitor mode, emails reviewed, false alarms;
     - staff mail failing DMARC, and the busiest hour against the brake;
     - notifications arriving, and the group re-read reaching the service.
-  - **Activity:** alerts, what admins did, errors and the watching of mailboxes, by kind.
+  - **Activity:** alerts (problems the admins are emailed about), what admins did (opening the dashboard and
+    downloads included), errors and the watching of mailboxes. Kept a year (`AUDIT_DAYS`), apart from the email
+    records; any period, a kind, words to look for, and a CSV download for audits. Optional (off by default,
+    Google charges a little): a copy in a Cloud Logging bucket (`AUDIT_LOG`), and an alert when Gmail's
+    notifications pile up in Pub/Sub (`PUBSUB_BACKLOG_ALERT`).
 - **Settings:**
   - **Policy:** **Change** the mode, the AI move threshold, the AI suspicious line, the brake (automatic,
     or a fixed number of moves an hour) or the time zone, and how the rest decides (read-only). The

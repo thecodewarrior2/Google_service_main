@@ -241,9 +241,10 @@ class FirestoreStore {
     }
     async getState(name) { const d = await this.col('state').doc(name).get(); return d.exists ? (d.data().value ?? null) : null; }
     async setState(name, value) { await this.col('state').doc(name).set({ value }); }
-    async addEvent(ev) { const e = Object.assign({ at: Date.now() }, ev); await this.col('events').add(Object.assign(e, { expireAt: this.expiry(Number(e.at) || Date.now()) })); }
-    async listEvents(sinceMs = 0) {
-        const q = await this.col('events').where('at', '>=', sinceMs).orderBy('at', 'desc').limit(500).get();
+    // Activity is kept AUDIT_DAYS (0.5.29; a year by default), not RETENTION_DAYS like the email records.
+    async addEvent(ev) { const e = Object.assign({ at: Date.now() }, ev); await this.col('events').add(Object.assign(e, { expireAt: this.expiry(Number(e.at) || Date.now(), (Number(this.cfg.auditDays) || 365) * DAY) })); if (this.onEvent) this.onEvent(e); }
+    async listEvents(sinceMs = 0, { limit = 500 } = {}) {
+        const q = await this.col('events').where('at', '>=', sinceMs).orderBy('at', 'desc').limit(limit).get();
         return q.docs.map(d => clean(d.data()));
     }
     // Files shared by every instance (the phishing lists), split into chunks under Firestore's 1 MiB
@@ -272,14 +273,15 @@ class FirestoreStore {
     }
     // What is older than beforeMs, 400 at a time, until budgetMs is spent (the rest at the next run): with
     // TTL policies on, only documents written before 0.4.0, or made old by a shorter RETENTION_DAYS.
-    async purge(beforeMs, { budgetMs = 90 * 1000 } = {}) {
+    async purge(beforeMs, { budgetMs = 90 * 1000, eventsBeforeMs = beforeMs } = {}) {
         let n = 0;
         const started = Date.now();
         for (const name of ['records', 'seen', 'events', 'moveCounts', 'campaigns']) {
             const field = name === 'records' ? 'processedAt' : 'at';
+            const before = name === 'events' ? eventsBeforeMs : beforeMs;   // (Activity: AUDIT_DAYS)
             for (;;) {
                 if (Date.now() - started > budgetMs) return n;
-                const q = await this.col(name).where(field, '<', beforeMs).limit(400).get();
+                const q = await this.col(name).where(field, '<', before).limit(400).get();
                 if (q.empty) break;
                 const batch = this.db.batch();
                 q.docs.forEach(d => batch.delete(d.ref));

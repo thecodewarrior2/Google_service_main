@@ -47,7 +47,7 @@ test('the service: an admin\'s change is recorded under What admins did and not 
     const get = async (kind) => (await (await fetch(`http://127.0.0.1:${srv.address().port}/api/activity?days=7&kind=${kind}`)).json()).events;
     try {
         assert.deepEqual((await get('alert')).map(e => [e.kind, e.alert, e.adminAction]), [['brake', true, false]]);
-        const mine = await get('admin');
+        const mine = (await get('admin')).filter(e => e.kind !== 'signin');   // (0.5.29: opening the dashboard is noted too)
         assert.deepEqual(mine.map(e => [e.kind, !!e.alert, e.adminAction]), [['settings', false, true]]);
         assert.match(mine[0].text, /changed the AI move threshold/);
     } finally { await new Promise(r => srv.close(r)); }

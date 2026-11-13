@@ -23,7 +23,8 @@ const training = require('./training');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
-const LIST_RETRY_MS = 3 * HOUR;   // a phishing list that missed its download is tried again this often (0.5.22)
+const LIST_RETRY_MS = 3 * HOUR;
+const ERRORS_ALERT = 25;   // errors in an hour that make an alert (0.5.29)   // a phishing list that missed its download is tried again this often (0.5.22)
 const MAX_TRIES = 3;
 // How long a claim keeps other instances off a message: longer than a request may run (the worker's
 // timeout is 120 s), so only a claim left by an instance that stopped is taken over.
@@ -371,6 +372,9 @@ class Service {
                     ? `A message couldn't be checked after ${MAX_TRIES} tries and was left where it is: ${why}`
                     : `A message couldn't be checked (try ${e.tries || 1} of ${MAX_TRIES}; it is tried again in a minute or so): ${why}` });
                 this.log.error(`process ${user} ${id}:`, e);
+                // An email left unchecked is a gap in the protection: the admins are told (0.5.29, once a day).
+                if (e.gaveUp) await this.alertDaily('unchecked-mail', `An email to ${user} couldn't be checked after ${MAX_TRIES} tries and was left in the mailbox unchecked (${why.slice(0, 160)}). Any more today are listed in Status → Activity → Errors and gaps.`).catch(() => {});
+                await this.gmailTrouble(e, user);
                 continue;
             }
             if (r && r.busy) busy.push(id);
@@ -753,6 +757,18 @@ class Service {
     // policy change, an update started, a Safe Browsing key) isn't one: it is recorded in Activity → What
     // admins did, and not emailed.
     async adminNotice(kind, text, extra = {}) { await this.store.addEvent(Object.assign({ kind, text, admin: true }, extra)); }
+    // Gmail refusing the service (0.5.29): domain-wide delegation removed or its scopes changed, the service
+    // account's token refused. Every email then goes unchecked, while Gmail's notifications keep coming (so
+    // the "quiet" alert never fires): the admins are told at once, then once a day while it lasts.
+    static isGmailAccessError(e) {
+        const m = String((e && e.message) || e || '');
+        return /^token for .*: HTTP 4\d\d/.test(m) || /unauthorized_client|invalid_grant|Delegation denied|domain-wide delegation/i.test(m)
+            || (e && (e.status === 401 || (e.status === 403 && !/rateLimitExceeded|userRateLimitExceeded/i.test(m))));
+    }
+    async gmailTrouble(e, user) {
+        if (!Service.isGmailAccessError(e)) return false;
+        return this.alertDaily('gmail-access', `Gmail refused the service for ${user} (${String((e && e.message) || e).slice(0, 200)}): new mail there isn't checked. Usually the domain-wide delegation was removed or its scopes changed (Admin console → Security → API controls → Domain-wide delegation; docs/INSTALL.md, step 3). bash deploy/doctor.sh checks the rest.`).catch(() => false);
+    }
     // An alert at most once a day (per kind and UTC day, whichever instance sees it first): for a problem that
     // lasts (a lookup service down, the AI model not loading).
     async alertDaily(kind, text, extra = {}) {
@@ -1026,7 +1042,8 @@ class Service {
     }
 
     // Cloud Scheduler, daily: records older than RETENTION_DAYS are deleted.
-    purge(opts = {}) { return this.store.purge(this.now() - this.cfg.retentionDays * DAY, opts); }
+    // Records after RETENTION_DAYS; Activity (what admins did, alerts) after AUDIT_DAYS (0.5.29, a year by default).
+    purge(opts = {}) { return this.store.purge(this.now() - this.cfg.retentionDays * DAY, Object.assign({ eventsBeforeMs: this.now() - (this.cfg.auditDays || 365) * DAY }, opts)); }
 
     // Cloud Scheduler, hourly (the spruce-sync-feeds job): the health check, then the phishing lists,
     // downloaded once a day for everyone (src/intel/feeds.js; a failed download is tried again the next
@@ -1251,6 +1268,12 @@ class Service {
             out.quiet = true;
             await once('quietAlertAt', 'quiet', `No notification from Gmail for ${Math.round((now - since) / HOUR)} hours, for any of the ${sum.watched} watched mailboxes. Gmail's notifications may be refused before they reach the service: docs/INSTALL.md, Troubleshooting, "The jobs and notifications are refused".`);
         }
+        // Many errors in the last hour (0.5.29): something stopped working (Firestore, Gmail, the model…).
+        try {
+            const errs = (await this.store.listEvents(now - HOUR)).filter(e => e.kind === 'error').length;
+            out.errorsLastHour = errs;
+            if (errs >= ERRORS_ALERT) await this.alertDaily('errors', `${errs} errors in the last hour: something may have stopped working. Status → Activity → Errors and gaps says what failed; Status → Service status, and bash deploy/doctor.sh, check the rest.`);
+        } catch (e) { /* the next hour */ }
         out.expiring = sum.ending;
         if (out.expiring) await once('expiringAlertAt', 'watch-expiring', `${out.expiring} mailbox watches end within a day and weren't renewed: the daily re-read of the group (spruce-renew-watches) may be failing. Settings → Mailboxes says when it last reached the service.`);
         return out;

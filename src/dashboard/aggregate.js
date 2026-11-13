@@ -211,12 +211,20 @@
     }
 
     // Records as CSV, for reports. A cell a spreadsheet would run as a formula is written as text.
+    // A spreadsheet cell: never read as a formula (=, +, -, @ first), quoted when needed.
+    const csvCell = (v) => {
+        let t = v === null || v === undefined ? '' : String(v);
+        if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+        return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    // Status → Activity as CSV, for audits (0.5.29): when (UTC), kind, alert, an admin's own action, mailbox, text.
+    function activityCsv(events) {
+        const cols = ['at_utc', 'kind', 'alert', 'admin_action', 'mailbox', 'text'];
+        const rows = events.map(e => [e.at ? new Date(e.at).toISOString() : '', e.kind || '', e.alert && !isAdminAction(e) ? 'yes' : '', isAdminAction(e) ? 'yes' : '', e.user || '', e.text || ''].map(csvCell).join(','));
+        return [cols.join(','), ...rows].join('\r\n') + '\r\n';
+    }
     function toCsv(records) {
-        const cell = (v) => {
-            let t = v === null || v === undefined ? '' : String(v);
-            if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
-            return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-        };
+        const cell = csvCell;
         const iso = (ms) => (ms ? new Date(ms).toISOString() : '');
         const cols = [['checked', r => iso(r.processedAt)], ['received', r => iso(r.receivedAt)], ['recipient', r => r.user], ['sender', r => r.sender && r.sender.address],
             ['sender_name', r => r.sender && r.sender.name], ['subject', r => r.subject], ['campaign', r => r.campaignLabel], ['status', r => r.status], ['score', r => r.score],
@@ -241,5 +249,5 @@
         error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
-    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity, isAdminAction };
+    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity, isAdminAction, activityCsv };
 });

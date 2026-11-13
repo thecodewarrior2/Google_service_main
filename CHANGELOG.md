@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.29: What was missed: more alerts, a longer and searchable Activity, and two optional extras
+
+**New alerts** (emailed, at most once a day while it lasts):
+- **Gmail refusing the service:** domain-wide delegation removed or its scopes changed, a token refused,
+  401/403 (not a rate limit). Every email then goes unchecked while Gmail's notifications keep coming, so
+  the "quiet" alert never fired. Caught both while reading an email and before (the Pub/Sub route).
+- **An email left unchecked** after three tries.
+- **25 errors in an hour** (the hourly health check).
+- **An admin's account locked** after five wrong project IDs or email addresses: it may not have been them.
+
+**Recorded** in Activity → What admins did (not emailed): downloading the email list as CSV (Email →
+Messages), downloading Activity, and opening the dashboard (once a day per admin).
+
+**Activity for audits:**
+- Kept `AUDIT_DAYS` (365 by default, 30 to 1,825), no longer `RETENTION_DAYS` like the email records. It holds
+  no email text. Entries written before 0.5.29 keep their old date.
+- Status → Activity: its own period (up to all that is kept), words to look for (an admin, a mailbox, a word),
+  and **Download CSV** (when in UTC, kind, alert, admin action, mailbox, text), which is noted.
+
+**Optional, off by default, because Google Cloud charges for them** (set in `deploy/settings.env`, then
+`upgrade.sh` or `install.sh`; the installer says what each costs):
+- `PUBSUB_BACKLOG_ALERT=on`: an email when Gmail's notifications have waited in Pub/Sub over 30 minutes (a
+  metric alert policy: about $0.40 a month at Google's published price). Turned off again, the policy is
+  removed.
+- `AUDIT_LOG=on` (`AUDIT_LOG_DAYS`, 365 by default): each Activity entry also as a log line (`spruceAudit`),
+  routed to the log bucket `spruce-audit` kept that long, where a Firestore wipe can't reach it (logs kept
+  past 30 days: $0.01 per GiB a month, a few cents a year here). Turned off, the sink is removed; the bucket
+  keeps what it has until its retention ends.
+
+**Costs, corrected:** Google now charges for alert policies ($0.35 a month each at its published price), so
+the two `install.sh` has always made (an alert from the service, a failed scheduled job) cost about $0.70 a
+month; `ALERT_EMAIL=off` makes none. docs/INSTALL.md (Costs), settings.example.env and the installer say so.
+
+The installation level stays 4: nothing new is needed unless an option is turned on, and turning one on is
+done with `install.sh` anyway. Tests: `test/audit.test.js`, `test/install.test.js`, `test/pipeline.test.js`.
+
 ## 0.5.28: Alerts are the problems the admins are emailed about; an admin's own changes are what admins did
 
 - **What an alert is.** An alert is a problem the admins are emailed about (to `ALERT_EMAIL`), such as a

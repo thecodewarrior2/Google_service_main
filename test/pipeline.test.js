@@ -277,9 +277,14 @@ test('a message that keeps failing is left after 3 tries, so the mailbox moves o
     for (const h of ['2', '3', '4']) { gmail.history = { ids: ['m1'], historyId: h }; await svc.handleNotification({ emailAddress: USER, historyId: h }); }
     assert.equal((await store.getUser(USER)).historyId, '4', 'given up on the third try: the place moves on');
     assert.ok((await store.listEvents()).some(e => /after 3 tries and was left where it is/.test(e.text)));
+    // 0.5.29: an email left unchecked is an alert (emailed, once a day).
+    const unchecked = (await store.listEvents()).filter(e => e.kind === 'unchecked-mail' && e.alert);
+    assert.equal(unchecked.length, 1);
+    assert.match(unchecked[0].text, /couldn't be checked after 3 tries and was left in the mailbox unchecked/);
     gmail.history = { ids: ['m1'], historyId: '5' };
     await svc.handleNotification({ emailAddress: USER, historyId: '5' });
     assert.equal((await store.listEvents()).filter(e => e.kind === 'error').length, 3, 'not tried a fourth time');
+    assert.equal((await store.listEvents()).filter(e => e.kind === 'unchecked-mail').length, 1, 'once a day');
 });
 
 test('moved, then the record failed: the next try writes the record without moving it again', async () => {

@@ -161,7 +161,7 @@ async function buildDemo({ now = Date.now(), cfg }) {
     }
     store.events = [...store.events,
         { at: now - 3 * DAY + 5 * 3600e3, kind: 'release', text: 'it.helpdesk@maple-schools.example moved 3 emails from deals@e.gadgetdeals-shop.example back to the Inbox (marked as false alarms).' },
-        { at: now - 10 * DAY, kind: 'mode', text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
+        { at: now - 10 * DAY, kind: 'mode', admin: true, text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', alert: true, text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }
     ];
     // (the colleague-name check read the demo directory while the made-up mail was judged: as of now)

@@ -17,6 +17,7 @@ SETTINGS=deploy/settings.env
 [ -f "$SETTINGS" ] || fail "copy deploy/settings.example.env to $SETTINGS and fill it in first."
 PROJECT= REGION= ORG_DOMAINS= PILOT_GROUP= DIRECTORY_ADMIN= ADMIN_EMAILS= ADMIN_GROUP= MODE=monitor
 AI_MOVE_THRESHOLD= AI_SUSPICIOUS_THRESHOLD= ALLOW_DOMAINS= ALLOW_ADDRESSES= BRAKE_PER_HOUR= BUDGET_ALERT= ALERT_EMAIL= CAMPAIGN_HOLD_AFTER= TIME_ZONE= WORKER_MAX_INSTANCES= RETENTION_DAYS=
+AUDIT_DAYS= PUBSUB_BACKLOG_ALERT= AUDIT_LOG= AUDIT_LOG_DAYS=
 while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     case "$line" in '' | \#*) continue ;; esac
@@ -24,7 +25,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="$(echo "$key" | tr -d '[:space:]')"; val="$(echo "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     case "$val" in *'"'* | *'\'* | *'$'* | *'`'*) fail "$key: quotes, backslashes and \$ are not allowed in settings." ;; esac
     case "$key" in
-        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES | RETENTION_DAYS) printf -v "$key" '%s' "$val" ;;
+        PROJECT | REGION | ORG_DOMAINS | PILOT_GROUP | DIRECTORY_ADMIN | ADMIN_EMAILS | ADMIN_GROUP | MODE | AI_MOVE_THRESHOLD | AI_SUSPICIOUS_THRESHOLD | ALLOW_DOMAINS | ALLOW_ADDRESSES | BRAKE_PER_HOUR | BUDGET_ALERT | ALERT_EMAIL | CAMPAIGN_HOLD_AFTER | TIME_ZONE | WORKER_MAX_INSTANCES | RETENTION_DAYS | AUDIT_DAYS | PUBSUB_BACKLOG_ALERT | AUDIT_LOG | AUDIT_LOG_DAYS) printf -v "$key" '%s' "$val" ;;
         *) fail "unknown setting '$key' in $SETTINGS." ;;
     esac
 done < "$SETTINGS"
@@ -44,6 +45,13 @@ TZ_NAME="${TIME_ZONE:-UTC}"
 WORKER_MAX="${WORKER_MAX_INSTANCES:-30}"
 [[ "$WORKER_MAX" =~ ^[0-9]+$ ]] && [ "$WORKER_MAX" -ge 1 ] && [ "$WORKER_MAX" -le 100 ] || fail "WORKER_MAX_INSTANCES must be a number from 1 to 100 (or empty for 30)."
 # How long records are kept (also on the dashboard, Settings → Policy). Empty = 35.
+# 0.5.29: how long Activity is kept (AUDIT_DAYS), and the two options Google charges for (off by default).
+[ -z "$AUDIT_DAYS" ] || { [[ "$AUDIT_DAYS" =~ ^[0-9]+$ ]] && [ "$AUDIT_DAYS" -ge 30 ] && [ "$AUDIT_DAYS" -le 1825 ]; } || fail "AUDIT_DAYS must be a number of days from 30 to 1825 (or empty for 365)."
+onoff() { case "$(echo "${1:-off}" | tr '[:upper:]' '[:lower:]')" in on | true | yes | 1) echo on ;; off | false | no | 0 | '') echo off ;; *) echo bad ;; esac; }
+PUBSUB_BACKLOG_ALERT="$(onoff "$PUBSUB_BACKLOG_ALERT")"; AUDIT_LOG="$(onoff "$AUDIT_LOG")"
+[ "$PUBSUB_BACKLOG_ALERT" != bad ] || fail "PUBSUB_BACKLOG_ALERT must be on or off (empty = off)."
+[ "$AUDIT_LOG" != bad ] || fail "AUDIT_LOG must be on or off (empty = off)."
+[ -z "$AUDIT_LOG_DAYS" ] || { [[ "$AUDIT_LOG_DAYS" =~ ^[0-9]+$ ]] && [ "$AUDIT_LOG_DAYS" -ge 30 ] && [ "$AUDIT_LOG_DAYS" -le 3650 ]; } || fail "AUDIT_LOG_DAYS must be a number of days from 30 to 3650 (or empty for 365)."
 keep_days_ok() { [ -z "$RETENTION_DAYS" ] || { [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] && [ "$RETENTION_DAYS" -ge 14 ] && [ "$RETENTION_DAYS" -le 365 ]; } || fail "RETENTION_DAYS must be a number of days from 14 to 365 (or empty for 35)."; }
 keep_days_ok
 KEEP_BUILDS=3   # images kept in Artifact Registry (the free tier is 0.5 GB; deploy/rollback.sh can go back 2)
@@ -236,7 +244,7 @@ WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
     RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app"
-    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET")
+    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET" AUDIT_DAYS "$AUDIT_DAYS" AUDIT_LOG "$([ "$AUDIT_LOG" = on ] && echo true || echo false)")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
 LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 
@@ -360,7 +368,8 @@ echo "  spruce-update (when an admin presses Update in the dashboard's Settings 
 
 # Alerts by email (Cloud Monitoring), from log lines: what the service reports (the brake, a held
 # campaign, Gmail gone quiet, a user taking flagged mail into the Inbox) and any failed scheduled job.
-# Log-based alerts read no metrics, so no charge is expected; the budget alert would say otherwise.
+# Google charges for alert policies (0.5.29: $0.35 a month for each, at its published price): these two are
+# about $0.70 a month. ALERT_EMAIL=off makes none (the alerts still show on the dashboard).
 policy() { # display name, log filter (JSON-escaped), label extractors (JSON), what to do, channel
     local f="$TMP/policy.json" id
     printf '%s\n' '{' \
@@ -382,6 +391,7 @@ alerts() {
     channel="$(gcloud beta monitoring channels list --filter="type=\"email\" AND labels.email_address=\"$ALERT_TO\"" --format='value(name)' 2>/dev/null | head -1)"
     [ -n "$channel" ] || channel="$(gcloud beta monitoring channels create --display-name="SPRUCE Mail Protection Service alerts" --type=email --channel-labels=email_address="$ALERT_TO" --format='value(name)' --quiet)" || return 1
     [ -n "$channel" ] || return 1
+    ALERT_CHANNEL="$channel"
     policy "SPRUCE Mail Protection Service: an alert from the service" 'resource.type=\"cloud_run_revision\" AND jsonPayload.spruceAlert:*' \
         '{ "alert": "EXTRACT(jsonPayload.spruceAlert)", "message": "EXTRACT(jsonPayload.message)" }' \
         "The service reported something to look at: the message says what. Open the dashboard (Overview, Activity)." "$channel" || return 1
@@ -390,8 +400,67 @@ alerts() {
         "A scheduled job couldn't reach the worker. If it says 401 or 403, see docs/INSTALL.md, Troubleshooting, The jobs and notifications are refused." "$channel" || return 1
 }
 if [ -z "$ALERT_TO" ]; then echo "  Alerts: not emailed (ALERT_EMAIL=off); they show in the dashboard's Recent activity."
-elif alerts; then echo "  Alerts: emailed to $ALERT_TO (the brake, held campaigns, Gmail gone quiet, failed jobs)."
+elif alerts; then echo "  Alerts: emailed to $ALERT_TO (the brake, held campaigns, Gmail gone quiet, failed jobs). Google charges about \$0.70 a month for the two alert policies."
 else echo "  (Alerts couldn't be set up from here; they still show in the dashboard's Recent activity. docs/INSTALL.md, Troubleshooting.)"; fi
+
+# --- Optional, OFF by default: Google Cloud charges for these (0.5.29) ---------------------------------------
+# PUBSUB_BACKLOG_ALERT=on: an email when Gmail's notifications have waited in Pub/Sub over 30 minutes (the
+# worker isn't taking them). A metric-based alert policy: about $0.40 a month at Google's published price.
+BACKLOG_NAME="SPRUCE Mail Protection Service: Gmail's notifications are waiting"
+backlog_alert() {
+    local f="$TMP/backlog.json" id channel="${ALERT_CHANNEL:-}"
+    # (the alerts' email channel, found or made just above)
+    [ -n "$channel" ] || channel="$(gcloud beta monitoring channels list --filter="type=\"email\" AND labels.email_address=\"$ALERT_TO\"" --format='value(name)' 2>/dev/null | head -1)"
+    [ -n "$channel" ] || return 1
+    printf '%s\n' '{' \
+        "  \"displayName\": \"$BACKLOG_NAME\"," \
+        '  "documentation": { "content": "Gmail'"'"'s notifications have waited in Pub/Sub for over 30 minutes: the worker isn'"'"'t taking them, so new mail isn'"'"'t checked. Look at Status → Service status and Activity → Errors; bash deploy/doctor.sh checks the rest.", "mimeType": "text/markdown" },' \
+        '  "combiner": "OR",' \
+        '  "conditions": [ { "displayName": "Oldest waiting notification over 30 minutes", "conditionThreshold": {' \
+        "    \"filter\": \"resource.type = \\\"pubsub_subscription\\\" AND resource.labels.subscription_id = \\\"gmail-spruce-push\\\" AND metric.type = \\\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\\\"\"," \
+        '    "aggregations": [ { "alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_MAX" } ],' \
+        '    "comparison": "COMPARISON_GT", "thresholdValue": 1800, "duration": "300s" } } ],' \
+        '  "alertStrategy": { "autoClose": "86400s" },' \
+        "  \"notificationChannels\": [ \"$channel\" ]" \
+        '}' > "$f"
+    id="$(gcloud monitoring policies list --filter="displayName=\"$BACKLOG_NAME\"" --format='value(name)' 2>/dev/null | head -1)"
+    if [ -n "$id" ]; then gcloud monitoring policies update "$id" --policy-from-file="$f" --quiet >/dev/null
+    else gcloud monitoring policies create --policy-from-file="$f" --quiet >/dev/null; fi
+}
+if [ "$PUBSUB_BACKLOG_ALERT" = on ]; then
+    echo "  PUBSUB_BACKLOG_ALERT=on: Google Cloud charges for this alert policy (about \$0.40 a month at its published price)."
+    if [ -z "$ALERT_TO" ]; then echo "  (Not set up: alerts aren't emailed, ALERT_EMAIL=off.)"
+    elif backlog_alert; then echo "  Waiting notifications: emailed to $ALERT_TO when they wait over 30 minutes."
+    else echo "  (The waiting-notifications alert couldn't be set up from here.)"; fi
+else
+    # Off: none left behind, so nothing is charged for it.
+    id="$(gcloud monitoring policies list --filter="displayName=\"$BACKLOG_NAME\"" --format='value(name)' 2>/dev/null | head -1)"
+    [ -z "$id" ] || { gcloud monitoring policies delete "$id" --quiet >/dev/null 2>&1 && echo "  PUBSUB_BACKLOG_ALERT is off: its alert policy was removed."; }
+fi
+# AUDIT_LOG=on: a copy of Status → Activity (what admins did, alerts, errors) in Cloud Logging, in its own log
+# bucket kept AUDIT_LOG_DAYS (365 by default), where a Firestore wipe can't reach it. Google charges for log
+# storage past 30 days ($0.01 per GiB a month at its published price): a few cents a year here. The services
+# write the log lines only when it is on (AUDIT_LOG=true on both).
+AUDIT_BUCKET=spruce-audit
+if [ "$AUDIT_LOG" = on ]; then
+    echo "  AUDIT_LOG=on: Google Cloud charges for keeping logs past 30 days (a few cents a year for this one)."
+    if gcloud logging buckets describe "$AUDIT_BUCKET" --location=global >/dev/null 2>&1; then
+        gcloud logging buckets update "$AUDIT_BUCKET" --location=global --retention-days="${AUDIT_LOG_DAYS:-365}" --quiet >/dev/null
+    else
+        gcloud logging buckets create "$AUDIT_BUCKET" --location=global --retention-days="${AUDIT_LOG_DAYS:-365}" --description="SPRUCE Mail Protection Service: Activity (what admins did, alerts)" --quiet >/dev/null
+    fi
+    AUDIT_FILTER='resource.type="cloud_run_revision" AND jsonPayload.spruceAudit:*'
+    if gcloud logging sinks describe "$AUDIT_BUCKET" >/dev/null 2>&1; then
+        gcloud logging sinks update "$AUDIT_BUCKET" "logging.googleapis.com/projects/$PROJECT/locations/global/buckets/$AUDIT_BUCKET" --log-filter="$AUDIT_FILTER" --quiet >/dev/null
+    else
+        gcloud logging sinks create "$AUDIT_BUCKET" "logging.googleapis.com/projects/$PROJECT/locations/global/buckets/$AUDIT_BUCKET" --log-filter="$AUDIT_FILTER" --quiet >/dev/null
+    fi
+    echo "  Activity is copied to the log bucket $AUDIT_BUCKET, kept ${AUDIT_LOG_DAYS:-365} days (Logs Explorer → Refine scope → Log bucket)."
+elif gcloud logging sinks describe "$AUDIT_BUCKET" >/dev/null 2>&1; then
+    # Off: no more copies. The bucket keeps what it has until its retention ends (delete it in the console to
+    # remove it sooner).
+    gcloud logging sinks delete "$AUDIT_BUCKET" --quiet >/dev/null 2>&1 && echo "  AUDIT_LOG is off: Activity is no longer copied; the log bucket $AUDIT_BUCKET keeps what it has until its retention ends."
+fi
 gcloud scheduler jobs run spruce-sync-feeds --location="$REGION" --quiet
 if [ -n "$STOPPED" ]; then
     gcloud scheduler jobs pause spruce-renew-watches --location="$REGION" --quiet >/dev/null 2>&1 || true

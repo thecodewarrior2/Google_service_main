@@ -86,6 +86,12 @@ function loadConfig(env = process.env) {
         safeBrowsing: bool(env.SAFE_BROWSING, false),
         safeBrowsingKey: env.SAFE_BROWSING_KEY || '',
         safeBrowsingSecret: env.SAFE_BROWSING_SECRET || '',
+        // Status → Activity (what admins did, alerts, errors) is kept this many days (0.5.29; the email records
+        // RETENTION_DAYS). 30 to 1,825. It holds no email text: mailbox addresses, sender domains, admins.
+        auditDays: Math.min(1825, Math.max(30, Math.round(num(env.AUDIT_DAYS, 365)))),
+        // A copy of Activity in Cloud Logging, kept a year in its own log bucket (0.5.29): OFF by default (Google
+        // charges for it, a little). install.sh sets AUDIT_LOG=true with the bucket.
+        auditLog: bool(env.AUDIT_LOG, false),
         phishingLists: bool(env.PHISHING_LISTS, true),
         siteAge: bool(env.SITE_AGE, true),
         // Records
