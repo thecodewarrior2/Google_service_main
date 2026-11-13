@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.42: Spamhaus: a refused lookup is asked again; the page explains the hour a new key takes
+
+- **Refused lookups are asked again.** A new Spamhaus key takes up to about an hour to sync across Spamhaus's
+  servers; meanwhile some know it and some answer REFUSED. A refused lookup is now asked again: 3 tries for an
+  email's lookups, 6 for Test (with short pauses), so a server that knows the key answers. Each try counts toward
+  the day's lookups. A key every server refuses is still said plainly, and alerted.
+- **Settings → Spamhaus** has a warning beside Add the key: a new key can take up to an hour to sync, and Test may
+  say "Spamhaus refused the lookup: its servers don't know this key yet" until then. That is expected: wait and
+  try again. **Getting a key** is now step by step: the free account; where the Query Key is in Spamhaus's portal
+  (Blocklists via DNS Query → Datasets and access → Access, Enabled); the hour's wait; saving it here with the
+  project ID; the green badge; and pasting a key nowhere else (if it was, generate a new one).
+- Tests: `test/optional-services.test.js`.
+
 ## 0.5.41: Settings → Spamhaus says when Spamhaus doesn't know the key
 
 - Spamhaus's servers answer **REFUSED** for a key they don't know: one not active yet (a key made today can take

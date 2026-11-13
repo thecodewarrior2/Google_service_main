@@ -106,8 +106,9 @@ turned on on its own Settings page with a key the district gets itself, kept in 
   sites in the Domain Blocklist and Zero Reputation Domains. Ask for a free DQS account at
   https://www.spamhaus.com/data-access/free-data-query-service/ (for non-commercial small organizations, at
   most 100,000 lookups a day; Spamhaus checks who you are: confirm the district qualifies, with its own key).
-  The service stops for the day at `SPAMHAUS_DAILY_MAX` (90,000). A key made today can take a while to start
-  working on Spamhaus's servers: until then Test says Spamhaus refused it; try again later. Paste a key only
+  The service stops for the day at `SPAMHAUS_DAILY_MAX` (90,000). A new key can take up to an hour to sync
+  across Spamhaus's servers: until then Test may say "Spamhaus refused the lookup: its servers don't know this
+  key yet", which is expected; wait and try again (a refused lookup is asked again a few times). Paste a key only
   into the dashboard, never into email or chat (if one was, make a new one in Spamhaus's portal).
 - **abuse.ch** (Settings → abuse.ch): URLhaus and ThreatFox, downloaded once a day. Get a free Auth-Key at
   https://auth.abuse.ch/ (not-for-profit use).

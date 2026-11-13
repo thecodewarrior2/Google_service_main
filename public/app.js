@@ -1703,8 +1703,13 @@
                 ['Brand-new domains. ', 'Zero Reputation Domains: a domain first seen on the internet in the last 24 hours. Phishing sites are usually that new; a sender or link domain that new is a sign.'],
                 ['Hacked real sites. ', 'The DBL marks legitimate domains being abused for phishing or malware right now, which the age and look-alike checks can\'t tell.']],
             costs: (o) => `Costs: none. Spamhaus's free use is for non-commercial small organizations, at most 100,000 lookups a day; the service stops for the day at ${num(o.dailyMax || 90000)} (SPAMHAUS_DAILY_MAX), and each name is looked up once an hour at most (a campaign's copies share it; each costs 2 lookups, DBL and ZRD). Spamhaus works on a "know your client" basis: confirm with them that your district qualifies, with its own key. Each lookup sends the site's name, with the key, to Spamhaus's DNS servers through Google's resolver; nothing else about the email.`,
-            steps: [['Ask for a ', ['free Spamhaus Data Query Service account', 'https://www.spamhaus.com/data-access/free-data-query-service/'], ' with the district\'s name and a work address, and read its ', ['fair use policy', 'https://www.spamhaus.com/terms-of-use-fair-use-policy-for-free-data-query-service/'], '.'],
-                ['Once approved, copy the DQS key (26 characters) from Spamhaus\'s portal.'], ['Paste it below with the project ID: it is tried with Spamhaus first (a lookup of Spamhaus\'s own test entry, dbltest.com).']],
+            steps: [['Ask for a ', ['free Spamhaus Data Query Service account', 'https://www.spamhaus.com/data-access/free-data-query-service/'], ' with the district\'s name and a work address, and read its ', ['fair use policy', 'https://www.spamhaus.com/terms-of-use-fair-use-policy-for-free-data-query-service/'], '. Spamhaus checks who you are before it approves the account.'],
+                ['Once approved, sign in to Spamhaus\'s portal and open Blocklists via DNS Query → Datasets and access. Under Access, the Query Key (26 letters and digits) must say Enabled; if there is none, press Generate.'],
+                ['Wait up to an hour. A new key takes that long to sync across all of Spamhaus\'s servers; until then some of them refuse it, and Test and save the key (above) may say "Spamhaus refused the lookup: its servers don\'t know this key yet". That is expected: try again later.'],
+                ['Copy the key and paste it in Add the key, above, with the Google Cloud project ID; leave "Turn Spamhaus on once the key works" ticked; press Test and save the key. It is tried with Spamhaus first (a lookup of Spamhaus\'s own test entry, dbltest.com; a refusal is asked again a few times, in case one server doesn\'t know the key yet). Only a key that works is saved.'],
+                ['The badge beside the title turns green: "Service is on". The Lookups line says when Spamhaus last answered.'],
+                ['Paste the key only here: never in email or chat. If it ever was, press Generate in Spamhaus\'s portal for a new one, wait up to an hour, and save the new one here (the old one stops working).']],
+            keyNote: 'A new Spamhaus key can take up to an hour to sync across Spamhaus\'s servers. Until then, Test and save may say "Spamhaus refused the lookup: its servers don\'t know this key yet": that is expected. Wait, then try again. A refused lookup is asked again a few times, so a key that has reached some of the servers often works sooner.',
             placeholder: 'DQS key'
         },
         abusech: {
@@ -1767,6 +1772,7 @@
                 h('div', { class: 'actions' }, sw)),
             o.available ? h('section', { class: 'card spaced' }, h('h2', { text: o.saved ? 'Replace the key' : 'Add the key' }),
                 h('div', { class: 'sub', text: `Paste the key. It is tried with ${def.label} first; only a key that works is saved, in Secret Manager. It is never kept in the dashboard's records, shown here again, or written to the logs. Saving a new key destroys the old one.` }),
+                def.keyNote ? h('div', { class: 'alert warning key-note', role: 'note' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '⏳' }), h('div', { class: 'grow', text: def.keyNote })) : null,
                 h('div', { class: 'policy-form sb-form' },
                     h('label', { class: 'project' }, h('span', { text: 'Key' }), keyInput),
                     o.on ? null : h('label', { class: 'choice' }, turnOn, h('span', { text: `Turn ${def.label} on once the key works` })),

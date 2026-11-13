@@ -34,27 +34,37 @@ const DBL = {
 const ERRORS = { '127.255.255.250': 'the DQS key is disabled', '127.255.255.251': 'the DQS key is being used in a way its terms don\'t allow', '127.255.255.252': 'a mistyped zone name',
     '127.0.1.255': 'a query of an IP address', '127.0.2.255': 'a query of an IP address' };
 const errorOf = (ip) => ERRORS[ip] || (/^127\.255\.255\.\d+$/.test(ip) ? `an error from Spamhaus (${ip})` : null);
-const REFUSED = 'Spamhaus refused the lookups: its servers don\'t know the key (not active yet, disabled, replaced or mistyped)';
+const REFUSED = 'Spamhaus refused the lookups: its servers don\'t know the key (not synced to all of them yet: a new key can take up to an hour; or disabled, replaced or mistyped)';
+const REFUSED_TRIES = 3, TEST_TRIES = 6;
 const TEST_DOMAIN = 'dbltest.com';   // Spamhaus's own test entry: always listed in the DBL
 
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 // resolver: { resolve4(name) } (dns.promises' by default; the tests and the demo pass their own).
-function createSpamhaus({ cfg, store, resolver = undefined, now = () => Date.now(), log = console }) {
+// retryMs: the pause before a refused lookup is asked again (times the try: 250 ms, 500 ms…).
+function createSpamhaus({ cfg, store, resolver = undefined, now = () => Date.now(), log = console, retryMs = 250 }) {
     const r = resolver || new dns.promises.Resolver({ timeout: 3000, tries: 2 });
     const cache = new TtlCache(20000);
     let key = null, count = { day: '', n: 0, flushed: 0, total: 0, readAt: 0 };
     // (0.5.41) Spamhaus's servers answer REFUSED for a key they don't know: not active yet (a new key takes a
     // while), disabled, replaced or mistyped. Cloud Run's resolver passes that on (EREFUSED). A resolver Spamhaus
     // doesn't take queries from gets 127.255.255.x instead (errorOf).
-    async function ask(name) {
-        try { return { ips: await r.resolve4(name) }; }
-        catch (e) {
-            const code = String((e && e.code) || e).slice(0, 60);
-            if (code === 'ENOTFOUND' || code === 'ENODATA') return { ips: [] };
-            if (code === 'EREFUSED') return { error: REFUSED, refused: true };
-            return { error: `Spamhaus couldn't be reached through the service's DNS resolver (${code})` };
+    // A refused lookup is asked again (0.5.42): while a new key reaches Spamhaus's servers (up to about an hour),
+    // some know it and some refuse it, and the next try often reaches one that knows it. tries: 3 for an email's
+    // lookups, more for Test. Each try is counted toward the day's lookups.
+    async function ask(name, { tries = REFUSED_TRIES } = {}) {
+        let code = '';
+        for (let i = 0; i < tries; i++) {
+            if (i) await new Promise(res => setTimeout(res, retryMs * i));
+            try { const ips = await r.resolve4(name); if (i) await counted(i); return { ips, tries: i + 1 }; }
+            catch (e) {
+                code = String((e && e.code) || e).slice(0, 60);
+                if (code === 'ENOTFOUND' || code === 'ENODATA') { if (i) await counted(i); return { ips: [], tries: i + 1 }; }
+                if (code !== 'EREFUSED') break;
+            }
         }
+        if (code === 'EREFUSED') { if (tries > 1) await counted(tries - 1); return { error: REFUSED, refused: true }; }
+        return { error: `Spamhaus couldn't be reached through the service's DNS resolver (${code})` };
     }
     // The day's lookups, for every instance: this one's, added to the store every 100, and the others' read
     // every 5 minutes.
@@ -110,8 +120,8 @@ function createSpamhaus({ cfg, store, resolver = undefined, now = () => Date.now
     }
     // A key tried with Spamhaus: its test entry must be listed in the DBL.
     async function testKey(k) {
-        const a = await ask(`${TEST_DOMAIN}.${k}.${ZONES.dbl}`);
-        if (a.refused) return { ok: false, why: 'Spamhaus refused the lookup: its servers don\'t know this key yet.', fix: 'A key made today can take a while to start working on Spamhaus\'s servers: try again later (an hour or so). If it still refuses, check in Spamhaus\'s portal (Blocklists via DNS Query) that this Query Key is Enabled, and that it was copied whole (26 characters).' };
+        const a = await ask(`${TEST_DOMAIN}.${k}.${ZONES.dbl}`, { tries: TEST_TRIES });
+        if (a.refused) return { ok: false, why: 'Spamhaus refused the lookup: its servers don\'t know this key yet.', fix: 'A new key can take up to an hour to sync across Spamhaus\'s servers, and this error is expected until then: wait and try again. If it still refuses after an hour, check in Spamhaus\'s portal (Blocklists via DNS Query → Datasets and access → Query Key) that the key is Enabled, and that it was copied whole (26 characters).' };
         if (a.error) return { ok: false, why: `${a.error}.`, fix: 'Try again in a few minutes.' };
         const ip = (a.ips || [])[0];
         if (ip && errorOf(ip)) return { ok: false, why: `Spamhaus answered with an error: ${errorOf(ip)}.`, fix: 'Check the key in Spamhaus\'s portal (docs/INSTALL.md, "Spamhaus").' };
@@ -121,4 +131,4 @@ function createSpamhaus({ cfg, store, resolver = undefined, now = () => Date.now
     return { checkDomains, testKey, quota, setKey(k) { key = k; }, lookup };
 }
 
-module.exports = { createSpamhaus, KEY_RE, ZONES, DBL, ERRORS, errorOf, TEST_DOMAIN };
+module.exports = { createSpamhaus, KEY_RE, ZONES, DBL, ERRORS, errorOf, TEST_DOMAIN, REFUSED_TRIES, TEST_TRIES };

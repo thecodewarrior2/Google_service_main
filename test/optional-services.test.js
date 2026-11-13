@@ -175,10 +175,10 @@ test('0.5.41: Spamhaus refusing (its servers don\'t know the key: REFUSED) is sa
     const cfg = cfgOf({ SPAMHAUS: 'on' });
     let code = 'EREFUSED';
     const refusing = { resolve4: async () => { throw Object.assign(new Error('queryA ' + code), { code }); } };
-    const sh = createSpamhaus({ cfg, store, resolver: refusing, log: silent });
+    const sh = createSpamhaus({ cfg, store, resolver: refusing, log: silent, retryMs: 1 });
     const key = createApiKey({ id: 'spamhaus', label: 'Spamhaus', store, secrets: memorySecrets(), keyRe: /^[a-z0-9]{20,40}$/i, test: (k) => sh.testKey(k), log: silent });
     sh.setKey(key);
-    await assert.rejects(key.save(KEY, `it@${ORG}`), (e) => /Spamhaus refused the lookup: its servers don't know this key yet\. A key made today can take a while/.test(e.message) && !e.message.includes(KEY));
+    await assert.rejects(key.save(KEY, `it@${ORG}`), (e) => /Spamhaus refused the lookup: its servers don't know this key yet\. A new key can take up to an hour to sync across Spamhaus's servers/.test(e.message) && !e.message.includes(KEY));
     assert.equal(await store.getState('spamhausKey'), null, 'nothing saved');
     code = 'ESERVFAIL';
     await assert.rejects(key.save(KEY, `it@${ORG}`), /Spamhaus couldn't be reached through the service's DNS resolver \(ESERVFAIL\)/);
@@ -187,8 +187,38 @@ test('0.5.41: Spamhaus refusing (its servers don\'t know the key: REFUSED) is sa
     await ok.key.save(KEY, `it@${ORG}`);
     const alerts = [];
     ok.key.setAlert(async (t) => { alerts.push(t); });
-    const sh2 = createSpamhaus({ cfg: ok.cfg, store: ok.store, resolver: { resolve4: async () => { throw Object.assign(new Error('x'), { code: 'EREFUSED' }); } }, log: silent });
+    const sh2 = createSpamhaus({ cfg: ok.cfg, store: ok.store, resolver: { resolve4: async () => { throw Object.assign(new Error('x'), { code: 'EREFUSED' }); } }, log: silent, retryMs: 1 });
     sh2.setKey(ok.key);
     await sh2.checkDomains(['x.example']);
     assert.match(alerts[0], /Spamhaus refused the lookups: its servers don't know the key/);
+});
+
+test('0.5.42: a refused lookup is asked again: while a new key syncs across Spamhaus\'s servers, one that knows it answers', async () => {
+    const { REFUSED_TRIES, TEST_TRIES } = require('../src/intel/spamhaus');
+    const store = new MemoryStore();
+    const cfg = cfgOf({ SPAMHAUS: 'on' });
+    // The first answers come from servers that don't know the key yet.
+    let refusals = 2;
+    const answers = { [`dbl:${TEST_DOMAIN}`]: '127.0.1.2', 'dbl:login.fresh-phish.example': '127.0.1.4' };
+    const inner = resolver(answers);
+    const syncing = { asked: [], resolve4: async (name) => { syncing.asked.push(name); if (refusals > 0) { refusals--; throw Object.assign(new Error('refused'), { code: 'EREFUSED' }); } return inner.resolve4(name); } };
+    const sh = createSpamhaus({ cfg, store, resolver: syncing, log: silent, retryMs: 1 });
+    const key = createApiKey({ id: 'spamhaus', label: 'Spamhaus', store, secrets: memorySecrets(), keyRe: /^[a-z0-9]{20,40}$/i, test: (k) => sh.testKey(k), log: silent });
+    sh.setKey(key);
+    assert.deepEqual(await sh.testKey(KEY), { ok: true }, 'refused twice, then answered');
+    assert.equal(syncing.asked.length, 3);
+    await key.save(KEY, `it@${ORG}`);
+    refusals = 1;
+    const out = await sh.checkDomains(['login.fresh-phish.example']);
+    assert.equal(out.get('login.fresh-phish.example').dbl.list, 'phishing', 'an email\'s lookup is asked again too');
+    // Every server refusing: refused after the tries, said plainly.
+    refusals = 100;
+    syncing.asked.length = 0;
+    const t = await sh.testKey(KEY);
+    assert.equal(syncing.asked.length, TEST_TRIES);
+    assert.match(t.fix, /A new key can take up to an hour to sync across Spamhaus's servers, and this error is expected until then/);
+    syncing.asked.length = 0;
+    await sh.lookup('other.example', KEY);
+    assert.equal(syncing.asked.length, 2 * REFUSED_TRIES, 'DBL and ZRD, each asked 3 times');
+    assert.ok(REFUSED_TRIES <= 3 && TEST_TRIES <= 6, 'a few tries only (each counts toward the day\'s lookups)');
 });
