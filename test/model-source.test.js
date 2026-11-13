@@ -100,3 +100,22 @@ test('the model\'s input is built exactly as the model was trained (TinyPhishLLM
     assert.ok(rows.length > 50);
     for (const r of rows) assert.equal(modelInputText(r.facts), r.text, r.name);
 });
+
+
+test('0.5.26: Cloud Build gets every file the Dockerfile copies (.gcloudignore), as Docker does (.dockerignore)', () => {
+    // install.sh builds with Docker, or with Cloud Build when Docker can't upload from Cloud Shell
+    // (gcloud builds submit uploads what .gcloudignore lets through). Checked with git's matching, the same
+    // syntax gcloud uses (a file inside an ignored folder can't be let back in).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spruce-gcloudignore-'));
+    try {
+        const docker = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+        const sources = [...docker.matchAll(/^COPY\s+(.+)\s+\S+$/gm)].flatMap(m => m[1].split(/\s+/));
+        assert.ok(sources.includes('tools/fetch-model.js') && sources.includes('src'), sources.join(' '));
+        const files = [...sources.map(s => (/\.[a-z]+$|^\.npmrc$|^Dockerfile$/.test(s) ? s : `${s}/x.js`)), 'Dockerfile', 'tools/release.js', 'test/a.test.js', 'docs/a.md', 'deploy/install.sh'];
+        for (const f of files) { fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), 'x'); }
+        execFileSync('git', ['init', '-q'], { cwd: dir });
+        const uploaded = execFileSync('git', ['ls-files', '-o', `--exclude-from=${path.join(ROOT, '.gcloudignore')}`], { cwd: dir }).toString().split('\n').filter(Boolean);
+        for (const s of sources) assert.ok(uploaded.some(u => u === s || u.startsWith(`${s}/`)), `${s} is uploaded to Cloud Build`);
+        for (const left of ['tools/release.js', 'test/a.test.js', 'docs/a.md', 'deploy/install.sh']) assert.ok(!uploaded.includes(left), `${left} is left out`);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

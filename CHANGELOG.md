@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.26: The image builds with Cloud Build again (tools/fetch-model.js was left out)
+
+- **The fix.** When Docker can't upload the image from Cloud Shell, `install.sh` (and so `upgrade.sh` and
+  `update.sh`) builds it with Cloud Build instead. Cloud Build gets what `.gcloudignore` lets through, which
+  left out all of `tools/`, so since 0.5.8 that build stopped at `COPY tools/fetch-model.js` ("file not found
+  in build context"). `.gcloudignore` now lets that one file through (`tools/*` with an exception: a file in
+  an ignored folder can't be let back in), as `.dockerignore` already did. Checked with
+  `gcloud meta list-files-for-upload`. Builds with Docker, and Settings → Update (which builds from the
+  repository), weren't affected.
+- **If an upgrade stopped there:** nothing was deployed (the build is step 6 of 9; the services run the
+  version they ran before). Upgrade again with this version: unzip it, then `bash deploy/upgrade.sh` from its
+  folder.
+- Tests: `test/model-source.test.js` checks that every file the Dockerfile copies is uploaded to Cloud Build.
+
 ## 0.5.25: The right script for an existing installation
 
 No change in how mail is judged. Where the dashboard told an existing installation to run `install.sh`, it

@@ -2,7 +2,10 @@
 node_modules/
 build/
 test/
-tools/
+# (tools/* and not tools/: a file inside an ignored folder can't be let back in)
+tools/*
+# …except the one that downloads the AI model into the image (Dockerfile).
+!tools/fetch-model.js
 docs/
 deploy/
 .git/
