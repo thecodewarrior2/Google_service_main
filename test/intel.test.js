@@ -43,11 +43,11 @@ function fakeNet(opts = {}) {
         if (u.host === 'phishing.army') return text(['# comment', 'phish-domain.example', 'maple-schools.example', 'paypal.com', 'storage.googleapis.com', ...Array.from({ length: 30 }, (_, i) => `bad${i}.example`)].join('\n'));
         // HaGeZi's wildcard format ("*.domain"), with its header.
         if (u.host === 'raw.githubusercontent.com' && u.pathname.startsWith('/hagezi/')) return text(['# Title: HaGeZi\'s Threat Intelligence Feeds - medium version', '# Expires: 8 hours', '*.tif-listed.example', '*.paypal.com', ...Array.from({ length: 30 }, (_, i) => `*.tif${i}.example`)].join('\n'));
+        // TweetFeed's CSV on GitHub: domains (and URLs, IPs…) researchers reported, with their tags.
+        if (u.host === 'raw.githubusercontent.com' && u.pathname.startsWith('/0xDanielLopez/')) return text(['2026-11-01 00:00:00,researcher,domain,reported-site.example,#phishing,https://x.com/r/1',
+            '2026-11-01 00:00:00,researcher,url,https://not-a-domain-entry.example/x,#phishing,https://x.com/r/2', '2026-11-01 00:00:00,researcher,domain,google.com,#phishing,https://x.com/r/3',
+            ...Array.from({ length: 30 }, (_, i) => `2026-11-01 00:00:00,researcher,domain,rep${i}.example,#malware,https://x.com/r/${i + 4}`)].join('\n'));
         if (u.host === 'raw.githubusercontent.com') return text(['Scammer@Freemail.example', 'service@paypal.com', ...Array.from({ length: 30 }, (_, i) => `s${i}@scam.example`)].join('\n'));
-        // TweetFeed's JSON: domains researchers reported, with their tags.
-        if (u.host === 'api.tweetfeed.live') return json([{ date: '2026-11-01 00:00:00', user: 'researcher', type: 'domain', value: 'reported-site.example', tags: ['#phishing'] },
-            { type: 'url', value: 'https://not-a-domain-entry.example/x' }, { type: 'domain', value: 'google.com', tags: ['#phishing'] },
-            ...Array.from({ length: 30 }, (_, i) => ({ type: 'domain', value: `rep${i}.example`, tags: ['#malware'] }))]);
         if (u.host === 'data.iana.org') return json({ services: [[['example'], ['https://rdap.registry.example/']]] });
         if (u.host === 'rdap.registry.example') {
             const d = decodeURIComponent(u.pathname.split('/domain/')[1] || '');

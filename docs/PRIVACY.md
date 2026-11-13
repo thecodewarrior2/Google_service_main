@@ -126,7 +126,7 @@ can be turned off):
 |---|---|---|---|
 | **Cloudflare Security DNS** (`security.cloudflare-dns.com`, and `cloudflare-dns.com` to tell a block from a missing domain) | host names: the sites links point to, and the sender's domain. Never paths, addresses or anything else | Cloudflare's resolver privacy commitments (it doesn't sell or keep identifying query data) | `CLOUDFLARE_THREATS` |
 | **Google Safe Browsing** (Lookup API v4). **Off by default:** nothing is sent unless `SAFE_BROWSING=true` | link addresses, without the `#…` part, and for one-time links (password resets, sign-in, unsubscribe) without the query string, so tokens never leave | Google's API terms. The Lookup API is for non-commercial use, as a district's own protection is; otherwise use Google's Web Risk API | `SAFE_BROWSING`, `SAFE_BROWSING_KEY` |
-| **Phishing lists** (OpenPhish and HaGeZi on GitHub, Phishing Army, TweetFeed's `api.tweetfeed.live`, Sefinek on GitHub) | nothing about email: the lists are downloaded once a day and matched in the service | downloads only | `PHISHING_LISTS` |
+| **Phishing lists** (OpenPhish, HaGeZi, TweetFeed and Sefinek on GitHub, Phishing Army) | nothing about email: the lists are downloaded once a day and matched in the service | downloads only | `PHISHING_LISTS` |
 | **Domain registries** (RDAP, found through IANA's list) | domain names: up to 3 unfamiliar link domains per email and the sender's domain, each at most once a month for the whole district | public registration records | `SITE_AGE` |
 
 **Not sent:**

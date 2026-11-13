@@ -21,13 +21,11 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     let sets = null, versions = {}, lastCheck = 0, loading = null;
     const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } };
 
-    // A download as lines: plain text as it is; TweetFeed's JSON ([{ type: 'domain', value, tags }]) as its
-    // domains (a download that isn't that JSON gives nothing, so the previous copy is kept).
+    // A download as lines: plain text as it is; TweetFeed's CSV (date,user,type,value,tags,tweet) as the values of
+    // its domain rows (a download that isn't that gives nothing, so the previous copy is kept).
     function linesOf(feed, text) {
-        if (feed.format !== 'tweetfeed-json') return String(text).split('\n');
-        let data;
-        try { data = JSON.parse(String(text)); } catch (e) { return []; }
-        return Array.isArray(data) ? data.filter(x => x && x.type === 'domain' && typeof x.value === 'string').map(x => x.value) : [];
+        if (feed.format !== 'tweetfeed-csv') return String(text).split('\n');
+        return String(text).split('\n').map(l => l.split(',')).filter(c => c.length >= 4 && c[2] === 'domain').map(c => c[3]);
     }
     // How sure a list is (PHISH_FEEDS confidence): 'report' for community reports, else 'list'.
     const CONFIDENCE = new Map(E.PHISH_FEEDS.map(f => [f.name, f.confidence || 'list']));

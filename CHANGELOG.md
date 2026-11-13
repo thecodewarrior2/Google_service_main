@@ -7,7 +7,7 @@
   link or sender domain on it counts as on the other lists (a listed link is dangerous). The full version
   (1.4 million domains) is too large to keep in each instance's memory.
 - **TweetFeed** (domains security researchers reported on X in the last 30 days, about 2,500; CC0 1.0;
-  its JSON read by `feeds.js`). Its authors warn that community reports aren't always right, so it is a
+  its CSV on GitHub, the domain rows read by `feeds.js`). Its authors warn that community reports aren't always right, so it is a
   report, not a list (`confidence: 'report'`): a reported link is amber and a sign of 2 (`reported-link`),
   a reported sender domain a sign of 2 (`sender-domain-reported`), never "dangerous" on its own. A domain
   on both a list and TweetFeed counts as listed.

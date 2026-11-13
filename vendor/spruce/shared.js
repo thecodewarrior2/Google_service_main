@@ -420,8 +420,9 @@ const PHISH_FEEDS = [
     // gathered from many feeds; the full one, 1.4 million, is too large to keep in memory). "*.domain": the
     // domain and every name under it.
     { id: 'hagezitif',    name: 'HaGeZi Threat Intelligence Feeds', url: 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium.txt', kind: 'domain', license: 'GPL-3.0', home: 'https://github.com/hagezi/dns-blocklists' },
-    // TweetFeed: domains security researchers reported on X in the last 30 days (#phishing, #malware…).
-    { id: 'tweetfeed',    name: 'TweetFeed (researchers\' reports)', url: 'https://api.tweetfeed.live/v1/month/domain', kind: 'domain', format: 'tweetfeed-json', confidence: 'report', license: 'CC0 1.0', home: 'https://tweetfeed.live' },
+    // TweetFeed: domains security researchers reported on X in the last 30 days (#phishing, #malware…), from
+    // its GitHub copy (date,user,type,value,tags,tweet; the domain rows only).
+    { id: 'tweetfeed',    name: 'TweetFeed (researchers\' reports)', url: 'https://raw.githubusercontent.com/0xDanielLopez/TweetFeed/master/month.csv', kind: 'domain', format: 'tweetfeed-csv', confidence: 'report', license: 'CC0 1.0', home: 'https://tweetfeed.live' },
     // Sender addresses used for scams and phishing (exact addresses only), for the sender checks (Gmail).
     { id: 'sefinekemails', name: 'Sefinek scam-sender list', url: 'https://raw.githubusercontent.com/sefinek/Blacklisted-Emails/main/blacklist/LIST.txt', kind: 'address', license: 'MIT', home: 'https://github.com/sefinek/Blacklisted-Emails', requires: 'enableSenderAddressCheck' }
 ];
