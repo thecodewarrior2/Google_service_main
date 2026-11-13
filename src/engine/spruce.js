@@ -46,6 +46,10 @@ function load() {
         colleagueNameHash: fn('colleagueNameHash'),
         colleagueLineSigns: fn('colleagueLineSigns'),
         ownDomainLookalike: fn('ownDomainLookalike'),
+        // (phishing-training domains, src/simulations.js: never a well-known company's or a link shortener)
+        brandOfDomain: fn('brandOfDomain'),
+        companyNameOf: fn('companyNameOf'),
+        publicShorteners: get('publicShorteners'),
         isPersonalMailDomain: fn('isPersonalMailDomain'),
         ownNameSigns: fn('ownNameSigns'),
         subjectScamSigns: fn('subjectScamSigns'),

@@ -24,6 +24,7 @@ const training = require('./training');
 const spruce = require('./engine/spruce');
 const { indexOf: recheckIndex, lookFor, eventNames, eventHasMessageId, eventType } = require('./recheck');
 const { variantsOf: lookalikeVariants, weightOf: lookalikeWeight, NEW_DAYS: LOOKALIKE_NEW_DAYS } = require('./lookalike');
+const sims = require('./simulations');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -499,10 +500,13 @@ class Service {
         const mailbox = (facts.to || []).find(a => this.cfg.orgDomains.includes(a.split('@')[1])) || by;
         const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(mailbox), aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap() });
         result.allowlistedUnverified = allowlisted && !verified;
-        const decision = decide(result, this.cfg, {});
+        let decision = decide(result, this.cfg, {});
+        // (a phishing-training email is let through, unchecked, on arrival: said so, 0.5.44)
+        const training = await this.trainingOf(facts);
+        if (training) decision = { action: 'none', trigger: null, why: `a phishing-training email (${training.name}): let through unchecked, as set in Settings → Phishing training. The checks below show what they would find` };
         const domain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
         return {
-            pasted: true, key: null, messageId: null, rfc822MessageId: messageIdOf(facts.messageIdHeader), user: mailbox,
+            pasted: true, training: training ? training.name : null, key: null, messageId: null, rfc822MessageId: messageIdOf(facts.messageIdHeader), user: mailbox,
             receivedAt: facts.date || null, processedAt: this.now(),
             sender: { name: facts.senderName.slice(0, 200), address: facts.senderAddress.slice(0, 320), domain }, subject: facts.subject.slice(0, 300),
             status: result.status, score: result.score, signals: result.signals.slice(0, 30), links: result.links.slice(0, 20), checks: result.checks || null,
@@ -677,6 +681,9 @@ class Service {
         const now = this.now();
         const day = this.dayOf(now);
         if (!alreadyMoved) await this.count(day, 'scanned');
+        // A phishing-training email (Settings → Phishing training, 0.5.44): let through, unchecked, only counted.
+        const training = alreadyMoved ? null : await this.trainingOf(facts);
+        if (training) { await this.count(day, 'training'); await this.noteTraining(training); return { user, messageId: msg.id, action: 'none', training: training.name }; }
         // Both never change once set, so each instance asks Firestore once: when the service was installed,
         // and when each sender was first seen (a campaign's 10,000 copies cost one look, not 10,000).
         const installedAt = this.installedAt || (this.installedAt = (await this.store.getState('installedAt')) || (await this.store.setState('installedAt', now), now));
@@ -1349,6 +1356,7 @@ class Service {
         // Opened: Gmail's UNREAD label is gone (its reader opened it, or marked it read).
         const opened = !labels.includes('UNREAD');
         const facts = await readMessage(msg.raw);
+        if (await this.trainingOf(facts)) return { item, outcome: 'skipped' };   // (a phishing-training email: 0.5.44)
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
         // A new sender on arrival stays one (as for an admin's re-scan); unknown for mail not recorded then.
         const firstTime = before ? (before.arrival ? !!before.arrival.firstTime : (before.signals || []).some(x => x && x.kind === 'first-time')) : false;
@@ -1581,6 +1589,58 @@ class Service {
         const words = { ours: 'the district\'s own (no sign in mail)', harmless: 'someone else\'s, harmless (no sign in mail)', threat: 'a threat (a strong sign in mail)', watch: 'watched as found' }[status];
         await this.adminNotice('lookalike-mark', `${by} marked the look-alike ${e.domain} as ${words}.`);
         return { entry: e };
+    }
+
+    // --- Phishing-training emails (0.5.44; Settings → Phishing training) ------------------------------------
+    // src/simulations.js says how they are recognized. state/phishTraining: { rules: [{ id, name, header,
+    // headerShown, valueHash, ips }], domains: [], by, at } (a secret value only as a one-way hash);
+    // state/phishTrainingSeen: { [name]: lastSeen } (each instance writes it at most every 10 minutes).
+    async trainingSettings() {
+        if (this.trainingCache && Date.now() - this.trainingCache.at < 60 * 1000) return this.trainingCache.v;
+        let v = null;
+        try { v = await this.store.getState('phishTraining'); } catch (e) { v = (this.trainingCache && this.trainingCache.v) || null; }
+        this.trainingCache = { at: Date.now(), v };
+        return v;
+    }
+    async trainingOf(facts) {
+        const st = await this.trainingSettings();
+        if (!st) return null;
+        try { return await sims.matchTraining(spruce.load(), facts, st); } catch (e) { this.log.error('phishing training:', e); return null; }
+    }
+    async noteTraining(t) {
+        this.trainingSeen = this.trainingSeen || new Map();
+        this.trainingSeen.set(t.name, this.now());
+        if (this.trainingSeenAt && Date.now() - this.trainingSeenAt < 10 * 60 * 1000) return;
+        this.trainingSeenAt = Date.now();
+        try { await this.store.setState('phishTrainingSeen', Object.assign({}, await this.store.getState('phishTrainingSeen'), Object.fromEntries(this.trainingSeen))); } catch (e) { /* next time */ }
+    }
+    async trainingChange(change, by, words) {
+        const cur = Object.assign({ rules: [], domains: [] }, await this.store.getState('phishTraining'));
+        const next = change(cur);
+        if (next.error) return next;
+        const v = Object.assign({}, cur, next, { by, at: this.now() });
+        await this.store.setState('phishTraining', v.rules.length || v.domains.length ? v : null);
+        this.trainingCache = null;
+        await this.adminNotice('settings', `${by} ${words(next)}.`);
+        return { ok: true };
+    }
+    addTrainingRule(input, by) {
+        const r = sims.ruleFrom(input || {});
+        if (r.error) return Promise.resolve({ error: r.error, status: 400 });
+        return this.trainingChange((cur) => (cur.rules.length >= sims.MAX_RULES ? { error: `At most ${sims.MAX_RULES} rules.`, status: 400 } : { rules: [...cur.rules, r.rule] }), by,
+            () => `added the phishing-training rule "${r.rule.name}" (header ${r.rule.headerShown}${r.rule.valueHash ? ', with a secret value' : ''}${r.rule.ips.length ? `, from ${r.rule.ips.length} sending address${r.rule.ips.length === 1 ? '' : 'es'}` : ''}): emails it matches are let through unchecked`);
+    }
+    removeTrainingRule(id, by) {
+        let gone = null;
+        return this.trainingChange((cur) => { gone = cur.rules.find(x => x.id === id); return gone ? { rules: cur.rules.filter(x => x.id !== id) } : { error: 'That rule isn\'t there.', status: 404 }; }, by,
+            () => `removed the phishing-training rule "${gone.name}"`);
+    }
+    setTrainingDomains(text, by) {
+        const d = sims.domainsFrom(spruce.load(), text);
+        if (d.invalid.length) return Promise.resolve({ error: `Not a domain: ${d.invalid.slice(0, 5).join(', ')}. Nothing was changed.`, status: 400 });
+        if (d.refused.length) return Promise.resolve({ error: `Never a training domain: ${d.refused.slice(0, 5).map(x => `${x.domain} (${x.why})`).join('; ')}. A real phishing email linking only there would be let through. List only domains your vendor owns. Nothing was changed.`, status: 400 });
+        return this.trainingChange(() => ({ domains: d.domains }), by,
+            () => (d.domains.length ? `set the phishing-training link domains (${d.domains.length}: ${d.domains.slice(0, 5).join(', ')}${d.domains.length > 5 ? '…' : ''}): an email whose links all go there is let through unchecked` : 'removed the phishing-training link domains'));
     }
 
     // --- The weekly summary email (dashboard Settings; off by default) --------------------------------

@@ -79,6 +79,9 @@ arrived: opened (first time) and link clicked. Only the events naming that email
 whether and when it was first opened and a link clicked, nothing else from the logs.
 
 It also keeps, shared by every instance:
+- **phishing-training rules** (0.5.44, Settings → Phishing training): each rule's name, header and the vendor's
+  sending addresses; its secret value only as a one-way hash (never shown again); the training link domains; who
+  changed them and when; when each rule last matched. Training emails themselves are only counted;
 - **the look-alike watch** (0.5.36): the look-alikes of your domains that exist (name, when found, mail
   servers and website yes or no, registry age, an admin's mark and who made it), and how far the day's pass
   has got (`state/lookalikeWatch`);

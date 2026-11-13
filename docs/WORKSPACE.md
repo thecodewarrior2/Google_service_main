@@ -62,6 +62,14 @@ Inbox with a warning, move to Spam, quarantine). Worth turning on:
 - **Register the obvious look-alikes yourself** (`yourdistrict-k12.org`, `yourdistrictschools.com`) if they
   are free, so nobody else can.
 
+## Phishing-training services (KnowBe4, Wizer…)
+
+Gmail must let your training service's emails through (its Google Workspace allow-listing guide: a content
+compliance rule on its header, or its addresses in the inbound gateway or allowlist). The service checks them
+like any email unless you also set **Settings → Phishing training** (0.5.44): the same header with its secret
+token or sending addresses, and the vendor's link domains. Then they are let through unchecked, so the training
+measures whether people spot phishing on their own.
+
 ## What the service adds on top
 
 The service checks what Gmail delivered: links against security services and phishing lists, sender

@@ -380,6 +380,32 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      // New look-alikes of your domain an admin hasn't marked (0.5.36): the overview's banner.
                      lookalikes: Object.values(((await store.getState('lookalikeWatch')) || {}).found || {}).filter(e => e.status === 'new' && !e.gone).map(e => e.domain) };
         },
+        // Settings → Phishing training (0.5.44): the rules (never a secret value: only whether one is set) and link
+        // domains, what matched lately, the last 7 days' count; changes with the project ID.
+        'GET /api/phish-training': async () => {
+            const st = Object.assign({ rules: [], domains: [] }, await store.getState('phishTraining'));
+            const now = Date.now();
+            const days = await statsFor(A.dayOf(now - 6 * A.DAY), A.dayOf(now));
+            return { rules: st.rules.map(r => ({ id: r.id, name: r.name, header: r.headerShown || r.header, hasValue: !!r.valueHash, ips: r.ips || [] })), domains: st.domains, by: st.by || null, at: st.at || null,
+                     presets: require('./simulations').PRESETS, seen: (await store.getState('phishTrainingSeen')) || {},
+                     week: days.reduce((n, d) => n + (Number(d.training) || 0), 0), today: Number(((days.find(d => d.day === A.dayOf(now)) || {}).training) || 0),
+                     projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null };
+        },
+        'POST /api/phish-training/rule': async (q, body, admin) => {
+            const bad = await projectCheck(admin, body, 'a phishing-training rule');
+            if (bad) return bad;
+            return service.addTrainingRule({ name: body.name, header: body.header, value: body.value, ips: body.ips }, admin.email);
+        },
+        'POST /api/phish-training/rule/remove': async (q, body, admin) => {
+            const bad = await projectCheck(admin, body, 'a phishing-training rule (remove it)');
+            if (bad) return bad;
+            return service.removeTrainingRule(String(body.id || ''), admin.email);
+        },
+        'POST /api/phish-training/domains': async (q, body, admin) => {
+            const bad = await projectCheck(admin, body, 'the phishing-training link domains');
+            if (bad) return bad;
+            return service.setTrainingDomains(body.domains, admin.email);
+        },
         // Status → Look-alikes (0.5.36): the watch's state and what it found; an admin's mark on one (with the
         // project ID: "ours" or "harmless" takes a sign away).
         'GET /api/lookalikes': async () => {

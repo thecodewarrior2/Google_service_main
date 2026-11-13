@@ -1788,6 +1788,84 @@
     const spamhausPage = () => optionalPage('spamhaus');
     const abusechPage = () => optionalPage('abusech');
 
+    // --- Settings → Phishing training (0.5.44) ------------------------------------------------------------
+    // Training emails (KnowBe4, Wizer…) let through unchecked: header rules (a secret value and/or the vendor's
+    // sending addresses) and the vendor's link domains; with instructions.
+    async function phishTrainingPage() {
+        const d = await api('/api/phish-training');
+        const on = d.rules.length > 0 || d.domains.length > 0;
+        const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+        const field = (label, input, note) => h('label', { class: 'project' }, h('span', { text: label }), input, note ? h('span', { class: 'small muted', text: note }) : null);
+        const projectInput = () => h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        // Add a rule.
+        const preset = h('select', { 'aria-label': 'Vendor' }, d.presets.map(p => h('option', { value: p.id, text: p.name })));
+        const name = h('input', { type: 'text', autocomplete: 'off', placeholder: 'KnowBe4', 'aria-label': 'Name' });
+        const header = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'X-KB4TOKEN', 'aria-label': 'Header' });
+        const value = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'the vendor\'s secret token', 'aria-label': 'Secret value', 'data-lpignore': 'true', 'data-1p-ignore': 'true' });
+        const ips = h('textarea', { rows: 3, spellcheck: 'false', placeholder: '192.0.2.10\n198.51.100.0/26', 'aria-label': 'Sending addresses' });
+        const hint = h('div', { class: 'small muted' });
+        const usePreset = () => { const p = d.presets.find(x => x.id === preset.value) || {}; header.value = p.header || ''; name.value = p.id === 'custom' ? '' : p.name.replace(/ \(.*$/, ''); hint.textContent = p.help || ''; };
+        preset.addEventListener('change', usePreset); usePreset();
+        const project = projectInput();
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const add = h('button', { class: 'btn primary', type: 'button' }, 'Add the rule');
+        add.addEventListener('click', async () => {
+            err.textContent = ''; add.disabled = true; acting++;
+            const secret = value.value; value.value = '';            // (not left in the page)
+            try { await api('/api/phish-training/rule', { method: 'POST', body: { name: name.value, header: header.value, value: secret, ips: ips.value, projectId: project.value } }); toast('Rule added: emails it matches are let through unchecked (within a minute everywhere).'); render(); }
+            catch (e) { err.textContent = e.message; }
+            finally { add.disabled = false; acting--; }
+        });
+        // The link domains.
+        const domains = h('textarea', { rows: 6, spellcheck: 'false', placeholder: 'phish-vendor-domain.example\nanother-training-domain.example', 'aria-label': 'Training link domains' });
+        domains.value = d.domains.join('\n');
+        const project2 = projectInput();
+        const err2 = h('div', { class: 'policy-error', role: 'alert' });
+        const saveDomains = h('button', { class: 'btn primary', type: 'button' }, 'Save the domains');
+        saveDomains.addEventListener('click', async () => {
+            err2.textContent = ''; saveDomains.disabled = true; acting++;
+            try { await api('/api/phish-training/domains', { method: 'POST', body: { domains: domains.value, projectId: project2.value } }); toast('Saved: an email whose links all go to these domains is let through unchecked.'); render(); }
+            catch (e) { err2.textContent = e.message; }
+            finally { saveDomains.disabled = false; acting--; }
+        });
+        pageBusy = () => !!(value.value || ips.value || project.value || project2.value || domains.value !== d.domains.join('\n'));
+        const seen = (n) => (d.seen[n] ? when(d.seen[n]) : 'not yet');
+        return [serviceTitle('Phishing training', on ? 'on' : 'off', on ? 'On: training emails are let through' : 'Off: training emails are checked like any email'),
+            h('p', { class: 'sub', text: 'Your phishing-training service\'s test emails (KnowBe4, Wizer and the like) are let through: not checked, not moved, not recorded, only counted, so a campaign measures whether people spot phishing without help. Off until you add a rule or domains.' }),
+            h('section', { class: 'card' }, h('dl', { class: 'kv' },
+                kvRow('Let through', `${num(d.today)} today, ${num(d.week)} in the last 7 days.`),
+                kvRow('Recognized by', on ? `${num(d.rules.length)} header rule${d.rules.length === 1 ? '' : 's'}, ${num(d.domains.length)} link domain${d.domains.length === 1 ? '' : 's'}.` : 'Nothing yet.'),
+                d.by ? kvRow('Last changed', `By ${d.by}, ${when(d.at)}. Changes are noted in Status → Activity → What admins did.`) : null)),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Header rules' }),
+                h('div', { class: 'sub', text: 'The vendor adds a header to its training emails. A header name alone is public, so a real phishing email could copy it: each rule also needs the vendor\'s secret token (or your own custom header\'s value), or the vendor\'s sending addresses, or both. A secret value is kept only as a one-way hash and never shown again.' }),
+                d.rules.length ? dataTable([
+                    { name: 'Name', get: r => r.name }, { name: 'Header', get: r => h('code', { text: r.header }) },
+                    { name: 'Secret value', get: r => (r.hasValue ? 'set (hidden)' : 'none') },
+                    { name: 'Sending addresses', get: r => (r.ips.length ? r.ips.slice(0, 3).join(', ') + (r.ips.length > 3 ? ` +${r.ips.length - 3}` : '') : 'any (direct injection works)') },
+                    { name: 'Last matched', get: r => seen(r.name) },
+                    { name: '', get: r => confirmForm('Remove', '/api/phish-training/rule/remove', () => ({ id: r.id }), () => `Rule "${r.name}" removed.`) }], d.rules) : h('div', { class: 'empty', text: 'No rule yet.' }),
+                h('h3', { text: 'Add a rule' }),
+                h('div', { class: 'policy-form sb-form' },
+                    field('Vendor', preset), hint, field('Name (for the counts and Activity)', name), field('Header', header),
+                    field('Secret value', value, 'The token or custom value the vendor puts in that header. Leave empty only if you give sending addresses.'),
+                    field('Sending addresses (one per line; ranges allowed)', ips, 'Gmail must have received the email from one of these. Leave empty if the vendor puts emails in the mailboxes directly (KnowBe4 DMI, Wizer DED): then use the secret value.'),
+                    field('Google Cloud project ID, to confirm', project),
+                    d.demoProjectId ? h('div', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}.` }) : null,
+                    h('div', { class: 'actions' }, add), err)),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Training link domains' }),
+                h('div', { class: 'sub', text: 'An email is a training email when it has links and every one of them goes to these domains or their subdomains (a security gateway\'s rewrite unwrapped first). One link anywhere else and it is checked as usual, so a phishing email can\'t hide behind a training link. Root domains, one per line. Shared platforms, link shorteners, personal email and well-known companies\' domains are refused: anyone can host pages there.' }),
+                h('div', { class: 'policy-form sb-form' }, domains, field('Google Cloud project ID, to confirm', project2), h('div', { class: 'actions' }, saveDomains), err2)),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'How to set it up' }),
+                h('ol', { class: 'steps' },
+                    h('li', {}, h('b', { text: 'Use both identifiers when you can. ' }), 'A header rule with a secret value catches every training email, also those without links; the link domains keep working if the vendor changes its header.'),
+                    h('li', {}, h('b', { text: 'KnowBe4: ' }), 'in KSAT, Account Settings → Phishing, turn on ', h('b', { text: 'Enable PST Header Token' }), ' (or Add Custom Header) and copy it; choose "KnowBe4 (PST header token)" above and paste it as the secret value. Copy the root domains from ', h('b', { text: 'Phishing → Domains' }), ' into the link domains. KnowBe4 adds new domains hidden: list each before you show it. ', link('KnowBe4: Account Settings, Phishing', 'https://support.knowbe4.com/hc/en-us/articles/12732930359699-KnowBe4-Console-Account-Settings-Phishing'), ' · ', link('Manage Phish Link Domains', 'https://support.knowbe4.com/hc/en-us/articles/360061705153-Manage-Phish-Link-Domains'), '.'),
+                    h('li', {}, h('b', { text: 'Wizer: ' }), 'its header (X-TestPhish) is public: choose "Wizer" above and paste its sending addresses, and copy all its phishing domains into the link domains. With Direct Email Delivery, skip the header rule and rely on the domains. ', link('Wizer IPs and domains', 'https://learn.wizer-training.com/knowledge/wizer-ips-and-domains'), '.'),
+                    h('li', {}, h('b', { text: 'Another vendor: ' }), 'its Google Workspace allow-listing guide names the header (use a secret value if it offers one), its sending addresses and its phishing domains.'),
+                    h('li', {}, h('b', { text: 'Gmail too: ' }), 'this setting only keeps S.P.R.U.C.E from checking training emails. Gmail\'s own filters need the vendor\'s allow-listing as well (its Google Workspace guide: a content compliance rule on the header, or its addresses in the inbound gateway or allowlist).'),
+                    h('li', {}, h('b', { text: 'Test: ' }), 'send a campaign to yourself. The count above goes up, and Email → Messages shows nothing for it. Email → Check an email says so for a pasted training email.'),
+                    h('li', {}, h('b', { text: 'Tell your staff ' }), 'that training emails get no help from S.P.R.U.C.E: that is the point of the test. Keep the secret token private; if it leaks, make a new one in the vendor\'s console and replace the rule.')))];
+    }
+
     // --- Settings → Link clicks (0.5.35; optional, off by default) ---------------------------------------
     async function clicksPage() {
         const d = await api('/api/clicks');
@@ -1837,14 +1915,14 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, spamhaus: spamhausPage, abusech: abusechPage, clicks: clicksPage, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, spamhaus: spamhausPage, abusech: abusechPage, clicks: clicksPage, phishtraining: phishTrainingPage, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['rechecked', 'Re-checked'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['lookalikes', 'Look-alikes'], ['activity', 'Activity']] },
-        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['spamhaus', 'Spamhaus'], ['abusech', 'abuse.ch'], ['clicks', 'Link clicks'], ['update', 'Update'], ['about', 'About']] }
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['spamhaus', 'Spamhaus'], ['abusech', 'abuse.ch'], ['clicks', 'Link clicks'], ['phishtraining', 'Phishing training'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {

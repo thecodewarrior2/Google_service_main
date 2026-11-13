@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.44: Phishing-training emails can be let through (Settings → Phishing training)
+
+Training emails from KnowBe4, Wizer and similar services are let through unchecked when an admin sets rules for
+them: not checked, not moved, not recorded (only counted, "training" in the day's counters), so a campaign
+measures whether people spot phishing without help. The same design as the S.P.R.U.C.E+ extension's phishing
+simulation policies, as the service's own code (`src/simulations.js`). Off until a rule or domains are added.
+
+- **Header rules:** the vendor's header, plus its **secret token** (or your custom header's value; kept only as a
+  one-way hash, never shown again) and/or its **sending addresses** (IPv4/IPv6, ranges), matched against the hop
+  Gmail's own server (mx.google.com) wrote: lower Received lines can be forged. A header name alone is refused:
+  it is public, so a real phishing email could copy it. Presets for KnowBe4 (PST header token, or X-PHISHTEST with
+  addresses) and Wizer (X-TestPhish with addresses). Up to 20 rules.
+- **Training link domains:** an email whose links ALL go to the vendor's domains (after unwrapping security
+  gateways' rewrites offline) is a training email; one link anywhere else and it is checked as usual. Shared
+  platforms, link shorteners, personal mail and well-known companies' domains are refused. Up to 500.
+- **The page** has step-by-step instructions (KnowBe4, Wizer, other vendors, Gmail's own allow-listing, testing,
+  telling staff), the count today and over 7 days, and when each rule last matched. Each change needs the project
+  ID and is noted in Activity. Check an email says when a pasted email is a training email.
+- Training emails are left out of the re-checks of delivered mail too.
+- Tests: `test/simulations.test.js`.
+
 ## 0.5.43: A colleague's name on an outside address counts only when the email claims to be from inside
 
 People share names. A vendor's employee whose name matches someone in your directory, writing a greeting from her

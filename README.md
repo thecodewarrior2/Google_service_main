@@ -299,6 +299,10 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
   - **Spamhaus** and **abuse.ch** (0.5.37; optional, off by default): what each adds, its key (tested, then
     kept in Secret Manager only; never shown again), on and off, and how its lookups or downloads go (Spamhaus:
     the day's lookups against its limit). Each change needs the project ID.
+  - **Phishing training** (0.5.44; off until set): your training service's test emails (KnowBe4, Wizer…) let
+    through unchecked, recognized by the vendor's header with a secret token or its sending addresses, or by all
+    their links going to the vendor's own domains; with step-by-step instructions. Each change needs the project
+    ID.
   - **Link clicks** (0.5.35; optional, off by default): for each email found to be phishing after it was
     delivered, Gmail's own logs (Admin SDK Reports API) tell when each person first opened it and whether
     they clicked a link in it; a click is an alert. It needs Gmail log events in your Workspace edition, the
