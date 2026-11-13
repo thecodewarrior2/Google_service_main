@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.27: The dashboard's days are the organization's, not UTC's
+
+- **The fix.** Every day the dashboard counts was a UTC day: the chart's columns, its tooltip ("Emails
+  checked"), the daily counters the worker writes, the weekly summary's week. In New York, mail from 7 PM
+  (8 PM in summer) to midnight counted on the next day, and from 7 PM "today" was already tomorrow. Days
+  now follow the time zone in Settings → Policy (`TIME_ZONE`; UTC when not set): an email at 10:13 PM on
+  Thursday 12 November counts on the 12th.
+- `aggregate.js`: `dayIn` (a day in a time zone), `addDays` (calendar arithmetic, the same in any time zone
+  and across clock changes), `setTimeZone` (the server sets it at each request); the worker's
+  `Service.dayOf`; the server's daily counters read day by day with `addDays` (not 24-hour steps).
+- **The day of the upgrade:** the counters already written stay on the UTC day they were counted on, so
+  that day, and the next, can show a few hours too many or too few in "Emails checked" (the moved,
+  would-move and suspicious columns come from each email's own time, so they are right at once). From the
+  next day on, every count is the organization's.
+- Settings → Policy says what the time zone is used for.
+- Tests: `test/timezone.test.js`.
+
 ## 0.5.26: The image builds with Cloud Build again (tools/fetch-model.js was left out)
 
 - **The fix.** When Docker can't upload the image from Cloud Shell, `install.sh` (and so `upgrade.sh` and

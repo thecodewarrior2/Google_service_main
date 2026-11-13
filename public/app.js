@@ -1283,7 +1283,7 @@
         { key: 'aiMovesInside', label: 'AI alone moves inside mail', show: (v, d) => (v ? `On: an email from inside the organization that the AI scores ${pct(d.aiThreshold)} or more is ${d.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode)'} on the AI score alone, as outside mail is, whatever the rules find. The AI reads inside mail for it`
             : 'Off: the AI score alone never moves mail from inside the organization (your domains, Gmail\'s DMARC check passing); the rules still can (a staff account taken over), and a forged inside address is outside mail') },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
-        { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the weekly summary, and the nightly jobs` },
+        { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the dashboard's days (the charts and daily counts), the weekly summary, and the nightly jobs` },
         { key: 'retentionDays', label: 'Records kept', show: (v) => `${num(v)} days: each email's record is deleted ${num(v)} days after it arrived, the oldest first` }
     ];
     const entries = (l, none) => {
@@ -1417,7 +1417,7 @@
             const input = zones.length ? h('select', { 'aria-label': 'Time zone' }, (zones.includes(value) ? zones : [value, ...zones]).map(z => h('option', { value: z, selected: z === value, text: z })))
                 : h('input', { type: 'text', value, 'aria-label': 'Time zone', placeholder: 'America/New_York' });
             read = () => input.value;
-            extra = [input, h('div', { class: 'small muted', text: 'The weekly summary uses it at once. The nightly jobs move to it the next time deploy/install.sh runs.' })];
+            extra = [input, h('div', { class: 'small muted', text: 'The dashboard\'s days and the weekly summary use it at once (days already counted keep the day they were counted on). The nightly jobs move to it the next time deploy/install.sh runs.' })];
         }
         project.addEventListener('input', update); update();
         save.addEventListener('click', async () => {

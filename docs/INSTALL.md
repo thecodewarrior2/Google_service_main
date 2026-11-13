@@ -117,7 +117,7 @@ set `COLLEAGUE_NAMES=off` on both services (docs/DEPLOY.md, the settings table).
    | `ADMIN_EMAILS` | optional: more people who may open the dashboard, separated by semicolons |
    | `MODE` | leave `monitor` |
    | `BUDGET_ALERT` | leave `1`: an email at the first charge (see "Costs") |
-   | `TIME_ZONE` | your time zone, for example `America/New_York`: the nightly jobs and the weekly summary use it (empty = UTC) |
+   | `TIME_ZONE` | your time zone, for example `America/New_York`: the dashboard's days, the nightly jobs and the weekly summary use it (empty = UTC) |
    | `RETENTION_DAYS` | leave empty: each email's record is kept 35 days (14 to 365; also changeable on the dashboard, Settings → Policy) |
    | `ALERT_EMAIL` | leave empty: alerts go to `ADMIN_GROUP`. That group must accept email from outside the domain (alerts come from Google Cloud); otherwise put a person's address. `off` for none |
 

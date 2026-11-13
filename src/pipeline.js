@@ -46,6 +46,8 @@ const SENDERS_KEPT = 100000;
 // How often the worker writes the day's counters it added up (src/server.js; see Service.count).
 const STAT_FLUSH_MS = 5000;
 const RENEW_PARALLEL = 10, RENEW_BUDGET_MS = 95 * 1000, RENEW_FRESH_MS = 12 * 60 * 60 * 1000, WATCH_MS = 7 * 24 * 60 * 60 * 1000;
+// A day in the organization's time zone (0.5.27; UTC before): the daily counters' key. Kept for callers
+// outside the service, in UTC; the service itself uses this.dayOf.
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const hourOf = (ms) => new Date(ms).toISOString().slice(0, 13);
 // The Message-ID header without its angle brackets: what Google Workspace's Email log search and the
@@ -208,6 +210,8 @@ class Service {
         this.installedAt = null; this.senderSeen = new Map(); this.alerted = new Set();
         this.emailSlots = new Slots(EMAIL_SLOTS); this.largeSlots = new Slots(LARGE_SLOTS);
     }
+    // The day an instant falls on in the organization's time zone (TIME_ZONE, Settings → Policy).
+    dayOf(ms) { return A.dayIn(ms, this.cfg.timeZone); }
     // A large email (over LARGE_BYTES) is read and judged LARGE_SLOTS at a time.
     readAndJudge(user, msg, opts) {
         const go = async () => this.judge(user, msg, await readMessage(msg.raw), opts);
@@ -363,7 +367,7 @@ class Service {
             catch (e) {
                 if (!e.gaveUp) hold = true;
                 const why = String(e && e.message || e).slice(0, 300);
-                await this.store.incStat(dayOf(this.now()), 'errors');
+                await this.store.incStat(this.dayOf(this.now()), 'errors');
                 await this.store.addEvent({ kind: 'error', user, text: e.gaveUp
                     ? `A message couldn't be checked after ${MAX_TRIES} tries and was left where it is: ${why}`
                     : `A message couldn't be checked (try ${e.tries || 1} of ${MAX_TRIES}; it is tried again in a minute or so): ${why}` });
@@ -625,7 +629,7 @@ class Service {
     // userPlaced: the user moved it into the Inbox themselves (checkUnseenInbox): never moved.
     async judge(user, msg, facts, { alreadyMoved = false, userPlaced = false } = {}) {
         const now = this.now();
-        const day = dayOf(now);
+        const day = this.dayOf(now);
         if (!alreadyMoved) await this.count(day, 'scanned');
         // Both never change once set, so each instance asks Firestore once: when the service was installed,
         // and when each sender was first seen (a campaign's 10,000 copies cost one look, not 10,000).
@@ -783,7 +787,7 @@ class Service {
         await this.gmail.modify(r.user, r.messageId, ['SPAM', await this.gmail.labelId(r.user, this.cfg.movedLabel)], ['INBOX']);
         const now = this.now();
         await this.store.updateRecord(r.key, { action: 'move', state: 'moved', held: null, braked: false, why: `${r.why}; moved when ${by} ${how}`, heldMovedBy: by, heldMovedAt: now });
-        await this.store.incStat(dayOf(now), 'moved');
+        await this.store.incStat(this.dayOf(now), 'moved');
         return 'moved';
     }
 
@@ -858,7 +862,7 @@ class Service {
                         braked: false, held: null, mode: this.cfg.mode, evidence: 'admin', confirmedBy: [],
                         state: moving ? 'moved' : 'inbox', releasedBy: null, releasedAt: null, falseAlarm: false, markedBy: by
                     });
-                    await this.store.incStat(dayOf(now), moving ? 'moved' : 'wouldMove');
+                    await this.store.incStat(this.dayOf(now), moving ? 'moved' : 'wouldMove');
                     if (moving) out.moved++;
                 }
             } catch (e) { out.failed++; this.log.error(`find copies ${user}:`, e); }
@@ -878,7 +882,7 @@ class Service {
         await this.gmail.modify(rec.user, rec.messageId, ['INBOX', released], ['SPAM', moved]);
         const now = this.now();
         const out = await this.store.updateRecord(key, { state: 'released', releasedBy: by, releasedByUser: false, releasedAt: now, falseAlarm: rec.falseAlarm === null ? true : rec.falseAlarm, markedBy: rec.markedBy || by });
-        await this.store.incStat(dayOf(now), 'released');
+        await this.store.incStat(this.dayOf(now), 'released');
         if (!quiet) await this.store.addEvent({ kind: 'release', user: rec.user, text: `${by} moved an email from ${rec.sender.address} to ${rec.user} back to the Inbox.` });
         return { record: out };
     }
@@ -900,8 +904,8 @@ class Service {
         if (rec.releasingAt && now - rec.releasingAt < 10 * 60 * 1000) return null; // an admin's release under way
         const out = await this.store.updateRecord(key, { state: 'released', releasedBy: user, releasedByUser: true, releasedAt: now,
             falseAlarm: rec.falseAlarm === null || rec.falseAlarm === undefined ? true : rec.falseAlarm, markedBy: rec.markedBy || null });
-        await this.store.incStat(dayOf(now), 'released');
-        await this.store.incStat(dayOf(now), 'userReleased');
+        await this.store.incStat(this.dayOf(now), 'released');
+        await this.store.incStat(this.dayOf(now), 'userReleased');
         const strong = rec.score >= 5 && rec.trigger !== 'ai';
         const text = strong ? `${user} moved an email from ${rec.sender.address} back to the Inbox, though the checks flagged it (score ${rec.score}). Make sure it's safe, or mark it phishing and warn them.`
                             : `${user} moved an email from ${rec.sender.address} back to the Inbox (counted as a false alarm).`;
@@ -919,7 +923,7 @@ class Service {
         const rec = await this.store.getRecord(key);
         if (!rec) return { error: 'not found' };
         let out = await this.store.updateRecord(key, { falseAlarm: !!falseAlarm, markedBy: by });
-        if (falseAlarm && rec.falseAlarm !== true) await this.store.incStat(dayOf(this.now()), 'falseAlarms');
+        if (falseAlarm && rec.falseAlarm !== true) await this.store.incStat(this.dayOf(this.now()), 'falseAlarms');
         let moved = null;
         if (!falseAlarm && move) {
             await this.refreshPolicy();
@@ -1081,7 +1085,7 @@ class Service {
     }
     async digestContent(now = this.now()) {
         const records = await this.store.listRecords({ sinceMs: now - 8 * DAY, limit: 100000 });
-        const stats = await this.store.getStats(dayOf(now - 7 * DAY), dayOf(now));
+        const stats = await this.store.getStats(this.dayOf(now - 7 * DAY), this.dayOf(now));
         const events = await this.store.listEvents(now - 7 * DAY);
         const users = (await this.store.listUsers()).filter(u => u.watched);
         const held = (await this.store.listHeldCampaigns()).filter(c => !c.decision).length;

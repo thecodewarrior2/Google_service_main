@@ -344,7 +344,7 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `BRAKE_PER_HOUR` | half the watched mailboxes, at least 100 | the domain-wide brake: more moves than this in an hour stops moving everywhere |
 | `CAMPAIGN_HOLD_AFTER` | `25` | copies of one campaign moved on weaker evidence (nothing outside the email confirms it) before moving the rest pauses for an admin's decision (they stay in the Inbox meanwhile); strong evidence never pauses |
 | `CAMPAIGN_ALERT_AFTER` | `50` | a campaign moved this many times sends an alert |
-| `TIME_ZONE` | `UTC` | the time zone (IANA name) of the scheduled jobs (`--time-zone`) and of the weekly summary (Monday from 7 AM) |
+| `TIME_ZONE` | `UTC` | the time zone (IANA name) of the dashboard's days (charts and daily counts), the scheduled jobs (`--time-zone`) and the weekly summary (Monday from 7 AM) |
 | `DASHBOARD_URL` | none | the dashboard's address, in the weekly summary (install.sh: `https://spruce-admin-NUMBER.REGION.run.app`) |
 | `GOOGLE_CLOUD_PROJECT`, `CLOUD_RUN_REGION` | none | where the services run, for the dashboard's Status page |
 | `QUIET_HOURS` | `12` | no notification from Gmail for this long sends an alert (the hourly health check) |

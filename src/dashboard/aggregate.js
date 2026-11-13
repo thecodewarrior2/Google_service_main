@@ -7,8 +7,26 @@
 })(typeof self !== 'undefined' ? self : this, function () {
     'use strict';
     const DAY = 24 * 60 * 60 * 1000;
-    const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
-    const days = (now, n) => Array.from({ length: n }, (_, i) => dayOf(now - (n - 1 - i) * DAY));
+    // Days are the organization's (0.5.27): the calendar day in its time zone (Settings → Policy, TIME_ZONE),
+    // not UTC's. In New York an email at 10 PM on the 12th is the 12th's, not the 13th's.
+    const fmts = new Map();
+    function dayIn(ms, timeZone) {
+        const z = timeZone || 'UTC';
+        if (z === 'UTC' || z === 'Etc/UTC') return new Date(ms).toISOString().slice(0, 10);
+        if (!fmts.has(z)) { let f = null; try { f = new Intl.DateTimeFormat('en-US', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit' }); } catch (e) { /* unknown: UTC */ } fmts.set(z, f); }
+        const f = fmts.get(z);
+        if (!f) return new Date(ms).toISOString().slice(0, 10);
+        const p = Object.fromEntries(f.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+        return `${p.year}-${p.month}-${p.day}`;
+    }
+    let zone = 'UTC';
+    // The time zone the dashboard's days are in (the server sets it from the configuration at each request).
+    function setTimeZone(timeZone) { zone = timeZone || 'UTC'; }
+    const dayOf = (ms) => dayIn(ms, zone);
+    // The calendar day k days after day ('YYYY-MM-DD'): calendar arithmetic, the same in any time zone (a day
+    // isn't always 24 hours where clocks change).
+    function addDays(day, k) { const [y, m, d] = String(day).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + k)).toISOString().slice(0, 10); }
+    const days = (now, n) => { const today = dayOf(now); return Array.from({ length: n }, (_, i) => addDays(today, i - (n - 1))); };
     const isMove = (r) => r.action === 'move';
     const TRIGGERS = { rules: 'Rules', ai: 'AI score', 'rules+ai': 'Rules + AI', admin: 'An admin (campaign)' };
 
@@ -212,5 +230,5 @@
     const ACTIVITY = { alert: (e) => !!e.alert, admin: (e) => ['release', 'resume', 'campaign', 'watch-asked', 'mark', 'check', 'settings', 'digest', 'training', 'clear', 'update'].includes(e.kind), error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
-    return { DAY, dayOf, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity };
+    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity };
 });

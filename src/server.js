@@ -132,7 +132,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     const statsFor = async (fromDay, toDay) => {
         const now = Date.now(), today = A.dayOf(now), settled = A.dayOf(now - 10 * 60 * 1000) < today ? A.dayOf(now - A.DAY) : today;
         const days = [];
-        for (let t = Date.parse(`${fromDay}T12:00:00Z`); A.dayOf(t) <= toDay; t += A.DAY) days.push(A.dayOf(t));
+        for (let d = fromDay; d <= toDay; d = A.addDays(d, 1)) days.push(d);
         const missing = days.filter(d => d < settled && !pastStats.has(d));
         if (missing.length) {
             const rows = await store.getStats(missing[0], missing[missing.length - 1]);
@@ -572,6 +572,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     return async function handle(req, res) {
         const url = new URL(req.url, 'http://local');
         const route = `${req.method} ${url.pathname}`;
+        A.setTimeZone(cfg.timeZone);   // (the days the dashboard counts in: the organization's, 0.5.27)
         try {
             if (route === 'GET /healthz') return send(res, 200, { ok: true, role: cfg.role });
             const workerRoute = url.pathname === '/pubsub/push' || url.pathname.startsWith('/tasks/');

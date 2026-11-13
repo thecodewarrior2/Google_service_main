@@ -149,14 +149,15 @@ async function buildDemo({ now = Date.now(), cfg }) {
     for (const x of (await store.listRecords({ sinceMs: 0 })).filter(x => /storage|micros0ft/.test(x.sender.domain) && !x.releasedByUser).slice(0, 20)) await store.updateRecord(x.key, { falseAlarm: false, markedBy: 'it.helpdesk@maple-schools.example' });
     // Daily counters: about 40 emails a day per person, fewer on weekends; the move counts come from the records.
     store.stats.clear();
+    const dayIn = (ms) => require('../dashboard/aggregate').dayIn(ms, cfg.timeZone);   // (the organization's days, 0.5.27)
     for (let d = 30; d >= 0; d--) {
-        const t = now - d * DAY, day = new Date(t).toISOString().slice(0, 10), wd = new Date(t).getUTCDay();
+        const t = now - d * DAY, day = dayIn(t), wd = new Date(`${day}T12:00:00Z`).getUTCDay();
         await store.incStat(day, 'scanned', Math.round(staff.length * (wd === 0 || wd === 6 ? 6 : 38) * (0.85 + r() * 0.3)));
     }
     for (const x of await store.listRecords({ sinceMs: 0 })) {
-        const day = new Date(x.processedAt).toISOString().slice(0, 10);
+        const day = dayIn(x.processedAt);
         await store.incStat(day, x.action === 'move' ? 'moved' : x.action === 'would-move' ? 'wouldMove' : 'flagged');
-        if (x.state === 'released') await store.incStat(new Date(x.releasedAt).toISOString().slice(0, 10), 'released');
+        if (x.state === 'released') await store.incStat(dayIn(x.releasedAt), 'released');
     }
     store.events = [...store.events,
         { at: now - 3 * DAY + 5 * 3600e3, kind: 'release', text: 'it.helpdesk@maple-schools.example moved 3 emails from deals@e.gadgetdeals-shop.example back to the Inbox (marked as false alarms).' },
