@@ -232,6 +232,14 @@
     }
     // The red alert icon, beside something that needs an admin (a phishing list that missed its download).
     const alertIcon = (label) => h('span', { class: 'alert-icon', role: 'img', 'aria-label': label, title: label, text: '!' });
+    // A service's state beside its page's title (0.5.40): on and working (a green check), on but not working
+    // (red), or off (grey). state: 'on' | 'bad' | 'off'.
+    function serviceTitle(title, state, text) {
+        const icon = { on: '✓', bad: '!', off: '–' }[state] || '–';
+        return h('div', { class: 'title-row' }, h('h1', { text: title }),
+            h('span', { class: `svc-badge ${state}`, role: 'status' }, h('span', { class: 'svc-icon', 'aria-hidden': 'true', text: icon }), text));
+    }
+    const SERVICE_WORDS = { on: 'Service is on', bad: 'Service is on, but not working', off: 'Service is off' };
     // Phishing found after it was delivered (0.5.35), on the Overview and Messages until an admin marks it seen.
     function recheckBanner(rc) {
         if (!rc) return null;
@@ -892,7 +900,8 @@
                 h('div', { class: 'small muted', text: 'Turns Safe Browsing off and destroys every copy of the key in Secret Manager. Delete the key in the Google Cloud console too (APIs & Services → Credentials) if it isn\'t used anywhere else.' }),
                 confirmForm('Remove the key', '/api/safe-browsing/remove', () => ({}), () => 'The key was removed, and Safe Browsing is off.')) : null) : null;
         const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
-        return [h('h1', { text: 'Google Safe Browsing' }),
+        const sbState = !sb.on ? 'off' : bad ? 'bad' : 'on';
+        return [serviceTitle('Google Safe Browsing', sbState, SERVICE_WORDS[sbState]),
             h('p', { class: 'sub', text: 'An extra check of the links in each email against Google\'s list of phishing, malware and unwanted-software pages, the list Chrome and Gmail use. Off by default. It needs a free API key from your Google Cloud project.' }),
             bad ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: 'Safe Browsing is on, but it isn\'t working. ' }), lookups)) : null,
             // Optional, and what it adds (0.5.23).
@@ -1662,7 +1671,8 @@
         const pass = !d.on ? 'Off (LOOKALIKE_WATCH=off).' : !d.candidates ? 'Starting: the first names are asked at the next hourly run.'
             : `${num(d.candidates)} look-alike names of ${d.orgDomains.join(', ')} are asked of Cloudflare's public DNS once a day, about 80 an hour. ${d.cursor < d.candidates ? `This pass: ${num(d.cursor)} of ${num(d.candidates)} asked.` : `Last full pass ${when(d.lastPassAt)}.`}${d.baselineDone ? '' : ' The first pass takes stock: what exists already is listed without an alert.'}`;
         const fresh = d.found.filter(e => e.status === 'new' && !e.gone);
-        return [h('h1', { text: 'Look-alike domains' }),
+        const laState = d.on ? 'on' : 'off';
+        return [serviceTitle('Look-alike domains', laState, d.on ? 'Watch is on' : 'Watch is off'),
             h('p', { class: 'sub', text: 'Domains made to pass for yours (a letter left out or swapped, another ending, "-k12" or "schools" added…), found when they are registered: payroll and vendor fraud start with one. Mail from them, replies to them and links to them count as signs.' }),
             fresh.length ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${fresh.length === 1 ? 'A new look-alike was' : `${num(fresh.length)} new look-alikes were`} registered: ${fresh.map(e => e.domain).join(', ')}.` }),
                 ` Mail from ${fresh.length === 1 ? 'it' : 'them'} is a strong sign. If the district registered ${fresh.length === 1 ? 'it' : 'one'} itself, mark it "It's ours".`)) : null,
@@ -1742,7 +1752,10 @@
             : id === 'abusech' && (o.lists || []).length ? kvRow('Lists', h('ul', { class: 'plain-list' }, o.lists.map(l => h('li', {}, l.missed ? alertIcon('Missed its download') : null,
                 `${l.name}: ${l.off ? 'not used (off)' : l.error ? `last download failed (${l.error})` : l.updated ? `${num(l.count)} entries, downloaded ${when(l.updated)}` : 'not downloaded yet'}`))))
             : null;
-        return [h('h1', { text: def.title }), h('p', { class: 'sub', text: def.sub }),
+        // (abuse.ch: also one of its lists that missed its download)
+        const listBad = id === 'abusech' && (o.lists || []).some(l => !l.off && l.missed);
+        const optState = !o.on ? 'off' : bad || listBad ? 'bad' : 'on';
+        return [serviceTitle(def.title, optState, SERVICE_WORDS[optState]), h('p', { class: 'sub', text: def.sub }),
             bad ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${def.label} is on, but it isn't working. ` }), working)) : null,
             h('section', { class: 'card optional-note' }, h('h2', { text: 'Optional: the service works without it' }),
                 h('div', { class: 'sub', text: `S.P.R.U.C.E doesn't need ${def.label} to protect your mail: every email still gets the rule checks, the AI model, Cloudflare's check, the phishing lists, the site-age check and the look-alike watch. Turned on, it adds:` }),
@@ -1789,7 +1802,8 @@
         const status = !cl.on ? 'Off' : hl && !hl.ok ? `On, but Gmail's logs couldn't be read (${when(hl.at)}): ${hl.error}` : hl ? `On: last read ${when(hl.at)} (${num(hl.checked)} emails).` : 'On: nothing to read yet (no re-checked mail).';
         const sw = cl.on ? confirmForm('Turn off', '/api/clicks', () => ({ on: false }), () => 'Link clicks is off: Gmail\'s logs are no longer read.')
             : confirmForm('Turn on', '/api/clicks', () => ({ on: true, admin: admin.value }), () => 'Link clicks is on: Gmail\'s logs are read for the re-checked mail.', h('div', { class: 'small muted', text: 'The admin account above is the one whose rights read the logs.' }));
-        return [h('h1', { text: 'Link clicks' }),
+        const clState = !cl.on ? 'off' : hl && !hl.ok ? 'bad' : 'on';
+        return [serviceTitle('Link clicks', clState, SERVICE_WORDS[clState]),
             h('p', { class: 'sub', text: 'Who opened an email found to be phishing after it was delivered, and who clicked a link in it, from Gmail\'s own logs. Off by default.' }),
             (cl.on && hl && !hl.ok) ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: 'Link clicks is on, but Gmail\'s logs can\'t be read. ' }), hl.error)) : null,
             h('section', { class: 'card optional-note' }, h('h2', { text: 'Optional: the service works without it' }),

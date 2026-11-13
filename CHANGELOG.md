@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.40: Each service page says at its title whether it is on
+
+- Beside the title of Settings → Safe Browsing, Spamhaus, abuse.ch and Link clicks, and Status → Look-alikes, a
+  badge: **Service is on** with a green check when it is on and working; **Service is on, but not working** in
+  red when it is on but its key is missing or refused, or its lookups or downloads fail (abuse.ch: one of its
+  lists missed its download); **Service is off** in grey. (The look-alike watch: **Watch is on** or off.)
+
 ## 0.5.39: Settings → Link clicks says why Google refused, and what to do
 
 - **Test, and the `click-logs` alert,** now explain Google's refusal instead of showing its raw answer:

@@ -288,6 +288,9 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     waits, and the largest campaigns go into each dashboard admin's Inbox. **Preview** and **Send one
     now** are next to it.
   - **Retraining** (off by default): allows **Download for retraining** on Status → Model health.
+  - Each service's page (Safe Browsing, Spamhaus, abuse.ch, Link clicks; Status → Look-alikes) shows beside
+    its title whether it is on: a green "Service is on", a red "Service is on, but not working", or a grey
+    "Service is off" (0.5.40).
   - **Spamhaus** and **abuse.ch** (0.5.37; optional, off by default): what each adds, its key (tested, then
     kept in Secret Manager only; never shown again), on and off, and how its lookups or downloads go (Spamhaus:
     the day's lookups against its limit). Each change needs the project ID.

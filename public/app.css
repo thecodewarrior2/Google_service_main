@@ -376,3 +376,15 @@ ul.plain-list li { margin: 2px 0; overflow-wrap: break-word; word-break: normal;
 /* 0.5.38: Settings → Update, Last checked and Check again. */
 .check-again { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .check-again .btn.small-btn { padding: 4px 10px; font-size: 13px; }
+
+/* 0.5.40: a service's state beside its page's title (Safe Browsing, Spamhaus, abuse.ch, Link clicks, Look-alikes). */
+.title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 4px; }
+.title-row h1 { margin: 0; }
+.svc-badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px 4px 5px; border-radius: 999px; font-size: 13.5px; font-weight: 600; line-height: 1.2; }
+.svc-badge .svc-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px; font-size: 13px; font-weight: 800; color: #fff; flex: none; }
+.svc-badge.on { background: var(--good-soft); color: var(--good-text); }
+.svc-badge.on .svc-icon { background: var(--good); }
+.svc-badge.bad { background: var(--critical-soft); color: var(--critical-text); }
+.svc-badge.bad .svc-icon { background: var(--critical); }
+.svc-badge.off { background: var(--border); color: var(--muted); }
+.svc-badge.off .svc-icon { background: var(--muted); }
