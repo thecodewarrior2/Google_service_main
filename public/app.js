@@ -788,6 +788,105 @@
         const d = await settingsData();
         return [h('h1', { text: 'Retraining' }), trainingSettingCard(d)];
     }
+    // --- Settings → Safe Browsing (0.5.23): the API key (tested, kept in Secret Manager, never shown again),
+    // and on or off. Each change needs the project ID, as the policy does.
+    // A small form under a button: the project ID, then confirm; posts body() with it to path.
+    function confirmForm(label, path, body, done, note = null) {
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        const go = h('button', { class: 'btn primary', type: 'button', disabled: true }, label);
+        const box = h('div', { class: 'policy-form sb-form', hidden: true }, note,
+            h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),
+            h('div', { class: 'actions' }, go, h('button', { class: 'btn', type: 'button', onclick: () => { box.hidden = true; opener.hidden = false; } }, 'Cancel')), err);
+        const opener = h('button', { class: 'btn', type: 'button', onclick: () => { box.hidden = false; opener.hidden = true; project.focus(); } }, label);
+        project.addEventListener('input', () => { go.disabled = !project.value.trim(); });
+        go.addEventListener('click', async () => {
+            err.textContent = ''; go.disabled = true; acting++;
+            try { const out = await api(path, { method: 'POST', body: Object.assign(body(), { projectId: project.value }) }); toast(done(out)); render(); }
+            catch (e) { err.textContent = e.message; go.disabled = false; }
+            finally { acting--; }
+        });
+        return h('div', {}, opener, box);
+    }
+    async function safeBrowsingPage() {
+        const d = await settingsData();
+        const sb = d.safeBrowsing || {};
+        const hl = sb.health;
+        const keyText = sb.saved ? `Saved by ${sb.saved.by}, ${when(sb.saved.at)}. It is kept in Secret Manager and never shown here again.`
+            : !sb.available ? (sb.envKey ? 'From the service\'s settings (SAFE_BROWSING_KEY). Run bash deploy/install.sh once to manage the key here instead.' : 'Can\'t be saved here yet: run bash deploy/install.sh once (it sets up Secret Manager for the key).')
+            : sb.envKey ? 'None saved here; the key from the service\'s settings (SAFE_BROWSING_KEY) is used.' : 'None saved.';
+        const lookups = !sb.on ? 'Off: links aren\'t sent to Google.'
+            : !sb.working ? 'On, but no key can be used: links aren\'t looked up with Google.'
+            : hl && !hl.ok ? `Google refused the last lookup (${when(hl.at)}): ${hl.error}. Links aren't looked up with Google until the key works again.`
+            : hl ? `Working: Google answered at ${when(hl.at)}.` : 'On: no lookup yet.';
+        const bad = sb.on && (!sb.working || (hl && !hl.ok));
+        const switchForm = sb.on
+            ? confirmForm('Turn off', '/api/policy', () => ({ key: 'safeBrowsing', value: false }), () => 'Safe Browsing is off: links are no longer sent to Google (within 30 seconds everywhere).')
+            : sb.saved || sb.envKey ? confirmForm('Turn on', '/api/policy', () => ({ key: 'safeBrowsing', value: true }), () => 'Safe Browsing is on: links are looked up with Google too (within 30 seconds everywhere).') : h('div', { class: 'small muted', text: 'Save a key below first.' });
+        // The key: a password field (never kept, never shown back); tested with Google, then saved.
+        const keyInput = h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'AIza…', 'aria-label': 'Safe Browsing API key', 'data-lpignore': 'true', 'data-1p-ignore': 'true' });
+        const turnOn = h('input', { type: 'checkbox', checked: !sb.on });
+        const project = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', placeholder: 'project-id', 'aria-label': 'Google Cloud project ID' });
+        const err = h('div', { class: 'policy-error', role: 'alert' });
+        const save = h('button', { class: 'btn primary', type: 'button', disabled: true }, sb.saved ? 'Test and replace the key' : 'Test and save the key');
+        const ready = () => { save.disabled = !keyInput.value.trim() || !project.value.trim(); };
+        keyInput.addEventListener('input', ready); project.addEventListener('input', ready);
+        save.addEventListener('click', async () => {
+            err.textContent = ''; save.disabled = true; acting++;
+            const apiKey = keyInput.value;
+            keyInput.value = '';                                  // (not left in the page)
+            try {
+                const out = await api('/api/safe-browsing/key', { method: 'POST', body: { apiKey, projectId: project.value, turnOn: !sb.on && turnOn.checked } });
+                toast(`${out.tested ? 'Google accepted the key. ' : ''}It is saved in Secret Manager${out.turnedOn ? ', and Safe Browsing is on' : ''}.`);
+                render();
+            } catch (e) { err.textContent = e.message; ready(); }
+            finally { acting--; }
+        });
+        const keyCard = sb.available ? h('section', { class: 'card spaced' }, h('h2', { text: sb.saved ? 'Replace the API key' : 'Add the API key' }),
+            h('div', { class: 'sub', text: 'Paste the key. It is tried with Google first (a lookup of Google\'s own test address, nothing from anyone\'s mail); only a key that works is saved, in Secret Manager. It is never kept in the dashboard\'s records, shown here again, or written to the logs. Saving a new key destroys the old one.' }),
+            h('div', { class: 'policy-form sb-form' },
+                h('label', { class: 'project' }, h('span', { text: 'API key' }), keyInput),
+                sb.on ? null : h('label', { class: 'choice' }, turnOn, h('span', { text: 'Turn Safe Browsing on once the key works' })),
+                h('label', { class: 'project' }, h('span', { text: 'Google Cloud project ID, to confirm' }), project),
+                d.demoProjectId ? h('div', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}; any well-formed key is accepted, and nothing is sent to Google.` }) : null,
+                h('div', { class: 'actions' }, save), err),
+            sb.saved ? h('div', { class: 'spaced-top' }, h('h3', { text: 'Remove the key' }),
+                h('div', { class: 'small muted', text: 'Turns Safe Browsing off and destroys every copy of the key in Secret Manager. Delete the key in the Google Cloud console too (APIs & Services → Credentials) if it isn\'t used anywhere else.' }),
+                confirmForm('Remove the key', '/api/safe-browsing/remove', () => ({}), () => 'The key was removed, and Safe Browsing is off.')) : null) : null;
+        const link = (text, href) => h('a', { href, target: '_blank', rel: 'noopener noreferrer', text });
+        return [h('h1', { text: 'Google Safe Browsing' }),
+            h('p', { class: 'sub', text: 'An extra check of the links in each email against Google\'s list of phishing, malware and unwanted-software pages, the list Chrome and Gmail use. Off by default. It needs a free API key from your Google Cloud project.' }),
+            bad ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: 'Safe Browsing is on, but it isn\'t working. ' }), lookups)) : null,
+            // Optional, and what it adds (0.5.23).
+            h('section', { class: 'card optional-note' }, h('h2', { text: 'Optional: the service works without it' }),
+                h('div', { class: 'sub', text: 'S.P.R.U.C.E doesn\'t need Safe Browsing to protect your mail. Without it, every email still gets the rule checks, the AI model, Cloudflare\'s security check of each link\'s site and the sender\'s domain, the five phishing lists downloaded daily, and the site-age check. Turned on, it adds:' }),
+                h('ul', { class: 'benefits' },
+                    h('li', {}, h('b', { text: 'Google\'s own list. ' }), 'The phishing, malware and unwanted-software pages Chrome and Gmail warn about, updated continuously by Google, far larger than the free lists.'),
+                    h('li', {}, h('b', { text: 'Single pages on good sites. ' }), 'It checks each link\'s full address, so it can flag one phishing page on a hacked school or business website, or on a free page builder (Google Sites, Weebly, Firebase…), without condemning the whole site. A check of the site alone can\'t do that.'),
+                    h('li', {}, h('b', { text: 'Malware downloads. ' }), 'Links to infected files and fake updates, which the phishing lists mostly don\'t cover.'),
+                    h('li', {}, h('b', { text: 'A second opinion. ' }), 'A link Google lists is dangerous (it counts toward moving the email); when Cloudflare and the lists miss a brand-new page, Google may already have it.')),
+                h('div', { class: 'small muted', text: 'What it doesn\'t change: phishing through real Google Docs, Drive, Classroom or DocuSign links, which the sender, Reply-To and directory checks catch. Costs: none (free for non-commercial use); each link\'s address is sent to Google (below).' })),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Status' }), h('dl', { class: 'kv' },
+                kvRow('Safe Browsing', sb.on ? 'On: the links in each email are also looked up with Google' : 'Off'),
+                kvRow('API key', keyText),
+                kvRow('Lookups', lookups),
+                kvRow('Changes', 'Each needs the Google Cloud project ID, applies everywhere within 30 seconds, is noted in Status → Activity, and is emailed as an alert.')),
+                h('div', { class: 'actions' }, switchForm)),
+            keyCard,
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Getting a key' }),
+                h('ol', { class: 'steps' },
+                    h('li', {}, 'In the ', link('Google Cloud console', 'https://console.cloud.google.com/'), ', choose this service\'s project (the project ID you type here).'),
+                    h('li', {}, 'Enable the ', link('Safe Browsing API', 'https://console.cloud.google.com/apis/library/safebrowsing.googleapis.com'), ' (deploy/install.sh does it from 0.5.23 on).'),
+                    h('li', {}, 'In ', link('APIs & Services → Credentials', 'https://console.cloud.google.com/apis/credentials'), ', click Create credentials → API key.'),
+                    h('li', {}, 'Edit the new key: name it "SPRUCE Safe Browsing"; Application restrictions: None (the service has no fixed address); API restrictions: Restrict key → Safe Browsing API. Save.'),
+                    h('li', {}, 'Click Show key, copy it, and paste it above.'))),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'What is sent to Google' }), h('dl', { class: 'kv' },
+                kvRow('Sent', 'The address of each link in an email (up to 500 per lookup), without the part after "#"; for one-time links (password resets, sign-in and unsubscribe links), without the query either, so their codes never leave the district.'),
+                kvRow('Not sent', 'The email\'s text, subject, sender, recipients or attachments, and nothing about who received it.'),
+                kvRow('Remembered', 'Google\'s answers, 30 minutes for a clean link and a day for a listed one, so a campaign\'s copies cost one lookup.'),
+                kvRow('What it decides', 'A link Google lists is dangerous. One it doesn\'t list isn\'t "safe" by that alone, and a lookup that fails leaves the link "not checked", never safe.'),
+                kvRow('Terms', 'The Safe Browsing API (v4 Lookup) is free for non-commercial use, as a school district protecting its own mail is. Google\'s terms apply to the key\'s project.')))];
+    }
     async function about(q) {
         const d = await settingsData();
         const yes = (b) => (b ? 'Yes' : 'No');
@@ -827,7 +926,7 @@
             h('section', { class: 'card spaced' }, h('h2', { text: 'Network checks' }), h('div', { class: 'sub', text: 'Lookups made for every email, besides the offline checks. A lookup that fails leaves a link "not checked", never "safe".' }),
                 h('dl', { class: 'kv' },
                     kvRow('Cloudflare Security', d.checks && d.checks.cloudflare ? 'On: link sites and sender domains' : 'Off'),
-                    kvRow('Google Safe Browsing', d.checks && d.checks.safeBrowsing ? 'On: links (no #part; one-time links without their query)' : 'Off (Cloudflare only for now)'),
+                    kvRow('Google Safe Browsing', h('span', {}, d.checks && d.checks.safeBrowsing ? 'On: links (no #part; one-time links without their query)' : d.safeBrowsing && d.safeBrowsing.on ? 'On, but no key can be used' : 'Off', ' (', h('a', { href: '#/safebrowsing', text: 'Settings → Safe Browsing' }), ')')),
                     kvRow('Phishing lists', d.checks && d.checks.phishingLists ? (missed.length ? h('span', {}, alertIcon('Alert'), ` On; ${num(missed.length)} missed ${missed.length === 1 ? 'its' : 'their'} download (below)`) : 'On: downloaded once a day, matched here (below)') : 'Off'),
                     kvRow('Site age', d.checks && d.checks.siteAge ? 'On: up to 3 unfamiliar link sites and the sender\'s domain' : 'Off'),
                     kvRow('Short links', 'Not looked up (no outside unshortening service)'))),
@@ -1175,7 +1274,7 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', safeBrowsing: 'SAFE_BROWSING', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
@@ -1377,14 +1476,14 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] },
-        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['update', 'Update'], ['about', 'About']] }
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {

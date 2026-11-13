@@ -94,7 +94,7 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | Check | What is sent | What it adds |
 |---|---|---|
 | **Cloudflare Security DNS** | host names of link sites and the sender's domain | a blocked link is dangerous; a blocked or nonexistent sender domain is a sign |
-| **Google Safe Browsing**: off for now (`SAFE_BROWSING=true` and a key turn it on) | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
+| **Google Safe Browsing**: optional, off by default. An admin adds the API key (kept in Secret Manager) and turns it on in Settings → Safe Browsing | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
 | **Phishing lists** (OpenPhish, Phishing Army, HaGeZi Threat Intelligence Feeds, TweetFeed, Sefinek) | nothing: downloaded once a day (a list that misses its download: tried again every 3 hours, a red banner on Overview, an alert to the admins, and Settings → About shows it with a Re-check button), matched in the service | listed links are dangerous; a listed sender address or domain is a sign. TweetFeed (domains researchers reported in the last 30 days) is a community report: a reported link is amber and a sign of 2, never dangerous on its own. Your own domains count only as exact listed links and addresses, never as a whole site or domain |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
 

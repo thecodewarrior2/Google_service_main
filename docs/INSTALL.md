@@ -243,6 +243,18 @@ When it finishes, it prints the **dashboard address**.
   what went wrong and since when; **Re-check the lists now** downloads it again at once. A list host that
   is down for a day is common and harmless; one failing for days usually means the list moved (its
   project's page says where), which needs a new version of the service.
+- **Optional: Google Safe Browsing** (Settings → Safe Browsing; off by default). The service works fully
+  without it. Turned on, every link's address is also looked up in Google's list of phishing, malware and
+  unwanted-software pages, which catches single bad pages on otherwise good sites and malware downloads;
+  the page lists what it adds and what is sent to Google.
+  1. Get a free API key in this project (the page lists the steps: enable the Safe Browsing API, create an
+     API key, restrict it to that API).
+  2. Paste it on the page with the project ID. It is tried with Google first, then kept in Secret Manager
+     only (never shown again); tick **Turn Safe Browsing on** to start at once.
+  3. **Turn off** stops it; **Remove the key** destroys it. Each change is emailed as an alert.
+
+  From 0.5.23; that version needs `bash deploy/install.sh` (or `update.sh`) once, from Cloud Shell, to set
+  up Secret Manager for the key.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version

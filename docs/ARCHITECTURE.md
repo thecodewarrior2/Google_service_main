@@ -23,7 +23,8 @@ Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watc
                                 once a day for everyone, the cleanup of what TTL doesn't delete)
 
 worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
-       ··▶ safebrowsing.googleapis.com    OFF by default (SAFE_BROWSING=true): link addresses, no #part
+       ··▶ safebrowsing.googleapis.com    OFF by default (Settings → Safe Browsing): link addresses, no #part;
+                                          its API key in Secret Manager (spruce-safe-browsing-key)
        ──▶ registries (RDAP, via IANA)    domain names, at most once a month each
        ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```

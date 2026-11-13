@@ -10,7 +10,7 @@ const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.t
 // The settings an admin can also change on the dashboard (Settings → Policy, Settings → Allowlist). They read from a live
 // copy that only setPolicyValues changes (src/pipeline.js: refreshPolicy, setPolicy); envPolicy keeps what
 // the environment (deploy/settings.env) says. The rest of the configuration is frozen.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 function withLivePolicy(c) {
     const envPolicy = Object.freeze(Object.fromEntries(POLICY_KEYS.map(k => [k, c[k]])));
     const live = Object.assign({}, envPolicy);
@@ -78,11 +78,14 @@ function loadConfig(env = process.env) {
         movedLabel: env.MOVED_LABEL || 'SPRUCE/Moved',
         releasedLabel: env.RELEASED_LABEL || 'SPRUCE/Moved back',   // (SPRUCE/Released before 0.3.7)
         monitorLabel: env.MONITOR_LABEL || '',            // '' = monitor mode leaves mailboxes untouched
-        // Network checks (src/intel). Cloudflare Security only, for now: Google Safe Browsing is OFF unless
-        // SAFE_BROWSING=true, and then needs its API key (Secret Manager → SAFE_BROWSING_KEY).
+        // Network checks (src/intel). Google Safe Browsing is OFF by default: an admin adds its API key and
+        // turns it on in Settings → Safe Browsing (0.5.23: the key in Secret Manager, SAFE_BROWSING_SECRET,
+        // which install.sh sets up; safeBrowsing is a policy setting). SAFE_BROWSING=true with SAFE_BROWSING_KEY
+        // still works where the secret isn't set up.
         cloudflareThreats: bool(env.CLOUDFLARE_THREATS, true),
         safeBrowsing: bool(env.SAFE_BROWSING, false),
         safeBrowsingKey: env.SAFE_BROWSING_KEY || '',
+        safeBrowsingSecret: env.SAFE_BROWSING_SECRET || '',
         phishingLists: bool(env.PHISHING_LISTS, true),
         siteAge: bool(env.SITE_AGE, true),
         // Records
@@ -130,7 +133,7 @@ function configProblems(c) {
     if (!c.orgDomains.length) p.push('ORG_DOMAINS is not set (your organization\'s own domains).');
     if (!c.delegatedServiceAccount) p.push('DELEGATED_SA is not set (the service account with domain-wide delegation).');
     if (worker) {
-        if (c.safeBrowsing && !c.safeBrowsingKey) p.push('SAFE_BROWSING=true needs SAFE_BROWSING_KEY (an API key restricted to the Safe Browsing API, from Secret Manager).');
+        if (c.safeBrowsing && !c.safeBrowsingKey && !c.safeBrowsingSecret) p.push('SAFE_BROWSING=true needs SAFE_BROWSING_KEY (an API key restricted to the Safe Browsing API, from Secret Manager).');
         if (!c.pilotGroups.length && !c.pilotOu && !c.pilotUsers.length) p.push('None of PILOT_GROUP, PILOT_OU or PILOT_USERS is set: no mailbox would be watched.');
         if (!c.pubsubTopic) p.push('PUBSUB_TOPIC is not set.');
         if (!c.pushAudience || !c.pushServiceAccount) p.push('PUSH_AUDIENCE and PUSH_SERVICE_ACCOUNT must be set, so only Pub/Sub and Cloud Scheduler can call the worker.');

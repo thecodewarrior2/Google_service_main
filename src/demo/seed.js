@@ -12,6 +12,7 @@ const { Service } = require('../pipeline');
 const { readMessage } = require('../engine/mime');
 const { MemoryStore } = require('../store/memory');
 const { createFakeIntel } = require('./fake-intel');
+const { createSafeBrowsingKey, memorySecrets } = require('../intel/sbkey');
 
 const DAY = 24 * 60 * 60 * 1000;
 const ORG = 'maple-schools.example';
@@ -165,6 +166,10 @@ async function buildDemo({ now = Date.now(), cfg }) {
     // (the colleague-name check read the demo directory while the made-up mail was judged: as of now)
     const cn = await store.getState('colleagueNames');
     if (cn) await store.setState('colleagueNames', Object.assign({}, cn, { at: now - 20 * 60 * 1000 }));
+    // Settings → Safe Browsing in the demo (0.5.23): a key is only checked for its form, never sent anywhere,
+    // and kept in this process; turned on, "Check an email" gets the made-up Safe Browsing answers.
+    intel.sbKey = createSafeBrowsingKey({ cfg, store, secrets: memorySecrets(), offline: true });
+    intel.threats.enabled = { cloudflare: true, get safeBrowsing() { return !!cfg.safeBrowsing; } };
     return { store, staff, intel, raws };
 }
 

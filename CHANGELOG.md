@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.23: Google Safe Browsing from the dashboard: the API key and on/off on Settings → Safe Browsing
+
+**Needs `bash deploy/install.sh` from Cloud Shell** (`installLevel` 4): it sets up Secret Manager for the key.
+Settings → Update doesn't offer this version.
+
+- **Settings → Safe Browsing** (new page). Safe Browsing stays **optional and off by default**; the page says
+  the service works fully without it, and what it adds: Google's own list of phishing, malware and
+  unwanted-software pages (the one Chrome and Gmail use), single pages on otherwise good sites (a hacked
+  school site, a free page builder), malware downloads, and a second opinion. And what it doesn't change:
+  phishing through real Google Docs, Drive, Classroom or DocuSign links.
+- **The API key**, pasted by an admin with the project ID:
+  - tried with Google first (a lookup of Google's own test address, nothing from anyone's mail); a key
+    that doesn't work is refused with what to fix (not a valid key, the Safe Browsing API not enabled, the
+    key's API or application restrictions, quota);
+  - kept in **Secret Manager only** (`spruce-safe-browsing-key`, `src/secrets.js`): never in Firestore,
+    `settings.env`, the logs, or any answer of the dashboard. Firestore keeps only that a key is saved, who
+    saved it and when (`state/safeBrowsingKey`). Saving a new key destroys the old versions; **Remove the
+    key** destroys them all and turns Safe Browsing off;
+  - every instance notices a new or removed key within 30 seconds (`src/intel/sbkey.js`).
+- **On and off** (the `safeBrowsing` policy setting, with the project ID, like the others): within 30
+  seconds everywhere, noted in Activity and emailed as an alert. It can't be turned on without a key that
+  can be used. `install.sh` doesn't set it, so the dashboard's choice stays across installs.
+- **The key goes in a header** (`x-goog-api-key`), no longer in the lookup's address, which can end up in
+  logs.
+- **Whether lookups work** is noted (`state/safeBrowsingHealth`, when it changes and hourly): Google
+  refusing the key (revoked, restricted, quota) shows on Settings → Safe Browsing (a red alert) and in
+  Status → Service status.
+- **install.sh** enables the Secret Manager and Safe Browsing APIs, makes the empty secret, and lets
+  `spruce-run` read it, add a version and destroy old ones, on that secret only; both services get
+  `SAFE_BROWSING_SECRET`. Without it (an older install), `SAFE_BROWSING=true` with `SAFE_BROWSING_KEY` still
+  works as before.
+- Secret Manager stays within its free tier (one secret version; the key is read once per instance and
+  again only when it changes).
+- Tests: `test/safebrowsing.test.js`; `test/intel.test.js`.
+
 ## 0.5.22: A phishing list that misses its download is shown, alerted and re-checked
 
 - **Each list's last download is kept** (`state/feedHealth`: when, the error, since when it fails and how

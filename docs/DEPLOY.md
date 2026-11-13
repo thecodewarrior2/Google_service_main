@@ -42,33 +42,22 @@ gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleap
 gcloud firestore databases create --location=REGION
 ```
 
-### Optional: Google Safe Browsing (off for now)
+### Optional: Google Safe Browsing (off by default)
 
-Threat lookups use Cloudflare Security only. To add Safe Browsing later:
-1. Enable its APIs:
+The service works fully without it. From 0.5.23 an admin adds its API key and turns it on in the dashboard,
+**Settings → Safe Browsing**, which also lists what it adds and the steps to get a key. `install.sh` sets up
+what that needs:
+- the Secret Manager and Safe Browsing APIs;
+- the secret `spruce-safe-browsing-key` (empty until an admin saves a key), and on that secret only, for
+  `spruce-run`: `roles/secretmanager.secretAccessor`, `roles/secretmanager.secretVersionAdder` and
+  `roles/secretmanager.secretVersionManager`;
+- `SAFE_BROWSING_SECRET=projects/PROJECT/secrets/spruce-safe-browsing-key` on both services.
 
-   ```bash
-   gcloud services enable safebrowsing.googleapis.com secretmanager.googleapis.com apikeys.googleapis.com
-   ```
-
-2. Create a key and store it as described below.
-3. Deploy the worker with `SAFE_BROWSING=true` added to `--set-env-vars` and
-   `--set-secrets=SAFE_BROWSING_KEY=safe-browsing-key:latest`.
-
-Create an API key restricted to the Safe Browsing API and keep it in Secret Manager:
+The key is tried with Google before it is saved, kept only in Secret Manager, and never shown again. To make
+a key from Cloud Shell instead of the console (paste what it prints on Settings → Safe Browsing):
 
 ```bash
 gcloud services api-keys create --display-name="SPRUCE Safe Browsing" --api-target=service=safebrowsing.googleapis.com
-```
-
-The command prints the key string. Store it as a secret, pasting the key when asked:
-
-```bash
-gcloud secrets create safe-browsing-key --replication-policy=automatic --data-file=-
-```
-
-```bash
-gcloud secrets add-iam-policy-binding safe-browsing-key --member=serviceAccount:spruce-run@PROJECT.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor
 ```
 
 Safe Browsing's Lookup API is for non-commercial use. A district's own protection fits; check Google's
@@ -363,7 +352,8 @@ Those changes are kept in Firestore (`state/policy-<key>`) and read by both serv
 | `MOVED_LABEL`, `RELEASED_LABEL` | `SPRUCE/Moved`, `SPRUCE/Moved back` | labels added to mail moved to Spam, and to mail an admin moved back to the Inbox (`SPRUCE/Released` before 0.3.7) |
 | `MONITOR_LABEL` | none | optionally label would-move mail in monitor mode (users see it) |
 | `CLOUDFLARE_THREATS` | `true` | Cloudflare Security DNS for link sites and sender domains |
-| `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off for now; `true` needs the key (Secret Manager) |
+| `SAFE_BROWSING_SECRET` | set by install.sh | the Secret Manager secret holding the Safe Browsing API key that an admin saves on Settings → Safe Browsing (0.5.23) |
+| `SAFE_BROWSING`, `SAFE_BROWSING_KEY` | `false`, none | Google Safe Browsing for links: off by default. Turned on and off on Settings → Safe Browsing; `SAFE_BROWSING=true` with `SAFE_BROWSING_KEY` is the older way, for an install without the secret |
 | `PHISHING_LISTS` | `true` | the phishing lists (daily `sync-feeds` job) |
 | `SITE_AGE` | `true` | registry dates of link and sender domains |
 | `RETENTION_DAYS` | `35` | days each email's record (and its checked-message marker, and Activity entries) is kept, 14 to 365; also on the dashboard (Settings → Policy). Each document gets its `expireAt` when written, from the value in force then, and Firestore's TTL policies delete it on that date: the oldest go first, never all at once. A lower value also reaches documents already written: the hourly cleanup deletes what is older (within 30 s a run). A higher one applies to documents written from then on |

@@ -249,6 +249,14 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                     : lists.length && oldest ? `The phishing lists were updated ${Math.round((now - oldest) / 3600000)} hours ago at the oldest.` : 'The phishing lists haven\'t been downloaded yet.',
                 'Settings → About: each list\'s state, and Re-check. Activity → Errors shows every failed download.');
         }
+        // Google Safe Browsing (0.5.23): off is a choice; on, its key must work.
+        if (cfg.safeBrowsing) {
+            const sb = await safeBrowsingInfo();
+            const h = sb.health;
+            if (!sb.working) add('safe-browsing', false, 'Google Safe Browsing is on, but no API key can be used: links aren\'t looked up with Google.', 'Settings → Safe Browsing: save a key (or turn it off).');
+            else if (h && !h.ok) add('safe-browsing', false, `Google Safe Browsing is on, but Google refused the last lookups (${h.error}).`, 'Settings → Safe Browsing: check the key, or save a new one.');
+            else add('safe-browsing', true, 'Google Safe Browsing is on, and its key works.', null);
+        }
         // (install.sh always sets it, to the admin group by default: empty means ALERT_EMAIL=off, a choice)
         add('alerts', true, cfg.alertEmail ? `Alerts are emailed to ${cfg.alertEmail}.` : 'Alerts aren\'t emailed (ALERT_EMAIL=off): they show in Status → Activity.');
         const errors = (await store.listEvents(now - 24 * 3600 * 1000)).filter(e => e.kind === 'error').length;
@@ -268,6 +276,23 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         clear: (who) => wrongIds.delete(who)
     };
     const once = (key, gap = ACTIONS_GAP_MS) => { const t = lastAction.get(key) || 0; if (Date.now() - t < gap) return false; lastAction.set(key, Date.now()); return true; };
+    // Google Safe Browsing (0.5.23): the key's state (src/intel/sbkey.js), never the key itself.
+    const sbKey = () => (service.intel && service.intel.sbKey) || null;
+    const safeBrowsingOn = async () => !!cfg.safeBrowsing && !!sbKey() && !!(await sbKey().get().catch(() => null));
+    const safeBrowsingInfo = async () => {
+        const k = sbKey();
+        if (!k) return { available: false, on: !!cfg.safeBrowsing, saved: null, envKey: !!cfg.safeBrowsingKey, health: null };
+        return Object.assign(await k.status(), { on: !!cfg.safeBrowsing, working: await safeBrowsingOn() });
+    };
+    // The project ID typed in for a change (as for the policy): null when right, else the answer to give.
+    const projectCheck = (admin, body) => {
+        const expected = expectedProject(cfg);
+        if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
+        if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
+        if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) { wrong.add(admin.email); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
+        wrong.clear(admin.email);
+        return null;
+    };
     // The phishing lists that missed their download, for the overview: [{ id, name, missed, error, failedSince, updated }].
     const missedLists = async () => {
         if (!service.intel || !service.intel.feeds) return [];
@@ -319,7 +344,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      mailboxes: listed && listed.map(u => ({ email: u.email, lastNotification: u.lastNotification || null, watchExpiration: u.watchExpiration || null })),
                      renew, digest, trainingExport, timeZone: cfg.timeZone, version: VERSION,
                      policy, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null,
-                     checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
+                     checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: await safeBrowsingOn(), phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
+                     // Settings → Safe Browsing (0.5.23): on or off, whether a key is saved (who, when), how the lookups go. Never the key.
+                     safeBrowsing: await safeBrowsingInfo(),
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
         },
         // Settings → About's Re-check (0.5.22): the lists that missed their download, or aren't up to date, are
@@ -327,6 +354,35 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         'POST /api/lists/recheck': async (q, body, admin) => {
             if (!once('lists-recheck', 60 * 1000)) return { error: 'The lists were re-checked less than a minute ago.', status: 429 };
             return service.recheckLists(admin.email);
+        },
+        // Settings → Safe Browsing (0.5.23): an admin saves an API key (tested with Google first, kept in Secret
+        // Manager only, never answered back or logged), optionally turning Safe Browsing on; or removes it (every
+        // version destroyed, Safe Browsing turned off). The project ID typed in, as for the policy.
+        'POST /api/safe-browsing/key': async (q, body, admin) => {
+            if (!sbKey()) return { error: 'Safe Browsing isn\'t available here.', status: 409 };
+            const bad = projectCheck(admin, body);
+            if (bad) return bad;
+            if (!once(`sb-key:${admin.email}`)) return { error: 'Saved a moment ago.', status: 429 };
+            const key = String(body.apiKey || '').trim();
+            if (!key) return { error: 'Paste the API key. Nothing was changed.', status: 400 };
+            let saved;
+            try { saved = await sbKey().save(key, admin.email); }
+            catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw new Error('saving the Safe Browsing key failed: ' + String(e.message || '').slice(0, 200)); }
+            await service.alert('settings', `${admin.email} saved a new Google Safe Browsing API key on the dashboard (confirmed with the project ID${saved.tested ? '; Google accepted it' : ''}). It is kept in Secret Manager; older keys there were destroyed.`);
+            let turnedOn = false;
+            if (body.turnOn === true && !cfg.safeBrowsing) { await service.setPolicy('safeBrowsing', true, admin.email); turnedOn = true; }
+            return { saved: true, tested: saved.tested, turnedOn, safeBrowsing: await safeBrowsingInfo() };
+        },
+        'POST /api/safe-browsing/remove': async (q, body, admin) => {
+            if (!sbKey()) return { error: 'Safe Browsing isn\'t available here.', status: 409 };
+            const bad = projectCheck(admin, body);
+            if (bad) return bad;
+            if (!once(`sb-key:${admin.email}`)) return { error: 'Changed a moment ago.', status: 429 };
+            if (cfg.safeBrowsing) await service.setPolicy('safeBrowsing', false, admin.email);
+            try { await sbKey().remove(admin.email); }
+            catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw new Error('removing the Safe Browsing key failed: ' + String(e.message || '').slice(0, 200)); }
+            await service.alert('settings', `${admin.email} removed the Google Safe Browsing API key on the dashboard (confirmed with the project ID): every copy in Secret Manager was destroyed, and Safe Browsing is off.`);
+            return { removed: true, safeBrowsing: await safeBrowsingInfo() };
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         // move: phishing still in the Inbox is moved to Spam too (enforce mode).
@@ -452,6 +508,8 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             if (key === 'mode' && body.value === 'enforce' && cfg.mode !== 'enforce' && body.agree !== true) return { error: 'Tick "I agree" to switch to enforce mode. Nothing was changed.', status: 400 };
             // The AI alone moving colleagues' mail is a step away from the cautious default: agreed to, too.
             if (key === 'aiMovesInside' && /^(true|on|yes|1)$/i.test(String(body.value)) && !cfg.aiMovesInside && body.agree !== true) return { error: 'Tick "I agree" to let the AI alone move mail from inside. Nothing was changed.', status: 400 };
+            // Safe Browsing on needs a key that can be used.
+            if (key === 'safeBrowsing' && /^(true|on|yes|1)$/i.test(String(body.value)) && !(sbKey() && await sbKey().get().catch(() => null))) return { error: 'Save an API key first (Settings → Safe Browsing). Nothing was changed.', status: 400 };
             try { return { changed: await service.setPolicy(key, body.value, admin.email), policy: service.policyInfo() }; }
             catch (e) { if (e.status) return { error: `${e.message} Nothing was changed.`, status: e.status }; throw e; }
         },

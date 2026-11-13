@@ -25,7 +25,7 @@ function fakeNet(opts = {}) {
     const calls = [];
     const fetch = async (url, init = {}) => {
         const u = new URL(url);
-        calls.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
+        calls.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null, headers: init.headers || {} });
         if (opts.fail && opts.fail.test(u.host)) throw new Error('network down');
         if (u.host === 'security.cloudflare-dns.com' || u.host === 'cloudflare-dns.com') {
             const name = u.searchParams.get('name');
@@ -91,7 +91,8 @@ test('Safe Browsing: one batched request; no #part ever, no query for one-time l
     const sent = sb[0].body.threatInfo.threatEntries.map(e => e.url);
     assert.ok(sent.includes('https://phish-page.example/a?x=1'), 'the fragment is dropped');
     assert.ok(!sent.some(u => /SECRET123|#/.test(u)), JSON.stringify(sent));
-    assert.match(sb[0].url, /key=k-123/);
+    assert.equal(sb[0].headers['x-goog-api-key'], 'k-123', '0.5.23: the key in a header');
+    assert.doesNotMatch(sb[0].url, /k-123|key=/, 'never in the address (addresses end up in logs)');
     const off = createThreats({ http: createHttp({ fetch: net.fetch }), cfg: { cloudflareThreats: false, safeBrowsing: true, safeBrowsingKey: '' }, engine: E });
     assert.equal((await off.checkUrls(links)).get(links[0].url).verdict, 'unknown');
     const down = createThreats({ http: createHttp({ fetch: fakeNet({ fail: /safebrowsing/ }).fetch }), cfg: { safeBrowsingKey: 'k' }, engine: E });

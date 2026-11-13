@@ -259,7 +259,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .policy-head { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 12px; align-items: start; }
 .policy-label { font-weight: 600; }
 .policy-form { margin: 12px 0 0 192px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: grid; gap: 10px; max-width: 640px; }
-.policy-form input[type="text"], .policy-form input[type="email"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
+.policy-form input[type="text"], .policy-form input[type="email"], .policy-form input[type="password"], .policy-form input[type="number"], .policy-form select { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); }
 .policy-form .num-input { width: 110px; }
 .policy-form textarea { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); width: 100%; box-sizing: border-box; resize: vertical; }
 .entries { margin: 0; padding-left: 18px; columns: 2; column-gap: 24px; }
@@ -274,7 +274,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .choice.inline-choice > span { flex: 0 0 auto; }
 .choice input[type="radio"], .choice input[type="checkbox"] { width: 18px; height: 18px; margin: 1px 0 0; flex: 0 0 auto; }
 .agree { display: grid; gap: 8px; }
-.agree[hidden], .policy-form [hidden] { display: none; }
+.agree[hidden], .policy-form [hidden], .policy-form[hidden] { display: none; }
 .project { display: grid; gap: 4px; max-width: 320px; font-weight: 600; }
 .inline { display: inline-flex; gap: 6px; align-items: center; }
 .policy-error { color: var(--critical-text); font-weight: 600; }
@@ -340,3 +340,13 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
 .list-name { display: flex; align-items: center; }
 .list-problem { color: var(--critical-text); margin-top: 2px; max-width: 46ch; }
 .card.has-alert { border-color: var(--critical); }
+
+/* 0.5.23: Settings → Safe Browsing. */
+ol.steps { margin: 8px 0 0; padding-left: 22px; }
+ol.steps li { margin: 4px 0; }
+.spaced-top { margin-top: 18px; }
+.spaced-top h3 { margin: 0 0 4px; font-size: 14px; }
+ul.benefits { margin: 8px 0; padding-left: 20px; }
+ul.benefits li { margin: 6px 0; }
+/* Settings → Safe Browsing: its forms sit under their card's text, not indented like the policy rows'. */
+.sb-form { margin-left: 0; }

@@ -8,7 +8,9 @@
 // Google Safe Browsing (Lookup API v4, threatMatches:find): the LINK ADDRESS is sent, up to 500 per
 //   request, with the part after "#" always removed and, for one-time links (password resets, sign-in
 //   and unsubscribe links; the extension's isSingleUseToken), the query string removed too, so tokens
-//   never leave the district. Needs an API key (SAFE_BROWSING_KEY, from Secret Manager).
+//   never leave the district. Needs an API key: saved on Settings → Safe Browsing (Secret Manager,
+//   src/intel/sbkey.js), else SAFE_BROWSING_KEY; turned on and off there (0.5.23: cfg.safeBrowsing is a
+//   policy setting, read at each lookup). The key goes in a header, never in the address.
 // Answers are remembered (TTL) so a campaign's 40 copies cost one lookup. A lookup that fails is
 // "unknown", never "safe".
 const { TtlCache } = require('./http');
@@ -21,9 +23,14 @@ const SB_TYPES = { MALWARE: 'malware', SOCIAL_ENGINEERING: 'phishing or a decept
 const CLEAN_TTL = 6 * 60 * 60 * 1000, BAD_TTL = 24 * 60 * 60 * 1000;
 const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/;
 
-function createThreats({ http, cfg, engine, version = '0' }) {
+// sbKey: src/intel/sbkey.js (the key in use, and where each lookup's outcome is noted); without it, the
+// environment's cfg.safeBrowsingKey.
+function createThreats({ http, cfg, engine, version = '0', sbKey = null }) {
     const hostCache = new TtlCache(), urlCache = new TtlCache();
-    const useCf = cfg.cloudflareThreats !== false, useSb = !!cfg.safeBrowsingKey && cfg.safeBrowsing !== false;
+    const useCf = cfg.cloudflareThreats !== false;
+    // On: the setting (dashboard or SAFE_BROWSING), read at each lookup; and a key (a saved one is read then).
+    const sbOn = () => cfg.safeBrowsing !== false && (sbKey ? !!cfg.safeBrowsing : !!cfg.safeBrowsingKey);
+    const keyNow = async () => (sbKey ? sbKey.get() : cfg.safeBrowsingKey || null);
 
     async function doh(base, host) {
         const res = await http.request(`${base}?name=${encodeURIComponent(host)}&type=A`, { headers: { accept: 'application/dns-json' } }, 5000);
@@ -76,10 +83,12 @@ function createThreats({ http, cfg, engine, version = '0' }) {
     async function checkUrls(links) {
         const out = new Map();
         const sent = new Map();                                   // address sent → original urls
+        const key = sbOn() ? await keyNow() : null;
         for (const l of links.slice(0, 500)) {
             const s = forLookup(l.url, l.text);
             if (!s) continue;
-            if (!useSb) { out.set(l.url, { verdict: 'unknown', by: 'none', reason: 'Safe Browsing is off (no API key)' }); continue; }
+            if (!sbOn()) { out.set(l.url, { verdict: 'unknown', by: 'none', reason: 'Safe Browsing is off' }); continue; }
+            if (!key) { out.set(l.url, { verdict: 'unknown', by: 'Google Safe Browsing', reason: 'not checked (Safe Browsing is on, but no API key is saved)' }); continue; }
             const hit = urlCache.get(s);
             if (hit) { out.set(l.url, hit); continue; }
             if (!sent.has(s)) sent.set(s, []);
@@ -89,8 +98,12 @@ function createThreats({ http, cfg, engine, version = '0' }) {
         const body = { client: { clientId: 'spruce-mail-protection', clientVersion: version },
             threatInfo: { threatTypes: Object.keys(SB_TYPES), platformTypes: ['ANY_PLATFORM'], threatEntryTypes: ['URL'], threatEntries: [...sent.keys()].map(url => ({ url })) } };
         try {
-            const res = await http.request(`${SB_URL}?key=${encodeURIComponent(cfg.safeBrowsingKey)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, 6000);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const res = await http.request(SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) }, 6000);
+            if (!res.ok) {
+                let why = '';
+                try { why = String((((await res.json()) || {}).error || {}).message || ''); } catch (e) { /* not JSON */ }
+                throw Object.assign(new Error(`HTTP ${res.status}${why ? `: ${why.slice(0, 120)}` : ''}`), { sbAnswered: true });
+            }
             const data = await res.json();
             const bad = new Map();
             for (const m of data.matches || []) if (m.threat && m.threat.url) bad.set(m.threat.url, SB_TYPES[m.threatType] || String(m.threatType || 'a threat').toLowerCase());
@@ -99,12 +112,15 @@ function createThreats({ http, cfg, engine, version = '0' }) {
                 urlCache.set(s, r, r.verdict === 'unsafe' ? BAD_TTL : 30 * 60 * 1000);
                 for (const o of originals) out.set(o, r);
             }
+            if (sbKey) await sbKey.noteResult(true, null);
         } catch (e) {
             for (const originals of sent.values()) for (const o of originals) out.set(o, { verdict: 'unknown', by: 'Google Safe Browsing', reason: `not checked (${e.name === 'ServiceBusyError' ? 'service busy' : 'lookup failed'})` });
+            // Google refusing the key (revoked, restricted, quota) is worth telling the admins; a network blip isn't.
+            if (sbKey && e.sbAnswered) await sbKey.noteResult(false, e.message);
         }
         return out;
     }
-    return { checkHosts, checkUrls, forLookup, enabled: { cloudflare: useCf, safeBrowsing: useSb } };
+    return { checkHosts, checkUrls, forLookup, enabled: { cloudflare: useCf, get safeBrowsing() { return sbOn(); } } };
 }
 
 module.exports = { createThreats, SINKHOLE_RE };

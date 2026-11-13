@@ -82,7 +82,8 @@ BILLING_ACCOUNT="$(gcloud billing projects describe "$PROJECT" --format='value(b
 step "1/9 APIs and the budget alert"
 gcloud services enable gmail.googleapis.com admin.googleapis.com pubsub.googleapis.com run.googleapis.com \
     firestore.googleapis.com iamcredentials.googleapis.com cloudscheduler.googleapis.com iap.googleapis.com \
-    cloudbuild.googleapis.com artifactregistry.googleapis.com billingbudgets.googleapis.com monitoring.googleapis.com --quiet
+    cloudbuild.googleapis.com artifactregistry.googleapis.com billingbudgets.googleapis.com monitoring.googleapis.com \
+    secretmanager.googleapis.com safebrowsing.googleapis.com --quiet
 
 # A budget alert: Google emails the billing account's admins as soon as this project is charged at all
 # (1% of the amount), and again at half and all of it. It warns; it doesn't stop the service.
@@ -131,6 +132,14 @@ retry gcloud iam service-accounts add-iam-policy-binding "$SA_DELEGATE" --member
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/datastore.user --condition=None --quiet >/dev/null
 # Pub/Sub signs its push requests as spruce-invoker (needed explicitly in older projects).
 retry gcloud iam service-accounts add-iam-policy-binding "$SA_INVOKER" --member="serviceAccount:service-$NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com" --role=roles/iam.serviceAccountTokenCreator --quiet >/dev/null
+# Google Safe Browsing's API key (0.5.23): kept in Secret Manager, saved and removed by an admin on the
+# dashboard (Settings → Safe Browsing). The secret has no value until then. The services' account may read
+# it, add a version and destroy old ones, on this secret only.
+SB_SECRET=spruce-safe-browsing-key
+gcloud secrets describe "$SB_SECRET" >/dev/null 2>&1 || retry gcloud secrets create "$SB_SECRET" --replication-policy=automatic --quiet >/dev/null
+for r in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionAdder roles/secretmanager.secretVersionManager; do
+    retry gcloud secrets add-iam-policy-binding "$SB_SECRET" --member="serviceAccount:$SA_RUN" --role="$r" --condition=None --quiet >/dev/null
+done
 # The dashboard's "Update group membership now" runs the spruce-renew-watches job, and shows its last run.
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/cloudscheduler.jobRunner --condition=None --quiet >/dev/null
 retry gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA_RUN" --role=roles/cloudscheduler.viewer --condition=None --quiet >/dev/null
@@ -226,7 +235,8 @@ env_file() {
 WORKER_AUD="https://spruce-worker-$NUMBER.$REGION.run.app"
 IAP_AUD="/projects/$NUMBER/locations/$REGION/services/spruce-admin"
 COMMON=(MODE "$MODE" ORG_DOMAINS "$ORG_DOMAINS" DELEGATED_SA "$SA_DELEGATE" AI_MOVE_THRESHOLD "$AI_MOVE_THRESHOLD" AI_SUSPICIOUS_THRESHOLD "$AI_SUSPICIOUS_THRESHOLD" ALLOW_DOMAINS "$ALLOW_DOMAINS" ALLOW_ADDRESSES "$ALLOW_ADDRESSES" BRAKE_PER_HOUR "$BRAKE_PER_HOUR" CAMPAIGN_HOLD_AFTER "$CAMPAIGN_HOLD_AFTER"
-    RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app")
+    RETENTION_DAYS "$RETENTION_DAYS" TIME_ZONE "$TZ_NAME" GOOGLE_CLOUD_PROJECT "$PROJECT" CLOUD_RUN_REGION "$REGION" DASHBOARD_URL "https://spruce-admin-$NUMBER.$REGION.run.app"
+    SAFE_BROWSING_SECRET "projects/$PROJECT/secrets/$SB_SECRET")
 # Each service is labelled with its version and AI model's (deploy/upgrade.sh shows what changes).
 LABELS="spruce-version=$(echo "$VERSION" | tr '.' '-'),spruce-model=$(echo "${MODEL:-unknown}" | tr '.' '-'),spruce-install-level=$INSTALL_LEVEL"
 
