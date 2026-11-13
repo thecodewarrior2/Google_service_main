@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.17: Google Classroom from personal accounts is flagged
+
+- **A Google Classroom email (invitation, post, notification) from a personal account** (gmail.com,
+  outlook.com, yahoo.com… `isPersonalMailDomain`): 5, flagged (moved in enforce mode), whatever the name.
+  A school's classes come from its own domain; classes run from personal accounts are the known way to send
+  scams through Classroom's own, genuine address (2025: 115,000 invitations to 13,500 organizations).
+- The account is the one the email shows: the Reply-To, the "Name (address)" next to the person's name,
+  or, for a **class invitation** (its subject, or the X-Notifications type), a personal address anywhere in
+  its text. Classroom doesn't always show it (a post from a colleague doesn't): such an email stays
+  unknown, judged by its links and the AI, as before.
+- Not flagged: another school's class (a Workspace domain), an address quoted in a post's text that isn't
+  the poster's, a colleague's own Classroom posts.
+- Tests: `test/notifications.test.js` (made-up mail only).
+
+
 ## 0.5.16: Shares and notifications judged by the person behind them; compromised-district campaigns
 
 - **Fixed: a colleague's own Classroom post, Drive share or DocuSign envelope was "suspicious".** A

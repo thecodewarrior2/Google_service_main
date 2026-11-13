@@ -131,6 +131,15 @@ either way). A colleague's own share or Classroom post gets no mark. For a share
 - **the same outside account reaching 10 or more of your people within the hour**: 2, and an alert (Status
   → Activity, emailed), once per account and hour.
 
+**Google Classroom from a personal account** (gmail.com, outlook.com, yahoo.com and the other free
+providers): 5, flagged (moved in enforce mode), whatever the name. A school's classes come from its own
+domain; a class run from a personal account is the known way to send scams through Classroom's own
+address. The account is known when the email shows it: the "Name (address)" next to the person's name, or,
+for a class invitation, a personal address anywhere in its text. A Classroom email that shows no account
+can't be told apart, and is judged by its links and the AI. To keep your people out of personal accounts'
+classes altogether: Admin console → Apps → Google Workspace → Classroom → Class settings, "Which classes
+can users in your domain join" (not "any").
+
 With "outside" (1) and a first share from that person (1.5), the compromised-district campaign (a real
 account elsewhere sharing a document "from" your colleague and asking to sign in) reaches 5.5: moved. A
 partner you know sharing a document that mentions a colleague stays at 3: suspicious, not moved. An

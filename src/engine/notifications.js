@@ -58,16 +58,28 @@ function platformNotification(facts, orgDomains = []) {
     const m = VIA_PARENS.exec(shown) || VIA_WORD.exec(shown);
     const name = (m ? m[1] : '').trim().replace(/^["']+|["']+$/g, '');
     const via = m ? m[2].trim() : platform.name;
+    // Google Classroom (0.5.17): its posts, and its class invitations ("Class invitation: …", or the
+    // notification type in X-Notifications).
+    const classroom = platform.name === 'Google' && (/classroom/i.test(via) || onHost(domain, 'classroom.google.com'));
+    const kind = (/^x-notifications:\s*([A-Z_]+)/mi.exec(String(f.rawHead || '')) || [])[1] || '';
+    const invitation = classroom && (/invit/i.test(String(f.subject || '')) || /INVIT/.test(kind));
     // The person's own address: the Reply-To the platform set (not one of its own addresses), or the
-    // "Name (address)" it writes in the text.
+    // "Name (address)" it writes in the text; for a class invitation, also an address at a personal
+    // provider anywhere in its text (who runs the class).
     let address = null;
     const replyTo = ((f.people && f.people.replyTo) || []).map(p => String(p.address || '').toLowerCase()).find(x => x.includes('@') && !PLATFORMS.some(p => domainOf(x) === p.domain || domainOf(x).endsWith(`.${p.domain}`)));
+    const text = `${f.visibleText || ''}\n${f.quotedText || ''}`;
     if (replyTo) address = replyTo;
     else if (name) {
-        const t = new RegExp(`${escapeRe(name)}\\s*\\(\\s*([A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})\\s*\\)`, 'i').exec(String(f.visibleText || ''));
+        const t = new RegExp(`${escapeRe(name)}\\s*\\(\\s*([A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})\\s*\\)`, 'i').exec(text);
         if (t) address = t[1].toLowerCase();
     }
-    return { platform: platform.name, via, name, address, inside: address ? ownDomain(domainOf(address), orgDomains) : null };
+    if (!address && invitation) {
+        const E = require('./spruce').load();
+        const any = (text.match(/[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map(x => x.toLowerCase()).find(x => E.isPersonalMailDomain(domainOf(x)));
+        if (any) address = any;
+    }
+    return { platform: platform.name, via, name, address, inside: address ? ownDomain(domainOf(address), orgDomains) : null, classroom, invitation };
 }
 
 // What an outside share comes from, for the mass-share count (pipeline.js): a platform notification for a
@@ -85,11 +97,19 @@ function shareSource(facts, orgDomains = []) {
 // organization: an account taken over or made up elsewhere, sharing "as" your colleague. At another
 // organization's domain: 5 (flagged); at a personal mail provider (gmail.com…), where staff do have their own
 // accounts: 3 (amber), as for a colleague's name on an outside address.
+//
+// Google Classroom from a personal account (gmail.com and the other free providers): a class run outside any
+// school, the known way to send scams through Classroom's own address (2025: 115,000 invitations to 13,500
+// organizations). 5 (flagged), whatever the name: a school's classes come from its own domain. (0.5.17)
 function relaySigns(E, relay, colleagues) {
-    if (!relay || !relay.address || relay.inside !== false || !relay.name || !colleagues || !colleagues.size) return [];
+    if (!relay || !relay.address || relay.inside !== false) return [];
+    const personal = E.isPersonalMailDomain(domainOf(relay.address));
+    if (relay.classroom && personal) {
+        return [{ weight: 5, kind: 'classroom-personal', text: `A Google Classroom ${relay.invitation ? 'invitation' : 'email'} from a personal account (${relay.address}), not a school's: classes run from personal accounts are a known way to send scams through Classroom.` }];
+    }
+    if (!relay.name || !colleagues || !colleagues.size) return [];
     const h = E.colleagueNameHash(relay.name);
     if (!h || !colleagues.has(h)) return [];
-    const personal = E.isPersonalMailDomain(domainOf(relay.address));
     return [personal
         ? { weight: 3, kind: 'relay-colleague-personal', text: `${relay.via} sent it for someone using the name of a person in your organization, from a personal account outside it (${relay.address}).` }
         : { weight: 5, kind: 'relay-colleague-outside', text: `${relay.via} sent it for someone using the name of a person in your organization, but from an account at another organization (${relay.address}).` }];

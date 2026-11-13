@@ -126,3 +126,31 @@ test('mass share: the same outside account reaching 10 of the organization\'s pe
     assert.equal(dir.selfNameHash(USER), E.colleagueNameHash('Sam Okafor'));
     assert.equal(dir.selfNameHash(`nobody@${ORG}`), '');
 });
+
+test('0.5.17: Google Classroom from a personal account (gmail.com…) is flagged; a school\'s class, or one whose account isn\'t shown, isn\'t', async () => {
+    const classroom = ({ name = 'Coach Pat', subject = 'Class invitation: "SEO Masters"', kind = 'CLASS_INVITATION', body }) => mail([
+        `From: "${name} (Classroom)" <no-reply@classroom.google.com>`, `To: ${USER}`, `Subject: [EXTERNAL] ${subject}`, 'Message-ID: <ci@notifications.google.com>',
+        `X-Notifications: ${kind}:1:2-3`, GOOGLE], body);
+    const join = '<p><a href="https://classroom.google.com/c/MTIzNDU2?cjc=abc123">Join</a></p>';
+    // The inviting account shown next to its name: a personal one.
+    let r = await judge(classroom({ body: `<p>Coach Pat (coach.pat.seo@gmail.com) invited you to the class SEO Masters.</p>${join}` }));
+    assert.deepEqual(kinds(r).filter(([k]) => k === 'classroom-personal'), [['classroom-personal', 5]]);
+    assert.equal(r.signals.find(s => s.kind === 'classroom-personal').text, 'A Google Classroom invitation from a personal account (coach.pat.seo@gmail.com), not a school\'s: classes run from personal accounts are a known way to send scams through Classroom.');
+    assert.equal(r.status, 'flagged');
+    assert.equal(decide(r, enforce, {}).action, 'move');
+    // Shown elsewhere in an invitation's text.
+    r = await judge(classroom({ subject: 'You were invited to a class', kind: 'OTHER', body: `<p>Coach Pat invited you to the class SEO Masters.</p>${join}<p>This invitation was sent by coach.pat.seo@outlook.com.</p>` }));
+    assert.ok(r.signals.some(s => s.kind === 'classroom-personal'), JSON.stringify(kinds(r)));
+    // A personal address the platform writes next to the name, in a post (not an invitation): flagged too.
+    r = await judge(classroom({ name: 'Coach Pat', subject: 'New assignment: "Week 1"', kind: 'NEW_ASSIGNMENT', body: `<p>Coach Pat (coach.pat.seo@yahoo.com) posted a new assignment.</p>${join}` }));
+    assert.ok(r.signals.some(s => s.kind === 'classroom-personal'));
+    // Not flagged: another school's class; a post whose text only quotes someone's personal address; an
+    // invitation that shows no account at all (unknown: the links and the AI still judge it).
+    r = await judge(classroom({ body: `<p>Coach Pat (coach.pat@${OTHER}) invited you to the class Regional Robotics.</p>${join}` }));
+    assert.ok(!r.signals.some(s => s.kind === 'classroom-personal'));
+    r = await judge(classroom({ name: 'Jordan Rivera', subject: 'New comment on "Lab report"', kind: 'NEW_COMMENT', body: `<p>Jordan Rivera replied: email me at jr.lab.help@gmail.com if the form doesn't work.</p>${join}` }));
+    assert.ok(!r.signals.some(s => s.kind === 'classroom-personal'), 'a post, and the address isn\'t the poster\'s');
+    r = await judge(classroom({ body: `<p>Coach Pat invited you to the class SEO Masters.</p>${join}` }));
+    assert.ok(!r.signals.some(s => s.kind === 'classroom-personal'));
+    assert.equal(platformNotification(await readMessage(classroom({ body: '<p>x</p>' })), [ORG]).invitation, true);
+});
