@@ -169,3 +169,26 @@ test('the retraining export leaves out what abuse.ch and Spamhaus found (their t
     const out = training.deidentify(aiFacts, { mailbox: `pat@${ORG}`, orgDomains: [ORG], label: 'phishing' });
     assert.deepEqual(out.links.map(l => l.finding), ['', '', 'listed as phishing by OpenPhish community feed']);
 });
+
+test('0.5.41: Spamhaus refusing (its servers don\'t know the key: REFUSED) is said plainly, at Test and in the alert', async () => {
+    const store = new MemoryStore();
+    const cfg = cfgOf({ SPAMHAUS: 'on' });
+    let code = 'EREFUSED';
+    const refusing = { resolve4: async () => { throw Object.assign(new Error('queryA ' + code), { code }); } };
+    const sh = createSpamhaus({ cfg, store, resolver: refusing, log: silent });
+    const key = createApiKey({ id: 'spamhaus', label: 'Spamhaus', store, secrets: memorySecrets(), keyRe: /^[a-z0-9]{20,40}$/i, test: (k) => sh.testKey(k), log: silent });
+    sh.setKey(key);
+    await assert.rejects(key.save(KEY, `it@${ORG}`), (e) => /Spamhaus refused the lookup: its servers don't know this key yet\. A key made today can take a while/.test(e.message) && !e.message.includes(KEY));
+    assert.equal(await store.getState('spamhausKey'), null, 'nothing saved');
+    code = 'ESERVFAIL';
+    await assert.rejects(key.save(KEY, `it@${ORG}`), /Spamhaus couldn't be reached through the service's DNS resolver \(ESERVFAIL\)/);
+    // A key saved that Spamhaus stops knowing: lookups refused → the alert says why.
+    const ok = await spamhausWith({ [`dbl:${TEST_DOMAIN}`]: '127.0.1.2' });
+    await ok.key.save(KEY, `it@${ORG}`);
+    const alerts = [];
+    ok.key.setAlert(async (t) => { alerts.push(t); });
+    const sh2 = createSpamhaus({ cfg: ok.cfg, store: ok.store, resolver: { resolve4: async () => { throw Object.assign(new Error('x'), { code: 'EREFUSED' }); } }, log: silent });
+    sh2.setKey(ok.key);
+    await sh2.checkDomains(['x.example']);
+    assert.match(alerts[0], /Spamhaus refused the lookups: its servers don't know the key/);
+});

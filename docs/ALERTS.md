@@ -157,8 +157,8 @@ Mail is still checked; one source of evidence is missing until it comes back.
 
 ### Spamhaus refused the key or the lookups (`spamhaus-key`)
 - **When:** Settings → Spamhaus is on (off by default) and Spamhaus answers the service's lookups with an
-  error: the key disabled, the key used in a way its terms don't allow, or a mistyped zone. Emailed at most
-  once a day.
+  error: its servers refusing the key (REFUSED: not active yet, disabled, replaced or mistyped), the key
+  disabled, the key used in a way its terms don't allow, or a mistyped zone. Emailed at most once a day.
 - **What it means for mail:** domains aren't looked up with Spamhaus meanwhile (they are "not checked",
   never "clean"); every other check still runs.
 - **What to do:** Settings → Spamhaus shows Spamhaus's answer. Check the key in Spamhaus's portal (a free

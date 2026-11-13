@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.41: Settings → Spamhaus says when Spamhaus doesn't know the key
+
+- Spamhaus's servers answer **REFUSED** for a key they don't know: one not active yet (a key made today can take
+  a while), disabled, replaced or mistyped. Cloud Run's resolver passes that on (EREFUSED), and the page said
+  "Spamhaus couldn't be asked… try again in a minute". Now Test says Spamhaus refused the key and what to check
+  (that the Query Key is Enabled in Spamhaus's portal and was copied whole), and a saved key Spamhaus stops
+  knowing is the `spamhaus-key` alert instead of lookups silently not happening.
+- Other DNS failures say so: "Spamhaus couldn't be reached through the service's DNS resolver (…)".
+- Tests: `test/optional-services.test.js`.
+
 ## 0.5.40: Each service page says at its title whether it is on
 
 - Beside the title of Settings → Safe Browsing, Spamhaus, abuse.ch and Link clicks, and Status → Look-alikes, a
