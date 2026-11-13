@@ -56,7 +56,8 @@ can only read groups. It never uses that account's password.
 
 ### The colleague-name check (optional, recommended)
 
-The service can also recognize **an outside sender using the name of someone in your directory**, a
+The service can also recognize **an outside sender using the name of someone in your directory** (counted
+when the email claims to be from inside: README, "The colleague-name check"), a
 common phishing trick, and the same names in the Reply-To, Cc and To lines (replies going to an outside
 address under a colleague's name; a colleague copied in at an outside or look-alike address). For that, the same directory admin reads the users' names (kept only as one-way
 hashes):

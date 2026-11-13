@@ -140,7 +140,12 @@ retraining export leaves it out. A bilingual email with a real English part is r
 **The colleague-name check:** the full names in your directory are read (by `DIRECTORY_ADMIN`, every 12
 hours) and kept only as one-way hashes, in memory; an outside sender whose display name is one of them
 ("Jordan Whitfield" <jordan.whitfield.office@gmail.com>) gets a sign (3: amber; it moves mail only with
-other signs, since staff sometimes write from a personal address). The same names are looked for in the
+other signs, since staff sometimes write from a personal address), **when the email claims to be from inside**
+(0.5.43): written from a personal email account, from an address imitating your domain or a brand-new domain,
+with Gmail's sender check failing, with replies going elsewhere, with a title or your organization's name in
+the sender's name ("Jordan Whitfield, Superintendent", also matched now), or asking what impersonators ask (a
+favor, a phone number, gift cards, payment or payroll details, codes). People share names: a vendor's employee
+with a colleague's name, writing a greeting from her company's own address, is shown but doesn't count. The same names are looked for in the
 other address lines: **Reply-To** under a colleague's name going to an outside address (3: replies would
 go to someone else), and a colleague **copied in** (Cc or To) at an outside address (1) or at an address
 that imitates your domain (3: "I've copied our superintendent").

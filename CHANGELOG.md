@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.43: A colleague's name on an outside address counts only when the email claims to be from inside
+
+People share names. A vendor's employee whose name matches someone in your directory, writing a greeting from her
+company's own address, was flagged "The sender uses the name of someone in your organization, but writes from an
+outside address". Now that sign (3) counts only when something in the email claims to be from inside:
+
+- written from a **personal email account** (Gmail, Outlook.com…);
+- from an address **imitating your domain**, or a **brand-new or look-alike** domain (site age, Spamhaus ZRD, the
+  look-alike watch);
+- **Gmail's sender check (DMARC) failing**;
+- **replies going to another address**;
+- a **title or your organization's name in the sender's name** ("Misty Hollins, Principal", "… - Maple Schools");
+- asking for **what impersonators ask**: a favor, a phone number, gift cards, payment, payroll or bank details,
+  codes or passwords.
+
+The sign says which. Otherwise it is shown with no weight: "The sender has the same name as someone in your
+organization, writing from <domain>'s own address. Nothing in the email claims to be from inside your
+organization, so it doesn't count." Also new: a colleague's name **with a title or the organization's name
+added** ("Misty Hollins - Maple Schools", "Misty Hollins (Superintendent)") is now matched to the directory; the
+exact name was needed before. Tests: `test/colleague-context.test.js`.
+
 ## 0.5.42: Spamhaus: a refused lookup is asked again; the page explains the hour a new key takes
 
 - **Refused lookups are asked again.** A new Spamhaus key takes up to about an hour to sync across Spamhaus's

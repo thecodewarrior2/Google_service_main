@@ -126,6 +126,11 @@ async function analyze(facts, ctx = {}) {
         // ctx.lookalikes, domain → 'strong' (new, or marked a threat) or 'weak' (there before the watch).
         ...safe(() => watchedLookalikeSigns(E, facts, judged, ctx.lookalikes))
     ];
+    // A colleague's name with a title or the organization's name added ("Misty Hollins, Principal", "Misty
+    // Hollins - Maple Schools"), which impersonators write and the exact match misses (0.5.43).
+    if (!relay) safe(() => colleagueWithTitle(E, facts, signals, ctx));
+    // A colleague's name on an outside address counts only when the email claims to be from inside (0.5.43).
+    safe(() => colleagueInContext(E, facts, signals, ctx, bodyText));
     const base = { status: ctx.trusted ? 'trusted' : 'clean', reasons: [], move: false };
     const verdict = E.applyEmailSignals(base, signals) || base;
     // What confirms it from outside the email's own text: a link a security service blocks or a
@@ -190,6 +195,52 @@ async function analyze(facts, ctx = {}) {
         // Only for the retraining export (src/training.js), which takes the people out: never stored.
         aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
+}
+
+// A colleague's name on an outside address (the engine's nameAddressSigns, 3) counts only when something
+// in the email claims to be from inside the organization (0.5.43). People share names: a vendor's Misty
+// Smith writing from her company's own address with a greeting is no impersonation. It counts when it is
+// written from a personal email account, from an address imitating the organization's domain or a
+// brand-new domain, with Gmail's sender check failing, with replies going elsewhere, with a title or the
+// organization's name in the sender's name, or asking what an impersonator asks (a favor, a phone number,
+// gift cards, payment or payroll details, codes or passwords). Otherwise it stays, with no weight, saying
+// why it doesn't count. Changes signals in place.
+const COLLEAGUE_SIGN = 'The sender uses the name of someone in your organization, but writes from an outside address';
+const INSIDE_TITLE_RE = /\b(superintendent|principal|director|coordinator|supervisor|chief|cfo|ceo|coo|president|treasurer|business office|finance|payroll|human resources|hr|board (?:member|chair)|dean|head of|manager|administrator)\b/i;
+const IMPERSONATOR_RE = /\b(are you (?:available|around|free|at your desk)|quick (?:favou?r|task|request|question)|i(?:'m| am) (?:in a meeting|on a call|in a conference|travel+ing|busy right now)|can'?t (?:talk|take (?:a )?calls?)|text me|(?:cell|mobile|personal) (?:phone )?(?:number|no\.?)|gift ?cards?|itunes cards?|google play cards?|direct deposit|payroll|bank (?:details|account|information)|wire (?:transfer|the funds)|w-?2s?|keep (?:this|it) (?:confidential|between us)|discreet)\b/i;
+function colleagueWithTitle(E, facts, signals, ctx) {
+    if (!ctx.colleagues || !ctx.colleagues.size || signals.some(s => s && typeof s.text === 'string' && s.text.startsWith(COLLEAGUE_SIGN))) return;
+    const name = String(facts.senderName || '').replace(/["']/g, '').trim();
+    const domain = String(facts.senderAddress || '').split('@')[1] || '';
+    if (!name || !domain || (ctx.orgDomains || []).some(o => E.isOwnDomain(domain.toLowerCase(), o))) return;
+    // The name before " - ", " | ", " (", or before ", <a title>" (a comma alone is "Last, First").
+    const parts = [name.split(/\s+[-–—|]\s+|\s*\(/)[0], name.replace(new RegExp(`,\\s*(?:${INSIDE_TITLE_RE.source.replace(/^\\b\(|\)\\b$/g, '')}).*$`, 'i'), '')]
+        .map(x => x.trim()).filter(x => x && x !== name && x.split(/\s+/).length >= 2);
+    if (parts.some(p => ctx.colleagues.has(E.colleagueNameHash(p)))) signals.push({ weight: 3, text: `${COLLEAGUE_SIGN} (${String(facts.senderAddress).slice(0, 120)}).` });
+}
+function colleagueInContext(E, facts, signals, ctx, bodyText) {
+    const i = signals.findIndex(s => s && typeof s.text === 'string' && s.text.startsWith(COLLEAGUE_SIGN));
+    if (i < 0) return;
+    const at = (a) => String(a || '').slice(String(a || '').lastIndexOf('@') + 1).toLowerCase();
+    const address = String(facts.senderAddress || ''), domain = at(address);
+    const org = (ctx.orgDomains || []).map(d => String(d).toLowerCase());
+    const name = String(facts.senderName || '');
+    const why = [];
+    if (E.isPersonalMailDomain(domain)) why.push('from a personal email account');
+    if (org.some(o => { try { return E.ownDomainLookalike(domain, o); } catch (e) { return false; } })) why.push('from an address imitating your organization\'s domain');
+    if (signals.some(s => s && ['young-sender-domain', 'young-lookalike-sender', 'zrd-sender', 'watched-lookalike-sender', 'known-lookalike-sender'].includes(s.kind))) why.push('from a brand-new or look-alike domain');
+    if (facts.auth && facts.auth.dmarc === 'fail') why.push('and Gmail\'s sender check failed for it');
+    const reply = (facts.replyTo || []).find(a => at(a) && at(a) !== domain && !org.some(o => at(a) === o || at(a).endsWith(`.${o}`)));
+    if (reply) why.push(`with replies going to another address (${reply})`);
+    const orgWords = org.flatMap(o => String((E.registrableDomain(o) || o).split('.')[0]).split(/[-_]/)).filter(w => w.length >= 4);
+    const lower = name.toLowerCase();
+    if (INSIDE_TITLE_RE.test(name) || orgWords.some(w => lower.includes(w))) why.push(`with a title or your organization's name in the sender's name ("${name.trim().slice(0, 60)}")`);
+    let asks = false;
+    try { asks = E.highRiskRequestKinds(bodyText).length > 0; } catch (e) { asks = false; }
+    if (asks || IMPERSONATOR_RE.test(`${facts.subject || ''}\n${bodyText || ''}`)) why.push('asking for what impersonators ask (a favor, a phone number, payment or payroll details, codes or passwords)');
+    signals[i] = why.length
+        ? Object.assign({}, signals[i], { kind: 'sender-colleague-name', weight: 3, text: `The sender uses the name of someone in your organization, but writes from an outside address (${address.slice(0, 120)}), ${why.slice(0, 3).join('; ')}.` })
+        : Object.assign({}, signals[i], { kind: 'sender-name-shared', weight: 0, text: `The sender has the same name as someone in your organization, writing from ${domain}'s own address. Nothing in the email claims to be from inside your organization, so it doesn't count (people share names).` });
 }
 
 // Mail from, replying to, or linking to a domain the look-alike watch found (src/lookalike.js): new or
