@@ -11,6 +11,7 @@ const spruce = require('./spruce');
 const { detectLanguage } = require('./language');
 const N = require('./notifications');
 const { fakeReplySigns } = require('./replychain');
+const { readAttachments } = require('./attachments');
 const { networkChecks } = require('./network');
 
 const MAX_LINKS = 300;
@@ -33,7 +34,7 @@ async function judgeLinks(E, links) {
         try { reason = E.detectLinkProblem(l.text || '', href, finalUrl, E.builtinTrackers, {}); } catch (e) { reason = null; }
         let severity = reason ? E.linkProblemSeverity(reason) : null;
         if (!reason) { const cloud = E.cloudStoragePage(finalUrl); if (cloud) { reason = cloud.reason; severity = 'caution'; } }
-        out.push({ text: l.text, url: href, finalUrl, severity, reason, hidden: !!l.hidden });
+        out.push({ text: l.text, url: href, finalUrl, severity, reason, hidden: !!l.hidden, from: l.from || undefined });
     }
     return out;
 }
@@ -79,7 +80,10 @@ async function analyze(facts, ctx = {}) {
     const share = N.shareSource(facts, ctx.orgDomains || []);
     // A notification's note (the sharer's own message) can be set apart as a quotation: the text checks read it.
     const bodyText = relay ? `${facts.visibleText}\n${facts.quotedText || ''}` : facts.visibleText;
-    const judged = await judgeLinks(E, facts.links || []);
+    // Attachments and pictures (0.5.34): QR codes and links in them are checked like the email's own links.
+    const att = ctx.readAttachments === false ? { links: [], signals: [], found: [], skipped: 0 }
+        : await readAttachments(facts.attachmentFiles || [], { outside: !inside }).catch(() => ({ links: [], signals: [], found: [], skipped: 0 }));
+    const judged = await judgeLinks(E, [...(facts.links || []), ...att.links]);
     // The network checks (they may flag links, so they come before the link signs are counted).
     // Allowlisted senders are never moved, so their mail costs no lookups.
     const net = await networkChecks(E, ctx.trusted ? null : (ctx.intel || null), facts, judged, Object.assign({}, ctx, { orgDomains: ctx.orgDomains || [] }))
@@ -116,6 +120,7 @@ async function analyze(facts, ctx = {}) {
         // Outside, and first time: for a notification, the person's (none when the notification doesn't say who).
         ...safe(() => (relay ? (relay.address ? E.senderContextSigns(relay.address, org, !!ctx.firstTime) : []) : E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime))),
         ...linkSignals(judged),
+        ...att.signals,
         ...net.signals
     ];
     const base = { status: ctx.trusted ? 'trusted' : 'clean', reasons: [], move: false };
@@ -163,8 +168,10 @@ async function analyze(facts, ctx = {}) {
         status: verdict.status,
         score: typeof verdict.score === 'number' ? verdict.score : signals.reduce((a, s) => a + (s.weight || 0), 0),
         signals: signals.map(s => ({ weight: s.weight, kind: s.kind || null, text: s.text })),
-        links: judged.filter(j => j.severity).slice(0, 20).map(j => ({ url: j.url.slice(0, 300), finalUrl: String(j.finalUrl || '').slice(0, 300), severity: j.severity, reason: j.reason })),
+        links: judged.filter(j => j.severity).slice(0, 20).map(j => ({ url: j.url.slice(0, 300), finalUrl: String(j.finalUrl || '').slice(0, 300), severity: j.severity, reason: j.reason, from: j.from || undefined })),
         linkCount: judged.length,
+        // What the attachment checks found (0.5.34): file names and what was in them (a host, a sign), no content.
+        attachmentFindings: att.found, attachmentsSkipped: att.skipped || 0,
         checks: net.checks,
         inside,
         ownAddress,

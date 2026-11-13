@@ -49,12 +49,15 @@ For emails the policy moved, would have moved, or found suspicious, it keeps:
 - the flagged links;
 - the AI score, and up to three short quotes (160 characters) the model weighed most (`STORE_AI_QUOTES`);
 - Gmail's DMARC, SPF and DKIM results;
-- attachment names;
+- attachment names, and what the attachment checks found in them (a QR code's or a link's site, a sign such
+  as "asks for a password"; 0.5.34), never the files;
 - its Message-ID (the header Google Workspace's Email log search uses), and Gmail's ID of the copy;
 - the decision, and who moved it back or marked it (including "moved back by the user" when a user takes a
   moved email out of Spam themselves).
 
-**Never kept:** email bodies or attachments.
+**Never kept:** email bodies or attachments. Attachments and pictures are read in the worker's memory while the
+email is checked (QR codes, links, forms and scripts in them; 0.5.34) and dropped; nothing of them is sent
+anywhere except the sites their links point to, which are looked up like the email's own links.
 
 For every other email it keeps only a daily count (emails checked) and the message ID, so it doesn't
 judge the same email twice.

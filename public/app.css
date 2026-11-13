@@ -356,3 +356,5 @@ ul.benefits li { margin: 6px 0; }
 .manual-install .manual-head h2 { margin: 0; }
 .manual-install p { margin: 8px 0; }
 .card.locked .policy-form { opacity: 0.6; }
+ul.plain-list { margin: 0; padding-left: 14px; }
+ul.plain-list li { margin: 2px 0; overflow-wrap: break-word; word-break: normal; }

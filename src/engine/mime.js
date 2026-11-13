@@ -72,7 +72,11 @@ async function readMessage(raw) {
         // (Not the AMP version of the body, text/x-amp-html, that Google's share and comment notifications carry
         // beside the HTML one: it is the email itself, not a file, 0.5.22.)
         attachments: (mail.attachments || []).filter(a => !(String(a.contentType || '').toLowerCase() === 'text/x-amp-html' && !a.filename))
-            .map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0 }))
+            .map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0 })),
+        // The files themselves, for the attachment checks (0.5.34): in memory only, never stored. Pictures
+        // inside the email (inline) too: a QR code is often one of those.
+        attachmentFiles: (mail.attachments || []).filter(a => !(String(a.contentType || '').toLowerCase() === 'text/x-amp-html' && !a.filename))
+            .map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0, content: a.content, inline: !!a.related || a.contentDisposition === 'inline' }))
     };
 }
 

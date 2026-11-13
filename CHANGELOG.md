@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.34: Attachments and QR codes are read
+
+Before, the service saw only attachments' names and types. Now `src/engine/attachments.js` reads them, in
+memory, while the email is checked (nothing is stored; the record keeps what was found):
+
+- **QR codes** ("quishing": a QR code hides its link from the reader and from link checks) in pictures (PNG,
+  JPEG; attached or inside the email), in PDFs (pictures on the first 5 pages, JPEG ones from scanners too)
+  and in Word, Excel and PowerPoint files. Each code's link is checked like any link in the email (security
+  services, phishing lists, site age…). A QR code from outside is also a small sign (1).
+- **Links** in PDFs (link annotations and written-out addresses) and Office files (hyperlinks), checked the
+  same way.
+- **Web pages sent as files:** one asking for a password (5), one that builds itself from hidden data or
+  sends the reader elsewhere ("HTML smuggling", a meta refresh: 4), any other from outside (1). Their forms'
+  and links' sites are checked.
+- **SVG pictures** with a script, a form or event handlers (4).
+- **The file itself:** a double extension ("Invoice.pdf.html", 3); a program, script, shortcut or disk image
+  (.exe, .js, .lnk, .iso, .hta…: 3); an archive needing a password (2) or holding a program or page (3); a PDF
+  needing a password (2) or running a script (2); a document with macros (2).
+- **Limits:** 12 files per email, 15 MB per file, 5 PDF pages and 12 pictures per page, 24-megapixel
+  pictures, 400 entries and 40 MB unpacked for an Office file, 10 seconds per email, and at most two files
+  decoded at a time per instance. What is over a limit is skipped (not checked), never "safe".
+- **The dashboard:** an email's Details lists what was found in its attachments ("Found in them"); a flagged
+  link says where it came from ("A QR code in Payroll.pdf (page 1): …").
+- **Libraries** (open source, from npm, pinned in package-lock.json): jsQR (QR codes), pngjs and jpeg-js
+  (pictures), pdf.js (`pdfjs-dist`, PDFs), fflate (Office files). The image grows by about 40 MB.
+- **The demo** has a made-up campaign with a QR code attached.
+- Tests: `test/attachments.test.js` (every file made up in the test: `qrcode` and `pdf-lib`, test-only).
+
 ## 0.5.33: Fake reply chains count; an optional Suspicious label; Workspace settings to pair with the service
 
 - **Fake reply chains** (a new sign, 2 points): an email whose subject says it is a reply ("RE:", and "AW:",

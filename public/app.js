@@ -615,7 +615,7 @@
                         actions),
                     h('section', { class: 'card' }, h('h2', { text: 'Signs found' }), h('div', { class: 'sub', text: `The rule checks: score ${m.score === null || m.score === undefined ? '–' : m.score} (amber at 3, flagged at 5).` }),
                         m.signals.length ? h('ul', { class: 'signals' }, m.signals.slice().sort((a, b) => b.weight - a.weight).map(sg => h('li', {}, h('span', { class: `weight ${sg.weight >= 3 ? 'high' : ''}`, text: String(sg.weight) }), h('span', { text: sg.text })))) : h('div', { class: 'empty', text: 'No signs.' })),
-                    m.links && m.links.length ? h('section', { class: 'card' }, h('h2', { text: 'Flagged links' }), h('ul', { class: 'signals' }, m.links.map(l => h('li', {}, h('span', { class: `weight ${l.severity === 'danger' ? 'high' : ''}`, text: l.severity === 'danger' ? '!' : '?' }), h('span', {}, h('div', { text: l.reason || '' }), h('div', { class: 'muted small', text: l.finalUrl && l.finalUrl !== l.url ? `${l.url} → ${l.finalUrl}` : l.url })))))) : null),
+                    m.links && m.links.length ? h('section', { class: 'card' }, h('h2', { text: 'Flagged links' }), h('ul', { class: 'signals' }, m.links.map(l => h('li', {}, h('span', { class: `weight ${l.severity === 'danger' ? 'high' : ''}`, text: l.severity === 'danger' ? '!' : '?' }), h('span', {}, h('div', { text: l.reason || '' }), h('div', { class: 'muted small', text: `${l.from ? `${l.from[0].toUpperCase()}${l.from.slice(1)}: ` : ''}${l.finalUrl && l.finalUrl !== l.url ? `${l.url} → ${l.finalUrl}` : l.url}` })))))) : null),
                 h('div', { class: 'grid' },
                     h('section', { class: 'card' }, h('h2', { text: 'AI opinion' }), aiOpinion(m, ai, opts)),
                     h('section', { class: 'card' }, h('h2', { text: 'Details' }), h('dl', { class: 'kv' },
@@ -624,6 +624,8 @@
                         h('dt', { text: 'Mode' }), h('dd', { text: m.mode }),
                         h('dt', { text: 'Looked up' }), h('dd', { text: m.checks ? [m.checks.cloudflare ? `Cloudflare: ${m.checks.cloudflare} site${m.checks.cloudflare === 1 ? '' : 's'}` : '', m.checks.safeBrowsing ? `Safe Browsing: ${m.checks.safeBrowsing} link${m.checks.safeBrowsing === 1 ? '' : 's'}` : '', m.checks.lists ? 'phishing lists' : '', m.checks.ages ? `site age: ${m.checks.ages}` : '', m.checks.notChecked ? `${m.checks.notChecked} not checked` : ''].filter(Boolean).join(' · ') || 'nothing to look up' : 'offline checks only' }),
                         h('dt', { text: 'Attachments' }), h('dd', { text: m.attachments && m.attachments.length ? m.attachments.map(a => a.name || a.type).join(', ') : 'none' }),
+                        // What the attachment checks found (0.5.34): a QR code's site, a form, a script…
+                        m.attachmentFindings && m.attachmentFindings.length ? [h('dt', { text: 'Found in them' }), h('dd', {}, h('ul', { class: 'plain-list' }, m.attachmentFindings.map(f => h('li', { text: f.what }))))] : null,
                         idRow('Message-ID', m.rfc822MessageId, 'To look it up in Google Workspace: Admin console → Reporting → Email log search (Message ID), or the security investigation tool. Copy for Vault gives Google Vault\'s search for it (rfc822msgid:…).',
                             m.rfc822MessageId ? [copyButton(vaultQuery(m.rfc822MessageId), 'Vault search', 'Copy for Vault')] : []),
                         pasted ? null : idRow('Gmail ID', m.messageId, 'The Gmail API\'s id of this copy, in this mailbox.'),

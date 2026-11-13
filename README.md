@@ -66,13 +66,19 @@ For each new Inbox message:
    - the sender, and Gmail's own DMARC/SPF/DKIM results;
    - the links, unwrapped offline;
    - the text a person sees, plus how the email hides text: filler after a large blank gap, or a body
-     that is only pictures.
+     that is only pictures;
+   - its attachments and pictures (0.5.34): QR codes in pictures, PDFs and Office files, links in PDFs and
+     Office files, web pages and SVG pictures sent as files (a sign-in form, a script that builds or
+     redirects the page), double extensions, programs and disk images, archives or PDFs that need a password,
+     documents with macros. The links found are checked like the email's own.
 2. The checks add up their signs:
    - forged or spam headers;
    - a brand-name or look-alike sender, or one named after the recipient;
    - dangerous links;
    - claims to be safe, and requests for passwords, codes, money or remote access;
-   - a new sender from outside the organization.
+   - a new sender from outside the organization;
+   - a fake reply chain ("RE:" answering nothing this mailbox has, 0.5.33);
+   - a QR code, a sign-in page or script sent as a file, a risky attachment (0.5.34).
 
    A score of 3 is amber, 5 is flagged.
 3. The phish-tiny model scores the email (0–100%).

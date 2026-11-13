@@ -475,6 +475,7 @@ class Service {
             ai: result.ai ? { probability: result.ai.probability, model: result.ai.model, reasons: (result.ai.reasons || []).map(r => ({ sentence: String(r.sentence).slice(0, 160), facts: !!r.facts })) } : null,
             auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
             attachments: facts.attachments.slice(0, 10).map(a => ({ name: a.name.slice(0, 120), type: a.type })),
+            attachmentFindings: (result.attachmentFindings || []).slice(0, 12),
             action: decision.action, trigger: decision.trigger, why: decision.why, mode: this.cfg.mode,
             evidence: decision.action === 'none' ? null : result.strong ? 'strong' : 'weak', confirmedBy: result.confirmedBy || []
         };
@@ -571,7 +572,7 @@ class Service {
             model: ai ? ai.model : null, ai: ai && typeof ai.probability === 'number' ? ai.probability : null,
             score: result.score, status: result.status, action: decision.action, trigger: decision.trigger, why: decision.why
         };
-        const patch = { rescan, arrival, ai, score: result.score, status: result.status, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null, inside: !!result.inside };
+        const patch = { rescan, arrival, ai, score: result.score, status: result.status, signals: result.signals.slice(0, 20), links: result.links.slice(0, 10), checks: result.checks || null, inside: !!result.inside, attachmentFindings: (result.attachmentFindings || []).slice(0, 12) };
         const record = await this.store.updateRecord(key, patch);
         const pc = (x) => (typeof x === 'number' ? `${Math.round(x * 100)}%` : 'none');
         const was = arrival.ai ? arrival.ai.probability : null;
@@ -701,6 +702,7 @@ class Service {
             ai: aiRecord(result.ai, this.cfg),
             auth: facts.auth ? { dmarc: facts.auth.dmarc, spf: facts.auth.spf, dkim: facts.auth.dkim } : null,
             attachments: facts.attachments.slice(0, 10).map(a => ({ name: a.name.slice(0, 120), type: a.type })),
+            attachmentFindings: (result.attachmentFindings || []).slice(0, 12),
             action: decision.action, trigger: decision.trigger, why: decision.why, braked: held === 'brake', held, mode: this.cfg.mode,
             // How sure: strong = the rules flagged it and something outside the email confirms it.
             evidence: result.strong ? 'strong' : 'weak', confirmedBy: result.confirmedBy || [],

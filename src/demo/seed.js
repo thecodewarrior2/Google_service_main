@@ -34,11 +34,17 @@ function people(r, n) {
 }
 
 const auth = (dom, dmarc, spf = dmarc === 'pass' ? 'pass' : 'softfail') => `Authentication-Results: mx.google.com; dkim=${dmarc === 'pass' ? 'pass' : 'none'}; spf=${spf} smtp.mailfrom=bounce@${dom}; dmarc=${dmarc} header.from=${dom}`;
-function eml({ fromName, from, to, subject, dmarc, html, extraHeaders = '' }) {
+// attachment: { name, type, base64 } (0.5.34: the demo's QR code).
+function eml({ fromName, from, to, subject, dmarc, html, extraHeaders = '', attachment = null }) {
     const dom = from.split('@')[1];
-    return [`Delivered-To: ${to}`, `Received: from mail.${dom} (mail.${dom}. [203.0.113.${(dom.length * 7) % 250}]) by mx.google.com with ESMTPS id d1; Mon, 02 Nov 2026 11:46:40 -0800 (PST)`,
+    const head = [`Delivered-To: ${to}`, `Received: from mail.${dom} (mail.${dom}. [203.0.113.${(dom.length * 7) % 250}]) by mx.google.com with ESMTPS id d1; Mon, 02 Nov 2026 11:46:40 -0800 (PST)`,
         auth(dom, dmarc), `From: "${fromName}" <${from}>`, `To: ${to}`, `Subject: ${subject}`, 'Date: Mon, 02 Nov 2026 19:46:39 +0000',
-        `Message-ID: <${Math.abs(subject.length * 7919)}@${dom}>`, 'MIME-Version: 1.0', ...extraHeaders.split('\r\n'), 'Content-Type: text/html; charset=utf-8'].filter(Boolean).join('\r\n') + '\r\n\r\n' + html;
+        `Message-ID: <${Math.abs(subject.length * 7919)}@${dom}>`, 'MIME-Version: 1.0', ...extraHeaders.split('\r\n')];
+    if (!attachment) return [...head, 'Content-Type: text/html; charset=utf-8'].filter(Boolean).join('\r\n') + '\r\n\r\n' + html;
+    const b = 'demo_part';
+    return [...head, `Content-Type: multipart/mixed; boundary="${b}"`].filter(Boolean).join('\r\n') + '\r\n\r\n'
+        + [`--${b}`, 'Content-Type: text/html; charset=utf-8', '', html, `--${b}`, `Content-Type: ${attachment.type}; name="${attachment.name}"`, `Content-Disposition: attachment; filename="${attachment.name}"`,
+            'Content-Transfer-Encoding: base64', '', attachment.base64.replace(/.{76}/g, '$&\r\n'), `--${b}--`, ''].join('\r\n');
 }
 
 // The made-up campaigns: who sent them, to how many people, when (days ago), and the email itself.
@@ -68,6 +74,11 @@ function campaignTemplates() {
         { id: 'invoice', recipients: 4, daysAgo: 16, spread: 0.3, make: (to) => eml({ fromName: 'Accounts Receivable', from: 'billing@harbor-supply-invoices.example', to, dmarc: 'none',
             subject: 'Final notice: outstanding balance $2,450.00',
             html: '<p>Dear Customer,</p><p>Our records show an unpaid balance of $2,450.00.</p><p>Our bank details have changed; please update the account number on file and pay today to avoid collection.</p><p><a href="https://harbor-supply-invoices.example/pay">Pay now</a></p>' }) },
+        // A QR code attached ("quishing", 0.5.34): its link is on a phishing list.
+        { id: 'qr', recipients: 7, daysAgo: 1, spread: 0.2, make: (to) => eml({ fromName: 'Benefits Enrollment', from: 'enroll@benefit-renewal.example', to, dmarc: 'none',
+            subject: 'Open enrollment: scan to keep your benefits',
+            html: '<p>Hello,</p><p>Your benefits will end unless you confirm your enrollment this week.</p><p>Scan the QR code in the attached form with your phone to continue.</p><p>Benefits Office</p>',
+            attachment: { name: 'Benefits_Form.png', type: 'image/png', base64: require('./qr-sample').QR_PNG_BASE64 } }) },
         // A genuine newsletter the AI scored high: moved by mistake, released by IT (a false alarm).
         { id: 'deals', recipients: 3, daysAgo: 3, spread: 0.1, falseAlarm: true, make: (to) => eml({ fromName: 'Gadget Deals', from: 'deals@e.gadgetdeals-shop.example', to, dmarc: 'pass',
             subject: 'Last chance! 90% off ends tonight — claim your reward',
