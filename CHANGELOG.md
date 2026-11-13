@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.18: A reputation check before a newsletter's link is called dangerous
+
+- **A newsletter sent through beehiiv was moved to Spam**: its "Listen on open.spotify.com" link goes
+  through beehiiv's click tracker (link.mail.beehiiv.com/v2/c/…), so "link text shows a well-known
+  brand but goes elsewhere" made it dangerous (5, with "from outside" 6: moved).
+- **Now such a link gets a reputation check first** (`src/engine/network.js`): when it goes through a
+  known marketing mail service's click tracker (`src/engine/mailers.js`: beehiiv, Substack, MailerLite,
+  HubSpot, Mailjet, Campaign Monitor, GetResponse, EmailOctopus, Customer.io, Emma, Benchmark, Zoho
+  Campaigns; the engine's built-in trackers such as Mailchimp and SendGrid were never counted as
+  mismatched), and Cloudflare and the phishing lists checked the service's domain and found nothing (nor
+  Safe Browsing, when on), and its registry date is at least 180 days old (looked up first among the link
+  domains), the link becomes a warning: amber, saying which service and what the lookups found, and 1
+  point for the email (`mailer-link`). The email isn't moved for it alone; other signs still add up.
+- Blocked, on a phishing list, registered recently, not checked (a lookup that didn't answer, or no
+  lookups), or not a known mail service: dangerous, as before.
+- Tests: `test/mailers.test.js` (made-up mail and lookups).
+
+
 ## 0.5.17: Google Classroom from personal accounts is flagged
 
 - **A Google Classroom email (invitation, post, notification) from a personal account** (gmail.com,

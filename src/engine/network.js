@@ -9,11 +9,17 @@
 //   - registry dates: up to LINK_AGE_LOOKUPS unfamiliar link domains, and the sender's domain.
 // A link any of them flags becomes "dangerous" (the extension's dangerous-links weight then counts
 // it); the sender's findings and the site ages become signs of their own. A lookup that fails or
-// is slow leaves things "not checked": nothing here ever makes an email look safer.
+// is slow leaves things "not checked".
+// One exception (0.5.18), the reputation check: a link whose text shows another site (open.spotify.com)
+// but which goes through a known marketing mail service's click tracker (mailers.js: link.mail.beehiiv.com)
+// becomes a warning instead of a danger, when Cloudflare and the phishing lists checked the service's
+// domain and found nothing (nor did Safe Browsing, when on), and its registry date isn't recent. A lookup
+// that didn't answer leaves it dangerous, as before.
 const LINK_AGE_LOOKUPS = 3;
 const YOUNG_SENDER_DAYS = 30, LOOKALIKE_YOUNG_DAYS = 90;
 
 const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } };
+const { mailerOf, mismatchHost, MAILER_MIN_AGE_DAYS } = require('./mailers');
 
 // judged: the links as analyze.judgeLinks made them (mutated: severity and reason of flagged links).
 // Returns { signals: [...], checks: { … } } for the record.
@@ -38,7 +44,10 @@ async function networkChecks(E, intel, facts, judged, ctx) {
         if (!reg || ours(reg) || E.PROTECTED_DOMAINS.has(reg) || E.isPersonalMailDomain(reg)) continue;
         signInOf.set(reg, !!signInOf.get(reg) || E.SIGNIN_INTENT_RE.test(`${j.text || ''} ${j.finalUrl || j.url}`));
     }
-    const ageDomains = [...signInOf.keys()].sort((a, b) => signInOf.get(b) - signInOf.get(a)).slice(0, LINK_AGE_LOOKUPS);
+    // (A mail service's domain behind a "text shows another site" link first: its age is part of its reputation.)
+    const mailerReg = new Set(web.map(j => mismatchHost(j.reason)).filter(h => h && mailerOf(h, E.registrableDomain)).map(h => E.registrableDomain(h)));
+    const rank = (d) => (mailerReg.has(d) ? 2 : 0) + (signInOf.get(d) ? 1 : 0);
+    const ageDomains = [...signInOf.keys()].sort((a, b) => rank(b) - rank(a)).slice(0, LINK_AGE_LOOKUPS);
     const senderReg = senderDomain && !personal && !ours(senderDomain) ? E.registrableDomain(senderDomain) : '';
     const listHit = (u) => intel.feeds.urlHit(u, { exactOnly: ours(hostOf(u)) }).catch(() => null);
 
@@ -62,10 +71,31 @@ async function networkChecks(E, intel, facts, judged, ctx) {
         if (listed) found.push(`listed as phishing by ${listed}`);
         if (found.length) { j.severity = 'danger'; j.reason = found[0]; j.network = true; }
     }
+    // The reputation check (0.5.18): a mismatched link through a known mail service, which the lookups
+    // checked and found nothing against, and whose domain isn't new: a warning (caution), not a danger.
+    const ageOf = new Map(ages.map(a => [a.domain, a.days]));
+    const softened = [];
+    for (const j of web) {
+        if (j.severity !== 'danger' || j.network) continue;
+        const host = mismatchHost(j.reason);
+        const mailer = host && mailerOf(host, E.registrableDomain);
+        if (!mailer) continue;
+        const cf = hostResults.get(host), days = ageOf.get(E.registrableDomain(host));
+        if (!cf || cf.verdict !== 'clean' || !intel.feeds || (typeof days === 'number' && days < MAILER_MIN_AGE_DAYS)) continue;
+        const age = typeof days === 'number' ? `, registered ${days >= 730 ? `${Math.floor(days / 365)} years` : `${days} days`} ago` : '';
+        j.severity = 'caution';
+        j.reason = `${j.reason}, ${mailer}'s click tracker (a marketing mail service: not blocked or listed as phishing${age}); where it leads isn't known until it's clicked`;
+        j.mailer = mailer;
+        softened.push({ mailer, host, text: (/^link text shows (\S+)/.exec(j.reason) || [])[1] || '' });
+    }
     for (const r of hostResults.values()) { if (r.verdict === 'unknown') checks.notChecked++; else if (r.by === 'Cloudflare Security' || r.by === 'Cloudflare') checks.cloudflare++; }
     for (const r of urlResults.values()) { if (r.verdict === 'unknown') checks.notChecked++; else checks.safeBrowsing++; }
 
     const signals = [];
+    if (softened.length) {
+        const s = softened[0], n = softened.length;
+        signals.push({ weight: 1, kind: 'mailer-link', text: `${n === 1 ? `A link shows ${s.text} but goes` : `${n} links show another site but go`} through ${s.mailer}'s click tracker (${s.host}), a marketing mail service with a clean reputation: where ${n === 1 ? 'it leads' : 'they lead'} isn't known until clicked. A warning: it takes other signs to move the email.` });
+    }
     if (senderOnList) signals.push({ weight: 5, kind: 'scam-sender-list', text: `The sender's address is on a list of known scam senders (${senderOnList}).` });
     const sd = hostResults.get(senderDomain);
     if (sd && sd.verdict === 'unsafe') signals.push({ weight: 5, kind: 'sender-domain-blocked', text: `The sender's domain ${senderDomain} is blocked by Cloudflare Security as malware or phishing.` });

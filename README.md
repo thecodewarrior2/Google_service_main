@@ -98,6 +98,15 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | **Phishing lists** (OpenPhish, Phishing Army, Sefinek) | nothing: downloaded once a day, matched in the service | listed links are dangerous; a listed sender address or domain is a sign. Your own domains count only as exact listed links and addresses, never as a whole site or domain |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
 
+**Reputation check before a newsletter's link is called dangerous.** A link whose text shows a well-known
+site but goes somewhere else is dangerous, except when it goes through a known marketing mail service's
+click tracker (`src/engine/mailers.js`: beehiiv, Substack, MailerLite, HubSpot, Mailjet, Campaign
+Monitor…; Mailchimp, SendGrid, Klaviyo and others were never counted) and the lookups vouch for that
+service: Cloudflare and the phishing lists checked its domain and found nothing (nor did Safe Browsing,
+when on), and its registry date isn't recent (180 days or more). Then it is a warning: the link is amber,
+and the email gets 1 point, never enough to move it alone. Blocked, listed, recently registered, or not
+checked (a lookup that didn't answer): dangerous, as before.
+
 A lookup that fails leaves an email "not checked", never "safe". Short links are **not** looked up:
 there is no outside unshortening service. A short link is judged by its own host and by what decodes
 offline.
