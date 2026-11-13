@@ -70,6 +70,9 @@
     const STATE = { moved: ['In Spam', 'moved'], released: ['Moved back', 'released'], inbox: ['In Inbox', 'inbox'] };
     const stateOf = (m) => (m.state === 'released' && m.releasedByUser ? ['Moved back by user', 'released'] : STATE[m.state] || [m.state, '']);
     const pill = ([label, cls]) => h('span', { class: `pill ${cls}`, text: label });
+    // Re-checked after delivery (0.5.35): what happened, and the outcomes that mean phishing had been delivered.
+    const RECHECK_BAD = ['moved', 'would-move', 'held', 'not-in-inbox'];
+    const WHERE = { archived: 'archived by its reader', spam: 'in Spam', trash: 'in the Trash', inbox: 'in the Inbox' };
 
     // The mode, in the header: set when the page loads, and again whenever Overview or Settings is read
     // (the mode can be switched on the dashboard, by this admin or another).
@@ -229,12 +232,22 @@
     }
     // The red alert icon, beside something that needs an admin (a phishing list that missed its download).
     const alertIcon = (label) => h('span', { class: 'alert-icon', role: 'img', 'aria-label': label, title: label, text: '!' });
+    // Phishing found after it was delivered (0.5.35), on the Overview and Messages until an admin marks it seen.
+    function recheckBanner(rc) {
+        if (!rc) return null;
+        const one = rc.emails === 1;
+        return h('div', { class: 'alert critical recheck-alert', role: 'alert' }, alertIcon('Alert'),
+            h('div', { class: 'grow' }, h('b', { text: `${one ? 'An email' : `${num(rc.emails)} emails`} already delivered ${one ? 'was' : 'were'} found to be phishing on a re-check.` }),
+                ` ${num(rc.people)} ${rc.people === 1 ? 'person' : 'people'} got ${one ? 'it' : 'them'}: ${num(rc.moved)} moved to Spam since, ${num(rc.opened)} opened before that`,
+                rc.clicked ? h('b', { text: `, ${num(rc.clicked)} with a link clicked` }) : null, '. The admins were sent an alert. ',
+                h('a', { href: '#/rechecked', text: 'Who got them, and what they did: Email → Re-checked' }), '.'));
+    }
     // A table whose rows open something (mouse or keyboard).
-    function clickTable(cols, rows, open, empty = 'Nothing in this period.') {
+    function clickTable(cols, rows, open, empty = 'Nothing in this period.', rowClass = null) {
         if (!rows.length) return h('div', { class: 'empty', text: empty });
         return h('div', { class: 'table-wrap' }, h('table', {},
             h('thead', {}, h('tr', {}, cols.map(c => h('th', { class: c.num ? 'num' : '', text: c.name })))),
-            h('tbody', {}, rows.map(r => h('tr', { class: 'clickable', tabindex: 0, onclick: () => open(r), onkeydown: (e) => { if (e.key === 'Enter') open(r); } },
+            h('tbody', {}, rows.map(r => h('tr', { class: `clickable ${(rowClass && rowClass(r)) || ''}`.trim(), tabindex: 0, onclick: () => open(r), onkeydown: (e) => { if (e.key === 'Enter') open(r); } },
                 cols.map(c => h('td', { class: `${c.num ? 'num' : ''} ${c.cls || ''}` }, c.get(r))))))));
     }
     // Where the page is: the address bar's #/route, or, in the clickable mockup (which runs inside a frame
@@ -284,6 +297,7 @@
                     ` The checks still use ${one ? 'its' : 'their'} previous copy, and ${one ? 'it is' : 'they are'} tried again every 3 hours; the admins were sent an alert. `,
                     h('a', { href: '#/about?show=lists', text: 'Details, and Re-check, on the About page' }), '.')));
         }
+        if (d.rechecked) out.push(recheckBanner(d.rechecked));
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
@@ -427,6 +441,7 @@
             h('button', { class: 'linkbtn', type: 'button', onclick: () => { selected.clear(); all.checked = false; for (const [, c] of boxes) c.checked = false; changed(); } }, 'Clear'));
         return [h('h1', { text: `Messages ${scope}`.trim() }),
             h('p', { class: 'sub' }, `${num(d.total)} recorded in the last ${days} days. `, (filt.user || filt.campaign) ? h('a', { href: '#/messages', text: 'Show all' }) : null),
+            recheckBanner(d.rechecked),
             bar,
             h('div', { class: 'toolbar' }, search, action, state, h('button', { class: 'btn', type: 'button', onclick: apply }, 'Filter'), csv,
                 MEMORY ? null : h('a', { class: 'btn', href: '#/check' }, 'Check an email'),
@@ -440,9 +455,10 @@
                 { name: 'Subject', cls: 'trunc', get: m => m.subject || '(not stored)' },
                 { name: 'AI', num: true, get: m => (m.ai === null ? '–' : pct(m.ai)) },
                 { name: 'Score', num: true, get: m => (m.score === null || m.score === undefined ? '–' : m.score) },
-                { name: 'Action', get: m => pill(ACTION[m.action] || [m.action, '']) },
+                { name: 'Action', get: m => (m.recheck ? h('span', { class: 'found-later' }, alertIcon(`Found after it was delivered (re-checked ${when(m.recheck.at)})${m.recheck.clicked ? ': a link in it was clicked' : m.recheck.opened ? ': it had been opened' : ''}`), pill(ACTION[m.action] || [m.action, '']), h('span', { class: 'small muted', text: ' found later' }))
+                    : pill(ACTION[m.action] || [m.action, ''])) },
                 { name: 'Now', get: m => pill(stateOf(m)) }
-            ], d.messages, m => go(`#/message?${q({ key: m.key })}`), 'No messages match.'))];
+            ], d.messages, m => go(`#/message?${q({ key: m.key })}`), 'No messages match.', m => (m.recheck && RECHECK_BAD.includes(m.recheck.outcome) ? 'row-alert' : '')))];
     }
 
     async function message(params) {
@@ -501,6 +517,21 @@
             h('div', { text: `With ${r.model || 'no AI model'}: AI ${pctOr(r.ai)} (on arrival ${pctOr(was)}${other}); rules score ${r.score} (on arrival ${arr.score === null || arr.score === undefined ? '–' : arr.score}).` }),
             h('div', { text: `With today's checks and model: ${PASTED[r.action] || r.action}.` }),
             h('div', { class: 'small muted', text: 'The scores, the AI opinion and the signs on this page are the re-scan\'s; what happened to the email stays, and nothing was moved by the re-scan: decide with the buttons. The sender counts as new if it was new on arrival.' }));
+    }
+
+    // Found after it was delivered (0.5.35): why, when, where it was, opened, a link clicked.
+    function recheckBox(m) {
+        const r = m.recheck;
+        if (!r) return null;
+        const c = r.clicks;
+        const why = r.source === 'lists' ? `${r.list || 'A phishing list'} listed ${r.site || 'one of its sites'} after it was delivered` : `A second look ${r.round === 2 ? 'a day' : 'an hour'} after it arrived`;
+        const did = { moved: `It was moved to Spam ${when(r.movedAt || r.at)}.`, 'would-move': 'Monitor mode: it was recorded as "would move" and left in the Inbox.', held: 'A brake left it in the Inbox.',
+            'not-in-inbox': `It had already left the Inbox (${WHERE[r.where] || r.where}), so it wasn't moved.`, flag: 'It is now suspicious, and was left in the Inbox.' }[r.outcome] || '';
+        return h('div', { class: `rescan recheck-box${RECHECK_BAD.includes(r.outcome) ? ' bad' : ''}` },
+            h('b', {}, RECHECK_BAD.includes(r.outcome) ? alertIcon('Found after delivery') : null, ` Found on a re-check, ${when(r.at)}`),
+            h('div', { text: `${why}. ${r.before === 'none' ? 'Nothing was found on arrival' : `On arrival it was ${(ACTION[r.before] || [r.before])[0].toLowerCase()}`}${typeof r.beforeScore === 'number' ? ` (score ${r.beforeScore})` : ''}. ${did}` }),
+            h('div', { text: `Delivered ${when(m.receivedAt)}. Opened before the re-check: ${c && c.opened ? `yes${c.openedAt ? `, ${when(c.openedAt)}` : ''}` : r.opened ? 'yes' : 'no'}. Link clicked: ${c ? (c.clicked ? `YES${c.clickedAt ? `, ${when(c.clickedAt)}` : ''}` : `none found in Gmail's logs (checked ${when(c.checkedAt)})`) : 'not checked (Settings → Link clicks)'}.` }),
+            h('a', { class: 'small', href: '#/rechecked', text: 'Every copy: Email → Re-checked' }));
     }
 
     // The AI's opinion of one email: its score and where that stands against the lines that move or flag
@@ -608,6 +639,7 @@
                         h('div', { class: `decision ${decisionClass}` }, h('b', { text: pasted ? (PASTED[m.action] || m.action) : m.state === 'released' ? (m.releasedByUser ? 'Moved back to the Inbox by the user' : `Moved back to the Inbox by ${m.releasedBy}`) : (ACTION[m.action] || [m.action])[0] }), h('div', { text: m.state === 'released' ? `${when(m.releasedAt)}. It was moved because ${m.why}.` : m.why ? `Because ${m.why}.` : 'No sign of phishing from the checks or the AI.' }),
                             rescueToCheck ? h('div', { text: 'The checks flagged it. Make sure it is safe, or confirm phishing and warn the user.' }) : null),
                         h('div', { class: 'small muted', text: `${verdictText} ${m.markedBy ? `(${m.markedBy})` : ''}`.trim() }),
+                        pasted ? null : recheckBox(m),
                         pasted ? null : rescanBox(m),
                         // (about moving, so not for an email the service didn't move: suspicious, or moved by an admin's decision)
                         m.evidence && !notMoved && !(m.heldMovedBy && !m.trigger) ? h('div', { class: 'small muted', text: m.evidence === 'strong' ? `Strong evidence: the rules flagged it, and ${(m.confirmedBy || []).join('; ')}. Moving its campaign is never paused for it.`
@@ -1301,6 +1333,8 @@
             : 'Off: the AI score alone never moves mail from inside the organization (your domains, Gmail\'s DMARC check passing); the rules still can (a staff account taken over), and a forged inside address is outside mail') },
         { key: 'suspiciousLabel', label: 'Suspicious label', show: (v, d) => (v ? `On: an email that is suspicious but not moved gets the label ${d.suspiciousLabelName || 'SPRUCE/Suspicious'} in its mailbox, so its reader sees it (in monitor mode too). Nothing is moved by it`
             : 'Off: suspicious emails that aren\'t moved stay in the Inbox unmarked; only the dashboard lists them (Email → Review)') },
+        { key: 'recheck', label: 'Re-check delivered mail', show: (v, d) => (v ? `On: when a phishing list adds a site or sender that an email of the last ${num(d.recheckDays || 7)} days has, every copy still in an Inbox is checked again in full and ${d.mode === 'enforce' ? 'moved to Spam' : 'recorded as "would move" (monitor mode)'} if the checks now say so; suspicious mail is also looked at again an hour and a day after it arrived. Email → Re-checked lists what was found`
+            : 'Off: mail is checked once, when it arrives. Nothing is kept to find it again') },
         { key: 'brakePerHour', label: 'Brake (whole domain)', show: (v, d) => (v ? `${num(v)} moves an hour, then moving stops everywhere until an admin resumes` : `Automatic: ${num(d.brakeLimit)} moves an hour now (half the watched mailboxes, at least 100), then moving stops until an admin resumes`) },
         { key: 'timeZone', label: 'Time zone', show: (v) => `${v || 'UTC'}: the dashboard's days (the charts and daily counts), the weekly summary, and the nightly jobs` },
         { key: 'retentionDays', label: 'Records kept', show: (v) => `${num(v)} days: each email's record is deleted ${num(v)} days after it arrived, the oldest first` }
@@ -1314,19 +1348,20 @@
         { key: 'allowDomains', label: 'Domains', show: (v) => entries(v, 'None. Mail from any domain is checked.') },
         { key: 'allowAddresses', label: 'Addresses', show: (v) => entries(v, 'None.') }
     ];
-    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', safeBrowsing: 'SAFE_BROWSING', suspiciousLabel: 'SUSPICIOUS_LABEL', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
+    const ENV_NAME = { mode: 'MODE', aiThreshold: 'AI_MOVE_THRESHOLD', aiSuspicious: 'AI_SUSPICIOUS_THRESHOLD', aiScansInside: 'AI_SCANS_INSIDE', aiMovesInside: 'AI_MOVES_INSIDE', safeBrowsing: 'SAFE_BROWSING', suspiciousLabel: 'SUSPICIOUS_LABEL', recheck: 'RECHECK', brakePerHour: 'BRAKE_PER_HOUR', timeZone: 'TIME_ZONE', allowDomains: 'ALLOW_DOMAINS', allowAddresses: 'ALLOW_ADDRESSES', retentionDays: 'RETENTION_DAYS' };
     function policyCard(d, ROWS, title, sub) {
         const P = d.policy || {};
         let openKey = null;
         pageBusy = () => !!openKey;
         const short = (key, v) => (Array.isArray(v) ? (v.length ? `${num(v.length)} entr${v.length === 1 ? 'y' : 'ies'}` : 'none')
-            : key === 'mode' ? v : key === 'aiScansInside' || key === 'aiMovesInside' ? (v ? 'on' : 'off') : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : key === 'retentionDays' ? `${num(v)} days` : v);
+            : key === 'mode' ? v : key === 'aiScansInside' || key === 'aiMovesInside' || key === 'suspiciousLabel' || key === 'recheck' ? (v ? 'on' : 'off') : key === 'aiThreshold' || key === 'aiSuspicious' ? pct(v) : key === 'brakePerHour' ? (v ? `${num(v)} an hour` : 'automatic') : key === 'retentionDays' ? `${num(v)} days` : v);
         const source = (key) => {
             const p = P[key] || {};
             if (p.changed) return `Changed here by ${p.changed.by}, ${when(p.changed.at)}. settings.env (${ENV_NAME[key]}) says ${short(key, p.env)}.`;
             if (p.replaced) return `From settings.env (${ENV_NAME[key]}). It replaced ${short(key, p.replaced.value)}, set here by ${p.replaced.by}.`;
             // (install.sh doesn't pass these two: off unless changed here, or set in the services' environment)
             if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'suspiciousLabel') return p.env ? `On in the services' environment (${ENV_NAME[key]}).` : `Off: the default (${ENV_NAME[key]}).`;
+            if (key === 'recheck') return p.env ? `On: the default (${ENV_NAME[key]}).` : `Off in the services' environment (${ENV_NAME[key]}=false).`;
             return `From settings.env (${ENV_NAME[key]}).`;
         };
         const rows = ROWS.map(r => {
@@ -1408,6 +1443,12 @@
             const choices = h('div', { class: 'choices' }, radio(false, 'Off: suspicious emails stay in the Inbox as they arrived (the default)'), radio(true, `On: they get the label ${d.suspiciousLabelName || 'SPRUCE/Suspicious'}, which their reader sees`));
             read = () => choices.querySelector('input:checked').value === 'on';
             extra = [choices, h('div', { class: 'small muted', text: 'Only emails that are suspicious but not moved (Email → Review → Suspicious, not moved) get it, in monitor mode too; nothing is moved by it. Marking one a false alarm takes the label off. Turning it off labels no more; the ones labeled keep it.' })];
+        } else if (key === 'recheck') {
+            // (0.5.35) On by default; follows the mode and the brakes like any move.
+            const radio = (v, label) => h('label', { class: 'choice' }, h('input', { type: 'radio', name: 'policy-recheck', value: v ? 'on' : 'off', checked: !!value === v }), h('span', { text: label }));
+            const choices = h('div', { class: 'choices' }, radio(true, 'On: delivered mail is checked again when a list adds one of its sites or senders (the default)'), radio(false, 'Off: mail is checked once, when it arrives'));
+            read = () => choices.querySelector('input:checked').value === 'on';
+            extra = [choices, h('div', { class: 'small muted', text: `Each email left in the Inbox keeps short one-way hashes of its link sites and sender (never readable, never shown) for ${num(d.recheckDays || 7)} days of looking (RECHECK_DAYS). A re-check is a full check, with the mode and the brakes as on arrival; an email its reader already archived or deleted, or one an admin released or marked, is never moved. Turning it off keeps no more hashes.` })];
         } else if (key === 'brakePerHour') {
             const auto = h('input', { type: 'radio', name: 'policy-brake', value: 'auto', checked: !value });
             const fixed = h('input', { type: 'radio', name: 'policy-brake', value: 'fixed', checked: !!value });
@@ -1521,15 +1562,111 @@
         return h('div', { class: 'renew' }, button, status);
     }
 
+    // --- Email → Re-checked (0.5.35) -----------------------------------------------------------------
+    // Emails already delivered and found to be phishing (or suspicious) later: when a phishing list added one
+    // of their sites or senders, or on a second look an hour or a day after they arrived. One card per
+    // campaign, with every copy: who got it, when, whether they had opened it, a link clicked (Link clicks),
+    // and what was done.
+    async function rechecked() {
+        const d = await api(`/api/rechecked?days=${days}`);
+        const cl = d.clickLogs || {};
+        const outcomeOf = (c) => {
+            if (c.released) return ['Moved back to the Inbox', 'released'];
+            if (c.rechecked) return {
+                moved: [`Moved to Spam ${c.movedAt ? when(c.movedAt) : ''}`.trim(), 'moved'], 'would-move': ['Would be moved (monitor mode)', 'would'],
+                held: ['Left in the Inbox (a brake)', 'would'], 'not-in-inbox': [`Had already left the Inbox (${WHERE[c.where] || c.where})`, 'inbox'], flag: ['Suspicious, left in the Inbox', 'flag']
+            }[c.outcome] || [c.outcome, ''];
+            return c.state === 'moved' ? [`Moved to Spam on arrival ${c.movedAt ? when(c.movedAt) : ''}`.trim(), 'moved'] : c.action === 'would-move' ? ['Would move (on arrival)', 'would'] : ['Suspicious on arrival', 'flag'];
+        };
+        const openedOf = (c) => (c.opened === true ? (c.openedAt ? `Yes, ${when(c.openedAt)}` : 'Yes') : c.opened === false ? (c.rechecked ? 'No (when re-checked)' : 'No') : c.rechecked ? '–' : 'Not known (moved on arrival)');
+        const clickedOf = (c) => (c.clicked === true ? h('b', { class: 'bad-text', text: c.clickedAt ? `Yes, ${when(c.clickedAt)}` : 'Yes' })
+            : c.clicksCheckedAt ? `None found (checked ${when(c.clicksCheckedAt)})` : !c.rechecked ? '–' : cl.on ? 'Not checked yet' : h('a', { href: '#/clicks', text: 'Not checked (Link clicks is off)' }));
+        const group = (g) => h('section', { class: `card recheck-group${g.phishing ? ' bad' : ''}` },
+            h('div', { class: 'card-head' },
+                h('div', {}, h('h2', {}, g.phishing ? alertIcon('Phishing found after delivery') : null, ` ${g.subject || g.label || '(subject not stored)'}`),
+                    h('div', { class: 'sub', text: `From ${g.sender && g.sender.name ? `${g.sender.name} <${g.sender.address}>` : (g.sender && g.sender.address) || 'an unknown sender'}` })),
+                h('a', { href: `#/messages?${q({ campaign: g.campaign })}`, text: 'Open the campaign' })),
+            h('p', { class: 'small' }, h('b', { text: `${g.reasons.join('; ')}. ` }), `First delivered ${when(g.firstReceived)}; re-checked ${when(g.lastRecheck)}.`),
+            h('div', { class: 'grid kpis recheck-kpis' },
+                kpi('People', num(g.people), `${num(g.rechecked)} re-checked`),
+                kpi('Moved to Spam', num(g.moved), !g.moved && d.mode !== 'enforce' ? 'monitor mode: nothing moved' : ''),
+                kpi('Opened', num(g.opened), 'before it was moved'),
+                kpi('Link clicked', cl.on ? num(g.clicked) : '–', cl.on ? `Gmail's logs, ${num(g.clicksChecked)} checked` : 'Link clicks is off')),
+            clickTable([
+                { name: 'Recipient', get: c => c.user },
+                { name: 'Delivered', get: c => when(c.receivedAt) },
+                { name: 'Opened', get: c => openedOf(c) },
+                { name: 'Link clicked', get: c => clickedOf(c) },
+                { name: 'Re-checked', get: c => (c.recheckAt ? when(c.recheckAt) : '–') },
+                { name: 'What happened', get: c => pill(outcomeOf(c)) }
+            ], g.copies, c => go(`#/message?${q({ key: c.key })}`), 'No copies.', c => (c.clicked ? 'row-alert' : '')));
+        const seen = d.groups.length ? postButton('/api/rechecked/seen', () => ({}), () => 'Marked as seen: the banners on Overview and Messages are gone until something new is found.') : null;
+        return [h('h1', { text: 'Re-checked mail' }),
+            h('p', { class: 'sub', text: 'Emails already delivered to an Inbox and found later to be phishing or suspicious: when a phishing list added one of their sites or senders, or on a second look an hour and a day after they arrived. Each is checked again in full, and moved as it would have been on arrival.' }),
+            h('section', { class: 'card' }, h('dl', { class: 'kv' },
+                kvRow('Re-checking', d.recheck ? `On (Settings → Policy): emails of the last ${num(d.recheckDays)} days are looked for when a list adds one of their sites or senders.` : 'Off (Settings → Policy): mail is checked once, when it arrives.'),
+                kvRow('Link clicks', h('span', {}, cl.on ? `On: Gmail's logs are read (as ${cl.admin}) for who opened each email and clicked a link in it. ` : 'Off: whether each email had been opened comes from Gmail\'s unread mark when it was re-checked; clicks aren\'t known. ', h('a', { href: '#/clicks', text: 'Settings → Link clicks' }))),
+                d.queued ? kvRow('Waiting', `${num(d.queued)} emails to be checked again at the next hourly run.`) : null,
+                d.seenAt ? kvRow('Last marked seen', when(d.seenAt)) : null),
+                seen ? h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: seen }, 'Mark all as seen')) : null),
+            d.groups.length ? d.groups.map(group) : h('section', { class: 'card' }, h('div', { class: 'empty', text: `Nothing was found after delivery in the last ${days} days.` }))];
+    }
+
+    // --- Settings → Link clicks (0.5.35; optional, off by default) ---------------------------------------
+    async function clicksPage() {
+        const d = await api('/api/clicks');
+        const cl = d.clickLogs || {}, hl = d.health, t = d.test;
+        const admin = h('input', { type: 'email', autocomplete: 'off', spellcheck: 'false', value: cl.admin || d.directoryAdmin || '', placeholder: 'admin@your-district.org', 'aria-label': 'Admin account' });
+        const testOut = h('div', { class: 'small', role: 'status' });
+        const testBtn = h('button', { class: 'btn', type: 'button' }, 'Test');
+        testBtn.addEventListener('click', async () => {
+            testBtn.disabled = true; testOut.textContent = 'Reading the last day of this admin\'s own Gmail log…';
+            try {
+                const o = await api('/api/clicks/test', { method: 'POST', body: { admin: admin.value } });
+                testOut.textContent = !o.ok ? `Google refused: ${o.error}` : !o.events ? 'Google answered, with no events for the last day (no mail read, or this edition has no Gmail logs in the Reports API).'
+                    : o.named ? `Working: ${num(o.events)} events in the last day, ${num(o.named)} naming their email. Clicks can be matched to emails.` : `Google answered with ${num(o.events)} events, but none names its email: clicks can't be matched to emails in this domain.`;
+            } catch (e) { testOut.textContent = `Couldn't test: ${e.message}`; }
+            finally { testBtn.disabled = false; }
+        });
+        const status = !cl.on ? 'Off' : hl && !hl.ok ? `On, but Gmail's logs couldn't be read (${when(hl.at)}): ${hl.error}` : hl ? `On: last read ${when(hl.at)} (${num(hl.checked)} emails).` : 'On: nothing to read yet (no re-checked mail).';
+        const sw = cl.on ? confirmForm('Turn off', '/api/clicks', () => ({ on: false }), () => 'Link clicks is off: Gmail\'s logs are no longer read.')
+            : confirmForm('Turn on', '/api/clicks', () => ({ on: true, admin: admin.value }), () => 'Link clicks is on: Gmail\'s logs are read for the re-checked mail.', h('div', { class: 'small muted', text: 'The admin account above is the one whose rights read the logs.' }));
+        return [h('h1', { text: 'Link clicks' }),
+            h('p', { class: 'sub', text: 'Who opened an email found to be phishing after it was delivered, and who clicked a link in it, from Gmail\'s own logs. Off by default.' }),
+            (cl.on && hl && !hl.ok) ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: 'Link clicks is on, but Gmail\'s logs can\'t be read. ' }), hl.error)) : null,
+            h('section', { class: 'card optional-note' }, h('h2', { text: 'Optional: the service works without it' }),
+                h('div', { class: 'sub', text: 'Re-checking delivered mail doesn\'t need it. Without it, Email → Re-checked still lists who got each email and whether it had been opened (Gmail\'s unread mark when it was re-checked). Turned on, it adds, for each re-checked email:' }),
+                h('ul', { class: 'benefits' },
+                    h('li', {}, h('b', { text: 'A link clicked. ' }), 'Whether each person clicked a link in it (or in an attachment\'s preview), and when: the people whose password may have been given away. A click found is an alert: the admins are emailed.'),
+                    h('li', {}, h('b', { text: 'When it was opened. ' }), 'The time each person first opened it, not only whether it was read.')),
+                h('div', { class: 'small muted', text: 'Gmail\'s logs can take a few hours to show a click: each email is looked at again every 3 hours, 4 times. Nothing is sent outside Google; only the re-checked emails\' own events are kept on their records.' })),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'Status' }), h('dl', { class: 'kv' },
+                kvRow('Link clicks', status),
+                kvRow('Logs read as', cl.admin || 'not set'),
+                t ? kvRow('Last test', t.ok ? `${when(t.at)} by ${t.by}: ${num(t.events)} events, ${num(t.named)} naming their email.` : `${when(t.at)} by ${t.by}: refused (${t.error}).`) : null,
+                cl.by ? kvRow('Changed', `${cl.on ? 'Turned on' : 'Turned off'} by ${cl.by}, ${when(cl.at)}.`) : null),
+                h('div', { class: 'policy-form sb-form' },
+                    h('label', { class: 'project' }, h('span', { text: 'Admin account (Reports privilege)' }), admin),
+                    h('div', { class: 'actions' }, testBtn), testOut,
+                    d.demoProjectId ? h('div', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}; made-up logs are read.` }) : null),
+                h('div', { class: 'actions' }, sw)),
+            h('section', { class: 'card spaced' }, h('h2', { text: 'What it needs' }),
+                h('ol', { class: 'steps' },
+                    h('li', {}, h('b', { text: 'A Google Workspace edition with Gmail logs in the Reports API ' }), '(Gmail log events, not in every edition). To check: Admin console → Reporting → Audit and investigation → Gmail log events; if it is there and shows events, the logs exist. The Test button above says what Google answers.'),
+                    h('li', {}, h('b', { text: 'One more scope on the service\'s domain-wide delegation: ' }), h('code', { text: 'https://www.googleapis.com/auth/admin.reports.audit.readonly' }), '. Admin console → Security → Access and data control → API controls → Manage Domain Wide Delegation → the service\'s client ID → Edit, add it to the line, Authorize (docs/INSTALL.md, "Link clicks").'),
+                    h('li', {}, h('b', { text: 'An admin account with the Reports privilege ' }), '(a super admin has it), typed above: the service reads the logs with its rights. It reads only; nothing is changed.'),
+                    h('li', {}, 'Test, then Turn on (with the project ID). Changes are noted in Status → Activity → What admins did.')))];
+    }
+
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, clicks: clicksPage, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
-        email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['users', 'Users']] },
+        email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['rechecked', 'Re-checked'], ['users', 'Users']] },
         status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] },
-        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['update', 'Update'], ['about', 'About']] }
+        settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['clicks', 'Link clicks'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };
     function placeOf(name) {

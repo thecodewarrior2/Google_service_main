@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.35: Delivered mail is checked again when a list learns of it; Email → Re-checked; optional link clicks
+
+Phishing sites are often put on a list hours after their email arrived. Now delivered mail is checked again:
+
+- **When a phishing list adds a site or sender** (its daily download: what is new since the previous copy),
+  every email of the last 7 days (`RECHECK_DAYS`, 1 to 30) that has it, in every mailbox, is read again from
+  Gmail and checked in full: the same rules, AI, lists and brakes as on arrival. The policy then acts as on
+  arrival: moved to Spam (enforce mode), recorded as "would move" (monitor mode), held by a brake, or
+  recorded as suspicious. To find them, each email left in the Inbox keeps with its "checked" marker
+  (`seen`) up to 24 short one-way hashes of its link sites (each host and the domains above it; the exact
+  address for a page on shared hosting), its sender's address and when it arrived (`src/recheck.js`). No
+  extra write: they go with the marker's own. They can't be read back, are never shown, and only find
+  candidates: the full check decides.
+- **Suspicious mail gets a second look** an hour after it arrived and again a day after: a site too new for
+  the lists or Safe Browsing often is on them by then.
+- **Never moved by a re-check:** an email its reader already archived, deleted or put in Spam (recorded:
+  "it had already left the Inbox"), one an admin released, marked or holds in a paused campaign, one its
+  reader moved into the Inbox themselves.
+- **Who opened it:** Gmail's unread mark when it was re-checked.
+- **Email → Re-checked (new):** one card per email (every copy, re-checked or moved on arrival): why it was
+  re-checked, first delivered and re-checked when, and for each person who got it: delivered, opened, link
+  clicked, what was done (moved to Spam and when, would move, had left the Inbox). **Mark all as seen.**
+- **Alerts:** a red banner on Overview and Messages until an admin marks them seen; in Messages, a red mark
+  and "found later" on each such email; on the email's page, what was found and when. Emailed alerts
+  `recheck` (phishing found after delivery, one per hourly run) and `recheck-click` (a link clicked), and
+  `click-logs` (Gmail's logs couldn't be read), in docs/ALERTS.md.
+- **Settings → Link clicks (new; optional, off by default):** with the scope
+  `https://www.googleapis.com/auth/admin.reports.audit.readonly` added to the domain-wide delegation and an
+  admin with the Reports privilege, the service reads Gmail's log events (Admin SDK Reports API) of each
+  re-checked email's recipient: first opened (event type 7) and a link clicked (15, 16), matched to the email
+  by its Message-ID wherever the event carries it. Looked at right after the re-check and every 3 hours, 4
+  times (Google's logs can lag). **Test** reads the admin's own last day and says whether its events name
+  their emails. Turning it on or off needs the project ID and is noted in Activity.
+- **Settings → Policy → Re-check delivered mail** (on by default, `RECHECK`): turned off, no hashes are kept.
+- The phishing lists' shared copy: an instance loading a newer copy no longer answers from the older one
+  meanwhile (every check waits for the new copy).
+- Nothing new for install.sh: re-checking runs in the hourly job, within its time (the rest at the next
+  run); Link clicks needs only the Admin console steps above (docs/INSTALL.md, "Link clicks").
+- The demo has a made-up re-checked campaign (one person clicked; one had archived it).
+- Tests: `test/recheck.test.js`.
+
 ## 0.5.34: Attachments and QR codes are read
 
 Before, the service saw only attachments' names and types. Now `src/engine/attachments.js` reads them, in

@@ -115,6 +115,16 @@ as Mailchimp's and SendGrid's, still applies.) Then it is a warning: the link is
 and the email gets 1 point, never enough to move it alone. Blocked, listed, recently registered, or not
 checked (a lookup that didn't answer): dangerous, as before.
 
+**Re-checking delivered mail** (0.5.35; Settings → Policy, on by default; `RECHECK`). Phishing sites are
+often put on a list hours after their email arrived. Each email left in the Inbox keeps, with its "checked"
+marker, short one-way hashes of its link sites and sender (never readable, never shown). When a phishing
+list's daily download adds one, every email of the last 7 days (`RECHECK_DAYS`) that has it, in every
+mailbox, is read again and checked in full, and the policy acts as on arrival: moved to Spam (enforce mode,
+through the brakes) or recorded as "would move" (monitor mode). An email found suspicious on arrival is also
+looked at again an hour and a day later (Safe Browsing or a list may know its site by then). Never moved by a
+re-check: an email its reader already archived or deleted, or one an admin released or marked. Each is listed
+on **Email → Re-checked**, a red banner on Overview and Messages says so, and the admins get an alert.
+
 A lookup that fails leaves an email "not checked", never "safe". Short links are **not** looked up:
 there is no outside unshortening service. A short link is judged by its own host and by what decodes
 offline.
@@ -203,7 +213,14 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     (optionally searching every watched mailbox for copies the service didn't record), **False alarm:
     move every copy back**, and **Find other copies**.
   - **Messages:** search and filters (also by Message-ID), opening each email's decision. **Download
-    CSV** gives the same list.
+    CSV** gives the same list. An email found to be phishing after it was delivered has a red mark and
+    "found later".
+  - **Re-checked** (0.5.35): emails already delivered and found later to be phishing or suspicious, one
+    card per email (all its copies): why (which list added which site, or a second look), when it was first
+    delivered and re-checked, and for each person who got it: when it arrived, whether they had opened it,
+    whether they clicked a link in it (with **Settings → Link clicks** on; Gmail's logs), and what was done
+    (moved to Spam and when; would move; it had already left the Inbox). **Mark all as seen** clears the red
+    banner on Overview and Messages until something new is found.
     - Tick several to **move back to the Inbox**, **mark false alarm** or **confirm phishing** them at once
       (in enforce mode, confirming also moves those still in the Inbox to Spam).
     - Each email shows the signs found with their weights, flagged links, the AI score with what weighed
@@ -264,6 +281,12 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
     waits, and the largest campaigns go into each dashboard admin's Inbox. **Preview** and **Send one
     now** are next to it.
   - **Retraining** (off by default): allows **Download for retraining** on Status → Model health.
+  - **Link clicks** (0.5.35; optional, off by default): for each email found to be phishing after it was
+    delivered, Gmail's own logs (Admin SDK Reports API) tell when each person first opened it and whether
+    they clicked a link in it; a click is an alert. It needs Gmail log events in your Workspace edition, the
+    `admin.reports.audit.readonly` scope on the domain-wide delegation, and an admin with the Reports
+    privilege (docs/INSTALL.md, "Link clicks"). **Test** says what Google answers; turning it on or off
+    needs the project ID.
   - **Update:** the version installed, the newest approved one (from `google_service_main`), what's new
     since yours (its changelog), and the whole changelog. **Update to …** works like
     `bash deploy/update.sh`:

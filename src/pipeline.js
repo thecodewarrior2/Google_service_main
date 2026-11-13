@@ -21,6 +21,8 @@ const { buildDigest, mime, isSummary, localParts } = require('./digest');
 const A = require('./dashboard/aggregate');
 const { looksLikeReply } = require('./engine/replychain');
 const training = require('./training');
+const spruce = require('./engine/spruce');
+const { indexOf: recheckIndex, lookFor, eventNames, eventHasMessageId, eventType } = require('./recheck');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -28,6 +30,11 @@ const LIST_RETRY_MS = 3 * HOUR;
 const ERRORS_ALERT = 25;   // errors in an hour that make an alert (0.5.29)
 const GAPS_DAY = 10, GAPS_MAILBOX = 3;   // missed changes that make an alert: in 24 hours, or one mailbox in 7 days (0.5.31)   // a phishing list that missed its download is tried again this often (0.5.22)
 const MAX_TRIES = 3;
+// Re-checking delivered mail (0.5.35): queued emails at most, found per list download at most, checked
+// at once, and the hourly run's time for them.
+const RECHECK_QUEUE_MAX = 3000, RECHECK_FIND_MAX = 3000, RECHECK_PARALLEL = 12, RECHECK_BUDGET_MS = 40 * 1000;
+const RECHECK_RANK = { none: 0, flag: 1, 'would-move': 2, move: 3 };
+const WHERE_WORDS = { archived: 'archived by its reader', spam: 'in Spam', trash: 'in the Trash', inbox: 'in the Inbox' };
 // How long a claim keeps other instances off a message: longer than a request may run (the worker's
 // timeout is 120 s), so only a claim left by an instance that stopped is taken over.
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
@@ -102,6 +109,16 @@ function campaignOf(senderDomain, subject, user) {
     return { key, label: `${senderDomain}: ${s || '(no subject)'}`.slice(0, 160) };
 }
 
+// The new entries of the lists' downloads, taken out of feeds.sync's answer (they don't go into the
+// hourly job's response or the dashboard's): [{ name, kind, entries }].
+function takeAdded(out) {
+    const added = [];
+    for (const f of (out && out.feeds) || []) {
+        if (Array.isArray(f.added)) { if (f.added.length) added.push({ name: f.name, kind: f.kind, entries: f.added }); f.added = f.added.length; }
+    }
+    return added;
+}
+
 // "Watching 3 mailboxes. spruce-pilot@…: 5 entries, 3 people watched; left out: 1 not active, 1 outside
 // your domains (elsewhere.example). 1 couldn't be watched (see the error)."
 function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, renewed = null, left = 0 }) {
@@ -129,7 +146,7 @@ function watchSummary({ ok, failed, stopped, groups, extra, ou, orgDomains, rene
 // by, at }) and applies to every instance within POLICY_REFRESH_MS. It records the settings.env value it
 // replaced (env): when settings.env later has another value for the same setting (changed, then
 // install.sh), that one is newer and applies. The most recent change wins, wherever it was made.
-const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
+const POLICY_KEYS = ['mode', 'aiThreshold', 'aiSuspicious', 'aiScansInside', 'aiMovesInside', 'safeBrowsing', 'suspiciousLabel', 'recheck', 'brakePerHour', 'timeZone', 'allowDomains', 'allowAddresses', 'retentionDays'];
 const LIST_KEYS = ['allowDomains', 'allowAddresses'];
 const MAX_ALLOWED = 500;
 const DOMAIN_RE = /^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -172,11 +189,11 @@ function policyValue(key, v, now = {}) {
         return Number.isFinite(n) && n >= 0.5 && n <= ceiling ? Math.round(n * 1000) / 1000
             : bad(`The AI suspicious line is from 50% to the move threshold (${pc(ceiling)}). To go higher, raise the move threshold first.`);
     }
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel') {
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel' || key === 'recheck') {
         if (v === true || v === false) return v;
         const t = String(v).trim().toLowerCase();
         return ['on', 'true', 'yes', '1'].includes(t) ? true : ['off', 'false', 'no', '0'].includes(t) ? false
-            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.', suspiciousLabel: 'The Suspicious label is on or off.' }[key]);
+            : bad({ aiScansInside: 'Whether the AI reads mail from inside is on or off.', aiMovesInside: 'Whether the AI alone moves mail from inside is on or off.', safeBrowsing: 'Google Safe Browsing is on or off.', suspiciousLabel: 'The Suspicious label is on or off.', recheck: 'Re-checking delivered mail is on or off.' }[key]);
     }
     if (key === 'brakePerHour') { const n = Number(v); return n === 0 || (Number.isInteger(n) && n >= 10 && n <= 100000) ? n : bad('The brake is automatic, or a whole number of moves an hour from 10 to 100,000.'); }
     if (key === 'timeZone') { const z = String(v || '').trim(); return z && validTimeZone(z) ? z : bad('The time zone is an IANA name, for example America/New_York.'); }
@@ -189,7 +206,7 @@ function policyWords(key, v) {
     if (key === 'aiThreshold' || key === 'aiSuspicious') return `${Math.round(Number(v) * 1000) / 10}%`;
     if (key === 'brakePerHour') return Number(v) ? `${Number(v).toLocaleString('en-US')} moves an hour` : 'automatic (half the watched mailboxes, at least 100)';
     if (key === 'retentionDays') return `${Number(v)} days`;
-    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel') return v ? 'on' : 'off';
+    if (key === 'aiScansInside' || key === 'aiMovesInside' || key === 'safeBrowsing' || key === 'suspiciousLabel' || key === 'recheck') return v ? 'on' : 'off';
     return String(v);
 }
 
@@ -432,7 +449,7 @@ class Service {
             } catch (e2) { /* the claim runs out by itself (CLAIM_LEASE_MS) */ }
             throw err;
         }
-        await this.store.markSeen(user, id);
+        await this.store.markSeen(user, id, (out && out.recheckIndex) || {});
         return out;
     }
 
@@ -598,7 +615,7 @@ class Service {
             if (recent && msg.labelIds.includes('INBOX') && !msg.labelIds.some(l => l === 'SENT' || l === 'DRAFT' || l === 'SPAM')) {
                 out = await this.emailSlots.run(() => this.readAndJudge(user, msg, { userPlaced: true }));
             }
-            await this.store.markSeen(user, id);
+            await this.store.markSeen(user, id, (out && out.recheckIndex) || {});
             return out;
         } catch (e) { await this.store.unclaim(user, id).catch(() => {}); throw e; }
     }
@@ -665,7 +682,7 @@ class Service {
         if (userPlaced && (decision.action === 'move' || decision.action === 'would-move')) {
             decision = { action: 'flag', trigger: decision.trigger, why: `${decision.why}; the user moved it into the Inbox themselves (out of Spam or another folder), so it isn't moved` };
         }
-        if (decision.action === 'none') return { user, messageId: msg.id, action: 'none', status: result.status, ai: result.ai && result.ai.probability };
+        if (decision.action === 'none') return this.withIndex({ user, messageId: msg.id, action: 'none', status: result.status, ai: result.ai && result.ai.probability }, msg, facts, result);
         const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
         const campaign = campaignOf(senderDomain, facts.subject, user);
         const campaignLabel = this.cfg.storeSubjects ? campaign.label : senderDomain;
@@ -689,7 +706,37 @@ class Service {
             try { await this.gmail.modify(user, msg.id, [await this.gmail.labelId(user, this.cfg.suspiciousLabelName)], []); labeled = true; }
             catch (e) { this.log.error(`suspicious label ${user} ${msg.id}:`, e); }
         }
-        const rec = {
+        const rec = this.recordOf(user, msg, facts, result, decision, { now, campaign, campaignLabel, senderDomain, held, state, userPlaced, labeled });
+        await this.store.saveRecord(rec);
+        await this.count(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
+        if (decision.action === 'move' && !this.alerted.has(campaign.key)) {
+            // (counted until the campaign's alert is sent; after that this instance writes nothing more)
+            if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now, () => this.alerted.add(campaign.key))) {
+                await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Email → Campaigns page lists who received it.`, { campaign: campaign.key });
+            }
+        }
+        if (userPlaced && result.status === 'flagged') {
+            await this.alert('user-inbox', `${user} moved an email from ${rec.sender.address} into their Inbox (it didn't arrive there), and the checks flag it (score ${rec.score}). Make sure it's safe, or confirm it as phishing and warn them.`, { user, key: rec.key });
+        }
+        return state === 'moved' ? rec : this.withIndex(rec, msg, facts, result);
+    }
+
+    // An email left in the Inbox keeps a few hashes with its "checked" marker, to be found again when a
+    // phishing list later adds its link site or its sender (src/recheck.js; RECHECK, on by default).
+    // They go with the marker's own write (processMessage): no write of their own. Not enumerable, so the
+    // object returned stays what it was.
+    withIndex(out, msg, facts, result) {
+        if (!this.cfg.recheck) return out;
+        try {
+            const ix = recheckIndex(spruce.load(), { urls: result.linkUrls || [], sender: facts.senderAddress, orgDomains: this.cfg.orgDomains });
+            if (ix.length) Object.defineProperty(out, 'recheckIndex', { value: { ix, rx: Number(msg.internalDate) || this.now() }, enumerable: false });
+        } catch (e) { this.log.error('re-check index:', e); }
+        return out;
+    }
+
+    // An email's record (judge, and recheckMessage since 0.5.35): what the dashboard shows and keeps.
+    recordOf(user, msg, facts, result, decision, { now, campaign, campaignLabel, senderDomain, held = null, state, userPlaced = false, labeled = false }) {
+        return {
             key: recordKey(user, msg.id), user, messageId: msg.id, threadId: msg.threadId || '',
             // The message's history id when it was read: an Inbox label added after it is the user's.
             readHistoryId: msg.historyId ? String(msg.historyId) : null,
@@ -712,18 +759,6 @@ class Service {
             state, releasedBy: null, releasedAt: null, falseAlarm: null, markedBy: null,
             suspiciousLabel: labeled || undefined
         };
-        await this.store.saveRecord(rec);
-        await this.count(day, decision.action === 'move' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
-        if (decision.action === 'move' && !this.alerted.has(campaign.key)) {
-            // (counted until the campaign's alert is sent; after that this instance writes nothing more)
-            if (await this.store.campaignMoved(campaign.key, this.cfg.campaignAlertAfter, now, () => this.alerted.add(campaign.key))) {
-                await this.alert('campaign', `A large campaign: ${this.cfg.campaignAlertAfter} copies of "${campaignLabel}" moved to Spam so far (${rec.evidence} evidence). The dashboard's Email → Campaigns page lists who received it.`, { campaign: campaign.key });
-            }
-        }
-        if (userPlaced && result.status === 'flagged') {
-            await this.alert('user-inbox', `${user} moved an email from ${rec.sender.address} into their Inbox (it didn't arrive there), and the checks flag it (score ${rec.score}). Make sure it's safe, or confirm it as phishing and warn them.`, { user, key: rec.key });
-        }
-        return rec;
     }
 
     // The brakes, for a move about to be made (enforce mode). In order:
@@ -1130,7 +1165,21 @@ class Service {
                 out = Object.assign({ health, retry: true }, await this.intel.feeds.sync({ retryFailed: true }));
             } else out = { health, skipped: 'checked within the day' };
             if (out.feeds) { try { await this.listsAlert(out.feeds); } catch (e) { this.log.error('phishing lists, alert:', e); } }
+            // What the downloads added: delivered mail that has it is checked again (0.5.35).
+            const added = takeAdded(out);
+            if (added.length) { try { out.recheck = await this.recheckFromLists(added); } catch (e) { out.recheck = { error: String(e.message || e).slice(0, 200) }; this.log.error('re-check, finding the emails:', e); } }
         }
+        // Re-checks (0.5.35): suspicious mail an hour and a day old is queued; the queue is checked within the
+        // request's time (the rest at the next run); then Gmail's logs for the re-checked (Link clicks).
+        try {
+            await this.queueLaterChecks();
+            const budget = Math.min(RECHECK_BUDGET_MS, 75 * 1000 - (Date.now() - started));
+            if (budget > 0) { const r = await this.runRechecks({ budgetMs: budget }); if (r) out.rechecked = r; }
+        } catch (e) { out.rechecked = { error: String(e.message || e).slice(0, 200) }; this.log.error('re-check:', e); }
+        try {
+            const budget = Math.min(15 * 1000, 90 * 1000 - (Date.now() - started));
+            if (budget > 0) { const c = await this.followClicks({ budgetMs: budget }); if (c) out.clicks = c; }
+        } catch (e) { this.log.error('link clicks:', e); }
         // An update from Settings → Update that failed, or stopped (0.5.28): the build records it in Activity;
         // the admins are emailed here, once (the build itself can't send the email).
         try { await this.updateProblems(); } catch (e) { this.log.error('the last update\'s outcome:', e); }
@@ -1139,7 +1188,7 @@ class Service {
             try { const m = await require('./update').checkManualInstall({ cfg: this.cfg, store: this.store, releases: this.releases, cloudrun: this.cloudrun || null, alert: (t) => this.alert('update-manual', t) }); if (m) out.manualInstall = m.manual.version; }
             catch (e) { /* GitHub not reachable: the page says so */ }
         }
-        const budgetMs = Math.min(30 * 1000, 90 * 1000 - (Date.now() - started));
+        const budgetMs = Math.min(30 * 1000, 105 * 1000 - (Date.now() - started));
         if (budgetMs > 0) { try { out.purged = await this.purge({ budgetMs }); } catch (e) { out.purged = { error: String(e.message || e).slice(0, 200) }; } }
         return out;
     }
@@ -1177,9 +1226,259 @@ class Service {
     async recheckLists(by) {
         if (!this.intel || !this.intel.feeds) return { error: 'The phishing lists are off (PHISHING_LISTS=off).', status: 400 };
         const out = await this.intel.feeds.sync({ retryFailed: true });
+        // What the downloads added: delivered mail that has it is checked again (0.5.35), some now, the rest
+        // at the next hourly run.
+        const added = takeAdded(out);
+        if (added.length) {
+            try { if (await this.recheckFromLists(added)) await this.runRechecks({ budgetMs: 20 * 1000 }); }
+            catch (e) { this.log.error('re-check:', e); }
+        }
         const got = out.feeds.filter(r => r.count != null), failed = out.feeds.filter(r => r.error);
         await this.store.addEvent({ kind: 'lists', admin: true, text: `${by} re-checked the phishing lists: ${got.length ? `${got.map(r => r.name).join(', ')} downloaded` : 'none needed a download'}${failed.length ? `; ${failed.map(r => r.name).join(', ')} still missed ${failed.length === 1 ? 'its' : 'their'} download` : ''}.` });
         return { feeds: out.feeds, recovered: out.recovered || [], lists: await this.intel.feeds.status() };
+    }
+
+    // --- Re-checking delivered mail (0.5.35) ----------------------------------------------------------
+    // Delivered mail is checked again, in full (the same rules, AI, lists and brakes as on arrival), when
+    //   - a phishing list's daily download adds a site or a sender that an email of the last RECHECK_DAYS
+    //     days has (found by its hashes, src/recheck.js), in every mailbox that got a copy;
+    //   - an email found suspicious on arrival (not moved) is an hour old, and again when a day old: a
+    //     site too new to be on a list or blocked by Safe Browsing often is by then.
+    // What the check says now is done as on arrival: moved to Spam (enforce mode, through the brakes),
+    // recorded as "would move" (monitor mode), or recorded as suspicious. Never moved: an email no longer
+    // in the Inbox (its reader archived, deleted or reported it), one an admin released or marked, one its
+    // reader put in the Inbox themselves. Each is on the dashboard (Email → Re-checked) with who got it,
+    // whether they had opened it and, with Settings → Link clicks on, what Gmail's logs say they did; the
+    // admins are alerted.
+    async queueRechecks(items) {
+        if (!items || !items.length) return 0;
+        const q = (await this.store.getState('recheckQueue')) || [];
+        const have = new Set(q.map(x => `${x.user}|${x.id}`));
+        let n = 0;
+        for (const it of items) {
+            const k = `${it.user}|${it.id}`;
+            if (have.has(k) || q.length >= RECHECK_QUEUE_MAX) continue;
+            have.add(k); q.push(Object.assign({ queuedAt: this.now() }, it)); n++;
+        }
+        if (n) await this.store.setState('recheckQueue', q);
+        return n;
+    }
+    // The new entries of the lists' downloads ([{ name, kind, entries }]): the delivered emails that have
+    // one, queued.
+    async recheckFromLists(added) {
+        if (!this.cfg.recheck) return null;
+        const lists = (added || []).filter(a => a && a.entries && a.entries.length);
+        if (!lists.length) return null;
+        const want = lookFor(spruce.load(), lists);
+        if (!want.size) return null;
+        const hits = await this.store.findIndexed([...want.keys()], this.now() - this.cfg.recheckDays * DAY, RECHECK_FIND_MAX);
+        const items = hits.map(h => {
+            const w = (h.ix || []).map(x => want.get(x)).find(Boolean) || {};
+            return { user: h.user, id: h.id, receivedAt: h.receivedAt || null, source: 'lists', site: String(w.site || '').slice(0, 200), list: w.list || '' };
+        });
+        return { entries: want.size, found: hits.length, queued: await this.queueRechecks(items) };
+    }
+    // Suspicious mail (recorded, not moved) an hour old, and again a day old: queued.
+    async queueLaterChecks() {
+        if (!this.cfg.recheck) return 0;
+        const now = this.now();
+        const recs = await this.store.listRecords({ sinceMs: now - 50 * HOUR, untilMs: now - HOUR, limit: 3000 });
+        const due = recs.filter(r => r.action === 'flag' && r.state === 'inbox' && r.falseAlarm == null && !r.userPlaced && !r.recheck
+            && ((r.laterChecks || 0) === 0 || ((r.laterChecks || 0) === 1 && now - r.processedAt >= DAY)));
+        return this.queueRechecks(due.slice(0, 1000).map(r => ({ user: r.user, id: r.messageId, receivedAt: r.receivedAt || null, source: 'later', round: (r.laterChecks || 0) + 1 })));
+    }
+    // The queue, RECHECK_PARALLEL at a time, until budgetMs is spent (the rest at the next hourly run).
+    // An email whose check fails is tried again (3 tries in all).
+    async runRechecks({ budgetMs = RECHECK_BUDGET_MS } = {}) {
+        const started = Date.now();
+        const queue = (await this.store.getState('recheckQueue')) || [];
+        if (!queue.length) return null;
+        const results = [], retry = [];
+        while (queue.length && Date.now() - started < budgetMs) {
+            const batch = queue.splice(0, RECHECK_PARALLEL);
+            const outs = await Promise.all(batch.map(it => this.emailSlots.run(() => this.recheckMessage(it)).catch(e => {
+                this.log.error(`re-check ${it.user} ${it.id}:`, e);
+                if ((it.tries || 1) < 3) retry.push(Object.assign({}, it, { tries: (it.tries || 1) + 1 }));
+                return { item: it, outcome: 'error', error: String((e && e.message) || e).slice(0, 200) };
+            })));
+            results.push(...outs);
+        }
+        await this.store.setState('recheckQueue', queue.concat(retry).slice(0, RECHECK_QUEUE_MAX));
+        await this.recheckReport(results);
+        const count = (o) => results.filter(r => r.outcome === o).length;
+        return { checked: results.length, left: queue.length + retry.length, moved: count('moved'), wouldMove: count('would-move') + count('held'), notInInbox: count('not-in-inbox'), suspicious: count('flag') };
+    }
+
+    // One email checked again (item: { user, id, source: 'lists'|'later', site, list, round }).
+    async recheckMessage(item) {
+        const { user, id } = item;
+        const key = recordKey(user, id), now = this.now();
+        const before = await this.store.getRecord(key);
+        // A decision already made stands: moved or released, an admin's mark, the reader's own choice, a
+        // re-check that already moved it or would.
+        // (A copy held by a brake waits for the admins' decision on its campaign: Email → Campaigns.)
+        if (before && (before.state !== 'inbox' || before.falseAlarm != null || before.userPlaced || before.held || (before.recheck && before.recheck.outcome !== 'flag'))) return { item, outcome: 'skipped' };
+        let msg;
+        try { msg = await this.gmail.raw(user, id); }
+        catch (e) { if (e instanceof GoogleApiError && e.status === 404) return { item, outcome: 'gone' }; throw e; }
+        if (!msg || !msg.raw || !msg.raw.length || isSummary(msg.raw)) return { item, outcome: 'gone' };
+        const labels = msg.labelIds || [];
+        const where = labels.includes('INBOX') ? 'inbox' : labels.includes('SPAM') ? 'spam' : labels.includes('TRASH') ? 'trash' : 'archived';
+        // Opened: Gmail's UNREAD label is gone (its reader opened it, or marked it read).
+        const opened = !labels.includes('UNREAD');
+        const facts = await readMessage(msg.raw);
+        const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
+        // A new sender on arrival stays one (as for an admin's re-scan); unknown for mail not recorded then.
+        const firstTime = before ? (before.arrival ? !!before.arrival.firstTime : (before.signals || []).some(x => x && x.kind === 'first-time')) : false;
+        const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel,
+            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), aiInside: this.aiReadsInside(), threadSize: await this.threadSizeOf(user, msg.threadId, facts) });
+        result.allowlistedUnverified = allowlisted && !verified;
+        let decision = decide(result, this.cfg, { brake: await this.brakeOn() });
+        const was = before ? before.action : 'none';
+        if ((RECHECK_RANK[decision.action] || 0) <= (RECHECK_RANK[was] || 0)) {
+            if (before && item.source === 'later') await this.store.updateRecord(key, { laterChecks: (before.laterChecks || 0) + 1, laterCheckAt: now });
+            return { item, outcome: 'unchanged', action: decision.action };
+        }
+        const senderDomain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
+        const campaign = campaignOf(senderDomain, facts.subject, user);
+        const campaignLabel = this.cfg.storeSubjects ? campaign.label : senderDomain;
+        let held = decision.braked ? 'brake' : null;
+        if ((decision.action === 'move' || decision.action === 'would-move') && where !== 'inbox') {
+            decision = { action: 'flag', trigger: decision.trigger, why: `${decision.why}; it had already left the Inbox (${WHERE_WORDS[where]}), so it wasn't moved` };
+            held = null;
+        } else if (decision.action === 'move') ({ decision, held } = await this.brakes(decision, result, campaign.key, campaignLabel, now));
+        let state = 'inbox';
+        if (decision.action === 'move') {
+            await this.gmail.modify(user, id, ['SPAM', await this.gmail.labelId(user, this.cfg.movedLabel)], ['INBOX']);
+            state = 'moved';
+        } else if (decision.action === 'would-move' && this.cfg.monitorLabel) {
+            try { await this.gmail.modify(user, id, [await this.gmail.labelId(user, this.cfg.monitorLabel)], []); } catch (e) { this.log.error(`monitor label ${user} ${id}:`, e); }
+        }
+        let labeled = !!(before && before.suspiciousLabel);
+        if (decision.action === 'flag' && this.cfg.suspiciousLabel && !labeled && where === 'inbox') {
+            try { await this.gmail.modify(user, id, [await this.gmail.labelId(user, this.cfg.suspiciousLabelName)], []); labeled = true; }
+            catch (e) { this.log.error(`suspicious label ${user} ${id}:`, e); }
+        }
+        const found = item.source === 'lists' ? `${item.list || 'a phishing list'} listed ${item.site || 'one of its sites'} after it was delivered` : `checked again ${item.round === 2 ? 'a day' : 'an hour'} after it arrived`;
+        decision = Object.assign({}, decision, { why: `found on a re-check (${found}): ${decision.why}` });
+        const outcome = state === 'moved' ? 'moved' : decision.action === 'would-move' ? (held ? 'held' : 'would-move') : where !== 'inbox' ? 'not-in-inbox' : 'flag';
+        const recheck = { at: now, source: item.source, site: item.site || null, list: item.list || null, round: item.round || null,
+            before: was, beforeScore: before ? before.score : null, outcome, where, opened, movedAt: state === 'moved' ? now : null, clicks: null };
+        const rec = this.recordOf(user, msg, facts, result, decision, { now, campaign, campaignLabel, senderDomain, held, state, labeled });
+        rec.recheck = recheck;
+        if (item.source === 'later') rec.laterChecks = ((before && before.laterChecks) || 0) + 1;
+        if (before) {
+            const keep = new Set(['key', 'user', 'messageId', 'threadId', 'readHistoryId', 'processedAt', 'releasedBy', 'releasedAt', 'falseAlarm', 'markedBy', 'userPlaced']);
+            const patch = Object.fromEntries(Object.entries(rec).filter(([k, v]) => !keep.has(k) && v !== undefined));
+            patch.arrival = before.arrival || { at: before.processedAt, score: before.score, status: before.status, action: before.action, firstTime,
+                ai: before.ai && typeof before.ai.probability === 'number' ? { probability: before.ai.probability, model: before.ai.model || null } : null };
+            await this.store.updateRecord(key, patch);
+        } else {
+            // Clean on arrival (nothing was recorded then): recorded now.
+            rec.arrival = { at: rec.receivedAt, action: 'none' };
+            await this.store.saveRecord(rec);
+        }
+        await this.count(this.dayOf(now), state === 'moved' ? 'moved' : decision.action === 'would-move' ? 'wouldMove' : 'flagged');
+        return { item, outcome, key, user, opened, where, sender: rec.sender.address, campaign: campaign.key, campaignLabel, site: item.site || '', list: item.list || '' };
+    }
+
+    // The admins are told what a run found: an alert (emailed) when phishing had been delivered, in Activity
+    // only when an email is now just suspicious.
+    async recheckReport(results) {
+        const bad = results.filter(r => ['moved', 'would-move', 'held', 'not-in-inbox'].includes(r.outcome));
+        const sus = results.filter(r => r.outcome === 'flag');
+        if (bad.length) {
+            const n = (o) => bad.filter(r => r.outcome === o).length;
+            const camps = [...new Set(bad.map(r => r.campaignLabel))];
+            const why = [...new Set(bad.filter(r => r.list).map(r => `${r.list} listed ${r.site}`))].slice(0, 3);
+            const parts = [n('moved') ? `${n('moved')} moved to Spam` : '', n('would-move') ? `${n('would-move')} would be moved (monitor mode: left in the Inbox)` : '',
+                n('held') ? `${n('held')} left in the Inbox by a brake` : '', n('not-in-inbox') ? `${n('not-in-inbox')} had already left the Inbox` : ''].filter(Boolean);
+            const opened = bad.filter(r => r.opened).length;
+            await this.alert('recheck', `Re-checked mail: ${bad.length} ${bad.length === 1 ? 'email' : 'emails'} delivered earlier ${bad.length === 1 ? 'is' : 'are'} now found to be phishing`
+                + `${why.length ? ` (${why.join('; ')})` : ''}, from ${camps.slice(0, 3).map(c => `"${c}"`).join(', ')}${camps.length > 3 ? ` and ${camps.length - 3} more` : ''}: ${parts.join(', ')}. `
+                + `${opened ? `${opened} had been opened. ` : 'None had been opened. '}Who got them, when, and what Gmail's logs say they did: dashboard, Email → Re-checked. More: docs/ALERTS.md, "Re-checked mail".`,
+                { rechecked: bad.length });
+        }
+        if (sus.length) await this.store.addEvent({ kind: 'recheck', text: `Re-checked mail: ${sus.length} ${sus.length === 1 ? 'email' : 'emails'} delivered earlier ${sus.length === 1 ? 'is' : 'are'} now found suspicious and left in the Inbox (${[...new Set(sus.map(r => r.campaignLabel))].slice(0, 3).join(', ')}). Email → Re-checked lists them.` });
+    }
+
+    // Settings → Link clicks (0.5.35; off by default): Gmail's logs (Admin SDK Reports API) read as an admin
+    // with the Reports privilege, for each re-checked email: when its reader first opened it, and whether
+    // they clicked a link in it.
+    async clickLogs() { return Object.assign({ on: false, admin: '' }, await this.store.getState('clickLogs')); }
+    async clicksOf(rec, admin) {
+        const now = this.now();
+        const from = (Number(rec.receivedAt) || now - this.cfg.recheckDays * DAY) - 5 * 60 * 1000;
+        const out = { checkedAt: now, checks: ((rec.recheck && rec.recheck.clicks && rec.recheck.clicks.checks) || 0) + 1, clicked: false, clickedAt: null, opened: false, openedAt: null, named: false };
+        for (const type of [15, 16, 7]) {
+            const evs = await this.gmail.gmailEvents(admin, rec.user, { startTime: from, endTime: now, filters: `event_info.mail_event_type==${type}`, max: 2000 });
+            for (const ev of evs) {
+                if (!eventNames(ev, rec.rfc822MessageId)) continue;
+                out.named = true;
+                const at = Date.parse(ev.id && ev.id.time) || null;
+                const t = eventType(ev) || type;
+                if (t === 15 || t === 16) { out.clicked = true; if (at && (!out.clickedAt || at < out.clickedAt)) out.clickedAt = at; }
+                if (t === 7) { out.opened = true; if (at && (!out.openedAt || at < out.openedAt)) out.openedAt = at; }
+            }
+        }
+        return out;
+    }
+    // Gmail's logs for re-checked emails: right after the re-check, then again (Google's logs can take
+    // hours) every 3 hours, 4 times in all, within RECHECK_DAYS. A click found is an alert.
+    async followClicks({ budgetMs = 15000, max = 100 } = {}) {
+        const cl = await this.clickLogs();
+        if (!cl.on || !cl.admin) return null;
+        const started = Date.now(), now = this.now();
+        const recs = (await this.store.listRecords({ sinceMs: now - (this.cfg.recheckDays + 2) * DAY, limit: 5000 }))
+            .filter(r => r.recheck && r.rfc822MessageId && now - r.recheck.at < 3 * DAY && ['moved', 'would-move', 'held', 'not-in-inbox', 'flag'].includes(r.recheck.outcome))
+            .filter(r => !r.recheck.clicks || (!r.recheck.clicks.clicked && (r.recheck.clicks.checks || 0) < 4 && now - r.recheck.clicks.checkedAt >= 3 * HOUR));
+        const clicked = [];
+        let checked = 0, failed = null;
+        for (const r of recs.slice(0, max)) {
+            if (Date.now() - started > budgetMs) break;
+            try {
+                const c = await this.clicksOf(r, cl.admin);
+                checked++;
+                await this.store.updateRecord(r.key, { recheck: Object.assign({}, r.recheck, { clicks: c }) });
+                if (c.clicked) clicked.push(Object.assign({}, r, { clickedAt: c.clickedAt }));
+            } catch (e) { failed = String((e && e.message) || e).slice(0, 300); break; }
+        }
+        await this.store.setState('clickLogsHealth', { at: now, ok: !failed, error: failed, checked });
+        if (failed) await this.alertDaily('click-logs', `Gmail's logs couldn't be read for re-checked mail (Settings → Link clicks, as ${cl.admin}): ${failed}. Usually the admin.reports.audit.readonly scope is missing from the domain-wide delegation, or the admin lacks the Reports privilege. More: docs/ALERTS.md, "Gmail's logs couldn't be read".`);
+        if (clicked.length) {
+            const who = clicked.slice(0, 5).map(r => `${r.user} (an email from ${r.sender.address}${r.clickedAt ? `, at ${new Date(r.clickedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''})`);
+            await this.alert('recheck-click', `A link was clicked in mail later found to be phishing: ${who.join('; ')}${clicked.length > 5 ? ` and ${clicked.length - 5} more` : ''}. Their password may have been given away: consider resetting it, ending their sessions and checking their sign-ins (Admin console). Dashboard: Email → Re-checked. More: docs/ALERTS.md, "A link was clicked".`, { clicked: clicked.length });
+        }
+        return { checked, clicked: clicked.length, error: failed };
+    }
+    // Settings → Link clicks: on (with the admin to read the logs as) or off; Test reads the admin's own
+    // mailbox's log for the last day, and says whether its events name the emails they are about.
+    async setClickLogs(on, admin, by) {
+        const was = await this.clickLogs();
+        const a = String(admin || was.admin || '').trim().toLowerCase();
+        if (on && !/^[^\s@]+@[^\s@]+$/.test(a)) return { error: 'Type the address of the admin whose rights read Gmail\'s logs.', status: 400 };
+        if (on && !this.cfg.orgDomains.includes(a.split('@')[1])) return { error: `${a} isn't in your organization's domains (${this.cfg.orgDomains.join(', ')}).`, status: 400 };
+        const v = { on: !!on, admin: on ? a : was.admin || '', by, at: this.now() };
+        await this.store.setState('clickLogs', v);
+        await this.adminNotice('settings', `${by} turned ${on ? `on Link clicks (Gmail's logs read as ${a})` : 'off Link clicks'}.`);
+        return { clickLogs: v };
+    }
+    async testClickLogs(admin, by) {
+        const cl = await this.clickLogs();
+        const a = String(admin || cl.admin || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+$/.test(a)) return { error: 'Type the admin\'s address first.', status: 400 };
+        const now = this.now();
+        let evs;
+        try { evs = await this.gmail.gmailEvents(a, a, { startTime: now - DAY, endTime: now, max: 200 }); }
+        catch (e) {
+            const error = String((e && e.message) || e).slice(0, 300);
+            await this.store.setState('clickLogsTest', { at: now, by, admin: a, ok: false, error });
+            return { ok: false, error };
+        }
+        const named = evs.filter(eventHasMessageId).length;
+        const t = { at: now, by, admin: a, ok: true, events: evs.length, named };
+        await this.store.setState('clickLogsTest', t);
+        return t;
     }
 
     // --- The weekly summary email (dashboard Settings; off by default) --------------------------------

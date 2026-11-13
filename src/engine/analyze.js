@@ -170,6 +170,8 @@ async function analyze(facts, ctx = {}) {
         signals: signals.map(s => ({ weight: s.weight, kind: s.kind || null, text: s.text })),
         links: judged.filter(j => j.severity).slice(0, 20).map(j => ({ url: j.url.slice(0, 300), finalUrl: String(j.finalUrl || '').slice(0, 300), severity: j.severity, reason: j.reason, from: j.from || undefined })),
         linkCount: judged.length,
+        // Every link's address and where it leads (in memory only): the re-check index (src/recheck.js).
+        linkUrls: [...new Set(judged.flatMap(j => [j.url, j.finalUrl]).filter(Boolean))].slice(0, 80),
         // What the attachment checks found (0.5.34): file names and what was in them (a host, a sign), no content.
         attachmentFindings: att.found, attachmentsSkipped: att.skipped || 0,
         checks: net.checks,

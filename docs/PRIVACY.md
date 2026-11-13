@@ -60,7 +60,23 @@ email is checked (QR codes, links, forms and scripts in them; 0.5.34) and droppe
 anywhere except the sites their links point to, which are looked up like the email's own links.
 
 For every other email it keeps only a daily count (emails checked) and the message ID, so it doesn't
-judge the same email twice.
+judge the same email twice. With **re-checking delivered mail** on (Settings → Policy, on by default; 0.5.35),
+an email left in the Inbox also keeps, beside its message ID, up to 24 short **one-way hashes** (16 hex
+characters each): of its link sites (each host and the domains above it, never your own domains or the big
+brands' sites that lists never have), of the exact address of a link on shared hosting (a cloud-storage
+page), and of its sender's address; and the time it arrived. They can't be turned back into the sites or
+the address: they only let the service find the email again when a phishing list later adds one of them,
+in every mailbox that got it. They are never shown. Turned off (`RECHECK=false`, or the dashboard), none are
+kept; they are deleted with the message ID.
+
+**Re-checked mail** (0.5.35): an email found to be phishing after it was delivered (a list added one of its
+sites or its sender, or a second look an hour or a day after it arrived) is read again from Gmail and
+checked in full, as on arrival, and gets a record like any flagged email, with when it was re-checked,
+whether it was still in the Inbox, and whether it had been opened (Gmail's unread mark then). With
+**Settings → Link clicks** on (off by default), the service also reads, for each re-checked email, Gmail's
+own log events (Admin SDK Reports API, as the admin typed there) of its recipient for the time since it
+arrived: opened (first time) and link clicked. Only the events naming that email are used; its record keeps
+whether and when it was first opened and a link clicked, nothing else from the logs.
 
 It also keeps, shared by every instance:
 - **the phishing lists:** gzipped in Firestore, replaced daily, with each list's last download (when, and the error if it failed: `state/feedHealth`);
@@ -172,7 +188,7 @@ references; the training and its examples are in a private repository, and examp
 never committed anywhere.
 
 The service's other network calls are to Google's own APIs (Gmail, Admin SDK, Firestore, Pub/Sub, IAM,
-Cloud Scheduler, Cloud Build).
+Cloud Scheduler, Cloud Build; with Settings → Link clicks on, the Admin SDK's Reports API for Gmail's logs).
 
 ## What users notice
 

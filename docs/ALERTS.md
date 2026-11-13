@@ -142,6 +142,17 @@ Mail is still checked; one source of evidence is missing until it comes back.
 - **What it means for mail:** links aren't looked up with Google until it works again.
 - **What to do:** Settings → Safe Browsing shows what Google said, and lets you save a new key.
 
+### Gmail's logs couldn't be read (`click-logs`)
+- **When:** Settings → Link clicks is on (off by default), and Google refused the service's request for
+  Gmail's logs about re-checked mail.
+- **What it means for mail:** nothing for the checks. Email → Re-checked can't say who clicked a link in
+  mail found to be phishing after delivery; it still says who got it and whether it was opened.
+- **Usually:** the scope `https://www.googleapis.com/auth/admin.reports.audit.readonly` isn't on the
+  service's domain-wide delegation entry, the admin typed on Settings → Link clicks lost the Reports
+  privilege, or the Workspace edition has no Gmail logs in the Reports API.
+- **What to do:** Settings → Link clicks → Test says what Google answered. docs/INSTALL.md, "Link clicks".
+  Emailed at most once a day.
+
 ## Phishing that needs a decision
 
 ### Moving is paused: the brake (`brake`)
@@ -164,6 +175,30 @@ Mail is still checked; one source of evidence is missing until it comes back.
 - **When:** the same outside account sent a document share or signature request to 10 or more of your
   people within an hour (the usual sign of an account taken over elsewhere).
 - **What to do:** if it's phishing, Email → Campaigns → open it → **Confirm phishing** moves every copy.
+
+### Re-checked mail (`recheck`)
+- **When:** an email already delivered to an Inbox is found to be phishing on a re-check: a phishing list
+  added one of its link sites or its sender after it arrived, or a second look an hour or a day after it
+  arrived found more (a site Safe Browsing or a list has by then). One alert per hourly run, for every email
+  found in it.
+- **What it means for mail:** people had the email in their Inbox for a while. The re-check did what a
+  check on arrival would have: moved each copy still in an Inbox to Spam (enforce mode, through the
+  brakes), or recorded it as "would move" (monitor mode). A copy its reader had already archived or
+  deleted is left where it is.
+- **What to do:** dashboard, **Email → Re-checked**: every copy, who got it, when it was delivered,
+  whether it had been opened, and (Settings → Link clicks on) whether a link in it was clicked. Warn the
+  people who opened it; for anyone who may have typed a password, see "A link was clicked" below. "Mark all
+  as seen" there clears the banner on Overview and Messages.
+
+### A link was clicked (`recheck-click`)
+- **When:** Settings → Link clicks is on, and Gmail's logs show that someone clicked a link (in the email,
+  or in its attachment's preview) in an email found to be phishing after it was delivered.
+- **What it means:** that person may have given their password, or downloaded something, on the
+  phishing site.
+- **What to do:** in the Admin console, for that user: reset the password, sign them out of every session
+  (Users → the user → Security), check their recent sign-ins and any mail-forwarding rule or app access
+  added since (Security → Investigation tool, or Reporting → Audit and investigation). Talk to them: what
+  did they type in? Email → Re-checked shows when they clicked.
 
 ### A user moved a flagged email to the Inbox (`user-inbox`, `user-release`)
 - **When:** a user took an email the checks flag into their Inbox, or back out of Spam.

@@ -137,6 +137,51 @@
             && (!text || `${r.user} ${r.sender.address} ${r.sender.name} ${r.subject} ${r.rfc822MessageId || ''} ${r.messageId || ''}`.toLowerCase().includes(text)));
     }
 
+    // Re-checked mail (0.5.35): emails found to be phishing (or suspicious) after they were delivered, one
+    // group per campaign (the same email to many people), newest re-check first. Each group lists every copy
+    // the records have: the re-checked ones, and those moved or recorded on arrival.
+    const RECHECK_BAD = ['moved', 'would-move', 'held', 'not-in-inbox'];
+    function rechecked(records, now, n) {
+        const since = now - n * DAY;
+        const hit = records.filter(r => r.recheck && r.recheck.at >= since);
+        const keys = new Set(hit.map(r => r.campaign));
+        const groups = new Map();
+        for (const r of records) {
+            if (!keys.has(r.campaign)) continue;
+            const g = groups.get(r.campaign) || { campaign: r.campaign, label: r.campaignLabel, subject: r.subject, sender: r.sender, copies: [], reasons: new Set(), lastRecheck: 0, firstReceived: Infinity };
+            const rc = r.recheck || null, cl = rc && rc.clicks;
+            g.copies.push({ key: r.key, user: r.user, receivedAt: r.receivedAt || r.processedAt, rechecked: !!rc, recheckAt: rc ? rc.at : null,
+                outcome: rc ? rc.outcome : null, where: rc ? rc.where : null, action: r.action, state: r.state, before: rc ? rc.before : null,
+                opened: cl && cl.opened ? true : rc ? !!rc.opened : null, openedAt: cl && cl.openedAt ? cl.openedAt : null,
+                clicked: cl ? !!cl.clicked : null, clickedAt: cl && cl.clickedAt ? cl.clickedAt : null, clicksCheckedAt: cl ? cl.checkedAt : null,
+                movedAt: rc && rc.movedAt ? rc.movedAt : r.state === 'moved' ? (r.heldMovedAt || r.processedAt) : null, released: r.state === 'released' });
+            if (rc) {
+                g.reasons.add(rc.source === 'lists' ? `${rc.list || 'A phishing list'} listed ${rc.site || 'one of its sites'}` : 'A second look after it arrived');
+                g.lastRecheck = Math.max(g.lastRecheck, rc.at);
+            }
+            g.firstReceived = Math.min(g.firstReceived, r.receivedAt || r.processedAt);
+            groups.set(r.campaign, g);
+        }
+        return [...groups.values()].map(g => {
+            const re = g.copies.filter(c => c.rechecked);
+            const count = (f) => g.copies.filter(f).length;
+            return { campaign: g.campaign, label: g.label, subject: g.subject, sender: g.sender, reasons: [...g.reasons], lastRecheck: g.lastRecheck, firstReceived: g.firstReceived,
+                phishing: re.some(c => RECHECK_BAD.includes(c.outcome)), people: new Set(g.copies.map(c => c.user)).size, rechecked: re.length,
+                moved: count(c => c.movedAt), opened: count(c => c.opened), clicked: count(c => c.clicked), clicksChecked: count(c => c.clicksCheckedAt),
+                copies: g.copies.sort((a, b) => (b.clicked === true) - (a.clicked === true) || (b.opened === true) - (a.opened === true) || String(a.user).localeCompare(String(b.user))) };
+        }).sort((a, b) => b.lastRecheck - a.lastRecheck);
+    }
+    // The Overview's and Messages' banner: phishing found by a re-check since an admin last marked them seen
+    // (at most 7 days back).
+    function recheckAlert(records, now, seenAt = 0) {
+        const from = Math.max(now - 7 * DAY, Number(seenAt) || 0);
+        const rs = records.filter(r => r.recheck && r.recheck.at > from && RECHECK_BAD.includes(r.recheck.outcome));
+        if (!rs.length) return null;
+        return { emails: rs.length, campaigns: new Set(rs.map(r => r.campaign)).size, people: new Set(rs.map(r => r.user)).size,
+            moved: rs.filter(r => r.recheck.outcome === 'moved').length, opened: rs.filter(r => r.recheck.opened || (r.recheck.clicks && r.recheck.clicks.opened)).length,
+            clicked: rs.filter(r => r.recheck.clicks && r.recheck.clicks.clicked).length, latest: Math.max(...rs.map(r => r.recheck.at)) };
+    }
+
     // How the AI and the rules are doing: scores of recorded emails, and how often each kind of move
     // was undone (released) — the false-alarm rate that should decide the AI threshold.
     // opts: the settings in force (orgDomains, aiSuspicious, aiThreshold), for "rules and AI together".
@@ -249,5 +294,5 @@
         error: (e) => e.kind === 'error' || e.kind === 'gap', watch: (e) => ['watch', 'watch-asked', 'mode'].includes(e.kind) };
     function activity(events, kind) { return ACTIVITY[kind] ? events.filter(ACTIVITY[kind]) : events; }
 
-    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity, isAdminAction, activityCsv };
+    return { DAY, dayOf, dayIn, addDays, setTimeZone, TRIGGERS, signalCategory, summary, trend, topReasons, campaigns, users, filterRecords, modelHealth, readiness, toCsv, activity, isAdminAction, activityCsv, rechecked, recheckAlert };
 });

@@ -7,7 +7,7 @@ const DAYS = { 'micros0ft-support.example': 4, 'docs-review-center.example': 12,
     'staff-perks-portal.example': 25, 'summit-registration.example': 18 };
 const CF_BLOCKS = new Set(['docs-review-center.example', 'micros0ft-support.example']);
 const SB_LISTS = [/storage\.googleapis\.com\/bucket-77\//];
-const LIST_DOMAINS = { 'maple-schools-payroll.example': 'Phishing Army (extended)' };
+const LIST_DOMAINS = { 'maple-schools-payroll.example': 'Phishing Army (extended)', 'paystub-viewer.example': 'Phishing Army (extended)' };
 const LIST_ADDRESSES = { 'lena__a81f22c4e9@freemail.example': 'Sefinek scam-sender list' };
 
 const regOf = (h) => String(h || '').toLowerCase().split('.').slice(-2).join('.');

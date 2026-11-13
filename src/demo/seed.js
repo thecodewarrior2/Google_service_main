@@ -175,6 +175,10 @@ async function buildDemo({ now = Date.now(), cfg }) {
         { at: now - 10 * DAY, kind: 'mode', admin: true, text: 'Mode changed from monitor to enforce by it.director@maple-schools.example.' },
         { at: now - 2 * DAY + 9 * 3600e3, kind: 'campaign', alert: true, text: '34 staff received the same fake cloud-storage notice within 5 hours; all were moved to Spam.' }
     ];
+    // Re-checked mail (0.5.35): a payroll lure delivered yesterday, clean then; this morning Phishing Army
+    // listed its site, and the re-check moved every copy still in an Inbox. Some had been opened, one link
+    // clicked (Gmail's logs, Settings → Link clicks on); one copy its reader had archived.
+    await seedRechecked({ store, staff, intel, raws, cfg, now, r });
     // (the colleague-name check read the demo directory while the made-up mail was judged: as of now)
     const cn = await store.getState('colleagueNames');
     if (cn) await store.setState('colleagueNames', Object.assign({}, cn, { at: now - 20 * 60 * 1000 }));
@@ -185,4 +189,42 @@ async function buildDemo({ now = Date.now(), cfg }) {
     return { store, staff, intel, raws };
 }
 
-module.exports = { buildDemo, campaignTemplates, directoryNames, ORG };
+async function seedRechecked({ store, staff, intel, raws, cfg, now, r }) {
+    const at = now - 5 * 3600e3, delivered = now - 22 * 3600e3, site = 'paystub-viewer.example', list = 'Phishing Army (extended)';
+    const recips = staff.slice(20, 29);
+    const make = (to) => eml({ fromName: 'Payroll Center', from: 'notices@paystub-viewer.example', to, dmarc: 'pass',
+        subject: 'Your November pay statement is ready',
+        html: '<p>Hello,</p><p>Your November pay statement is ready to view.</p><p><a href="https://paystub-viewer.example/statement">View my statement</a></p><p>Payroll Center</p>' });
+    recips.forEach((u, i) => raws.set(`demo-recheck-${i}`, Buffer.from(make(u))));
+    const svc = new Service({ cfg: Object.assign({}, cfg, { mode: 'enforce', orgDomains: [ORG], storeSubjects: true, storeAiQuotes: true, firstSeenLearningDays: 14 }), store, gmail: fakeGmail, intel, now: () => at, log: { error() {} } });
+    const facts = await readMessage(raws.get('demo-recheck-0'));
+    const first = await svc.judge(recips[0], { id: 'demo-recheck-0', threadId: 't-recheck-0', internalDate: delivered }, facts);
+    if (!first || first.action !== 'move') return;
+    const opened = new Set([0, 2, 3, 5]), clickedOne = 3;
+    for (const [i, u] of recips.entries()) {
+        const rx = delivered + Math.round(r() * 40) * 60 * 1000;
+        const archived = i === 7;
+        const clicks = { checkedAt: at + 3 * 3600e3, checks: 2, named: opened.has(i), opened: opened.has(i), openedAt: opened.has(i) ? rx + (30 + i * 47) * 60 * 1000 : null,
+            clicked: i === clickedOne, clickedAt: i === clickedOne ? rx + (32 + i * 47) * 60 * 1000 : null };
+        const rec = Object.assign(JSON.parse(JSON.stringify(first)), { key: `${u}|demo-recheck-${i}`, user: u, messageId: `demo-recheck-${i}`, threadId: `t-recheck-${i}`, receivedAt: rx, processedAt: at,
+            rfc822MessageId: `stmt-${i}@paystub-viewer.example`,
+            why: `found on a re-check (${list} listed ${site} after it was delivered): ${first.why}${archived ? '; it had already left the Inbox (archived by its reader), so it wasn\'t moved' : ''}`,
+            action: archived ? 'flag' : 'move', state: archived ? 'inbox' : 'moved', arrival: { at: rx, action: 'none' },
+            recheck: { at, source: 'lists', site, list, round: null, before: 'none', beforeScore: null, outcome: archived ? 'not-in-inbox' : 'moved', where: archived ? 'archived' : 'inbox', opened: opened.has(i), movedAt: archived ? null : at, clicks } });
+        await store.saveRecord(rec);
+        await store.incStat(require('../dashboard/aggregate').dayIn(at, cfg.timeZone), archived ? 'flagged' : 'moved');
+    }
+    await store.setState('clickLogs', { on: true, admin: `it.director@${ORG}`, by: `it.director@${ORG}`, at: now - 20 * DAY });
+    await store.setState('clickLogsHealth', { at: at + 3 * 3600e3, ok: true, error: null, checked: recips.length });
+    store.events.push({ at, kind: 'recheck', alert: true, text: `Re-checked mail: ${recips.length} emails delivered earlier are now found to be phishing (${list} listed ${site}), from "${first.campaignLabel}": ${recips.length - 1} moved to Spam, 1 had already left the Inbox. ${opened.size} had been opened. Who got them, when, and what Gmail's logs say they did: dashboard, Email → Re-checked. More: docs/ALERTS.md, "Re-checked mail".` },
+        { at: at + 3 * 3600e3, kind: 'recheck-click', alert: true, text: `A link was clicked in mail later found to be phishing: ${recips[clickedOne]} (an email from notices@paystub-viewer.example). Their password may have been given away: consider resetting it, ending their sessions and checking their sign-ins (Admin console). Dashboard: Email → Re-checked. More: docs/ALERTS.md, "A link was clicked".` });
+}
+
+// A made-up day of an admin's Gmail log (Settings → Link clicks's Test in demo mode), as the Reports API gives it.
+function demoLogEvents(now) {
+    return [7, 31, 15].map((type, i) => ({ id: { time: new Date(now - (i + 1) * 3600e3).toISOString() }, events: [{ name: 'delivery', parameters: [
+        { name: 'event_info', messageValue: { parameter: [{ name: 'mail_event_type', intValue: String(type) }] } },
+        { name: 'message', messageValue: { parameter: [{ name: 'rfc2822_message_id', value: `<demo-${i}@maple-schools.example>` }] } }] }] }));
+}
+
+module.exports = { buildDemo, campaignTemplates, directoryNames, ORG, demoLogEvents };

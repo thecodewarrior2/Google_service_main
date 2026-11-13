@@ -68,7 +68,8 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     //   force: every list, even a recent one; retryFailed: also a list whose last download failed, even
     //   when its copy is recent; only: just these lists (ids). Each list's outcome is kept (HEALTH): a
     //   failure says since when and how often, and the next success clears it.
-    //   { feeds: [{ id, name, count } | { id, name, skipped } | { id, name, error, newly }], recovered: [names] }
+    //   { feeds: [{ id, name, count, kind?, added? } | { id, name, skipped } | { id, name, error, newly }], recovered: [names] }
+    //   added: the entries that weren't in the previous copy (none on a list's first download).
     async function sync({ force = false, retryFailed = false, only = null } = {}) {
         const results = [], recovered = [];
         const health = Object.assign({}, (await store.getState(HEALTH).catch(() => null)) || {});
@@ -85,9 +86,22 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
                 if (text.length > E.PHISH_FEED_MAX_BYTES) throw new Error(`too large (${text.length} bytes)`);
                 const entries = sanitize(feed, text);
                 if (entries.size < E.PHISH_FEED_MIN_ENTRIES) throw new Error(`only ${entries.size} entries; the previous copy is kept`);
+                // What this download adds to the previous copy (0.5.35): delivered mail is checked again for it
+                // (pipeline.js recheckFromLists). Nothing on a list's first download (everything would be new).
+                let added = null;
+                if (info) {
+                    try {
+                        const old = await store.getBlob(name);
+                        if (old) {
+                            const had = new Set(zlib.gunzipSync(old.bytes).toString('utf8').split('\n'));
+                            added = [];
+                            for (const x of entries) if (!had.has(x)) added.push(x);
+                        }
+                    } catch (e) { added = null; log.error && log.error(`${feed.name}, the previous copy:`, e); }
+                }
                 const gz = zlib.gzipSync([...entries].sort().join('\n'));
                 await store.putBlob(name, gz, { updated: now(), count: entries.size, name: feed.name, kind: feed.kind });
-                results.push({ id: feed.id, name: feed.name, count: entries.size });
+                results.push(Object.assign({ id: feed.id, name: feed.name, count: entries.size }, added ? { kind: feed.kind, added } : {}));
                 if (prev.error) {
                     recovered.push(feed.name);
                     await store.addEvent({ kind: 'lists', text: `${feed.name} downloaded again (${entries.size.toLocaleString('en-US')} entries), after missing its download since ${new Date(prev.failedSince || prev.lastAttempt || now()).toISOString().slice(0, 16).replace('T', ' ')} UTC.` });
@@ -119,8 +133,9 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     }
     // Loads the shared copy the first time, and again when the daily task has made a newer one.
     async function ready() {
-        if (sets && now() - lastCheck < RELOAD_CHECK_MS) return sets;
+        // (while a newer copy is being loaded, every caller waits for it: not the old copy, 0.5.35)
         if (loading) return loading;
+        if (sets && now() - lastCheck < RELOAD_CHECK_MS) return sets;
         loading = (async () => {
             try {
                 lastCheck = now();

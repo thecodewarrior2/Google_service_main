@@ -72,6 +72,28 @@ hashes):
 Without them the check is off and **Status** says so; nothing else changes. To turn it off on purpose,
 set `COLLEAGUE_NAMES=off` on both services (docs/DEPLOY.md, the settings table).
 
+### Link clicks (optional, off by default)
+
+For each email found to be phishing **after** it was delivered (Email → Re-checked, 0.5.35), the service can
+read Gmail's own logs to tell who opened it and who **clicked a link** in it: the people whose password may
+have been given away. Not needed to run the service; without it, Email → Re-checked still says who got each
+email and whether it had been opened.
+
+1. Your Google Workspace edition must have Gmail log events (Admin console → Reporting → Audit and
+   investigation → Gmail log events; not every edition has them).
+2. Add this scope to the service's domain-wide delegation line (step 5; on an installation already running:
+   **Security → API controls → Manage Domain Wide Delegation**, edit the service's entry):
+
+   ```
+   https://www.googleapis.com/auth/admin.reports.audit.readonly
+   ```
+
+3. On the dashboard, **Settings → Link clicks**: type an admin account with the **Reports** privilege (a
+   super admin has it; the service only reads with it), **Test**, then **Turn on** with the project ID.
+
+Logs can take a few hours to show a click: each re-checked email is looked at again every 3 hours, 4 times.
+A click found is an alert (docs/ALERTS.md, "A link was clicked").
+
 ## 3. A Google Cloud project
 
 1. In [console.cloud.google.com](https://console.cloud.google.com), create a **new project** in your
@@ -217,6 +239,8 @@ When it finishes, it prints the **dashboard address**.
   - Use **Mark false alarm** or **Confirm phishing** (keys **F** and **P**).
   - Optional (off by default): **Settings → Policy → Suspicious label** puts the Gmail label
     `SPRUCE/Suspicious` on those emails, so their readers see them, in monitor mode too; nothing is moved by it.
+  - **Email → Re-checked** lists mail found to be phishing after it was delivered (a list added its site
+    later): in monitor mode it is recorded as "would move", like any email.
   - Also go through **Review → Suspicious, not moved** now and then: phishing among them is what the
     move rules miss. In enforce mode, **P** there moves the email to Spam.
   - Watch **Status → Model health**.

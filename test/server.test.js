@@ -324,7 +324,8 @@ test('re-scan (0.5.4): a second re-scan keeps the first arrival values; a record
     const { store, raws } = await buildDemo({ cfg, now: Date.now() });
     const gm = Object.assign({}, gmail, { raw: async (u, id) => ({ id, raw: raws.get(id) }) });
     const service = new Service({ cfg, store, gmail: gm });
-    const key = (await store.listRecords({ sinceMs: 0, limit: 1000 })).find(r => r.ai && raws.has(r.messageId)).key;
+    // (not the re-checked campaign's: clean on arrival, it has its own arrival, 0.5.35)
+    const key = (await store.listRecords({ sinceMs: 0, limit: 1000 })).find(r => r.ai && raws.has(r.messageId) && !r.recheck).key;
     // As 0.5.3 left it: a rescan, the scores still the arrival's.
     await store.updateRecord(key, { ai: { probability: 0.3, model: 'phish-tiny 0.11.0', reasons: [] }, score: 4, rescan: { at: 1, model: 'phish-tiny 0.13.0', ai: 0.01, score: 4 } });
     await service.rescan(key, 'a@maple-schools.example');

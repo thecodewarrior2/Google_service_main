@@ -49,7 +49,9 @@ async function readBody(req, max = 1024 * 1024) {
 const STATS_TODAY_MS = 15 * 1000;
 const MAILBOXES_KEPT_MS = 60 * 1000;
 const brief = (r) => ({ key: r.key, user: r.user, processedAt: r.processedAt, sender: r.sender, subject: r.subject, campaign: r.campaign,
-    status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm });
+    status: r.status, score: r.score, ai: r.ai ? Math.round((r.ai.probability || 0) * 1000) / 1000 : null, action: r.action, trigger: r.trigger, state: r.state, releasedByUser: !!r.releasedByUser, falseAlarm: r.falseAlarm,
+    // found after delivery (0.5.35): the Messages list marks it
+    recheck: r.recheck ? { at: r.recheck.at, outcome: r.recheck.outcome, opened: !!(r.recheck.opened || (r.recheck.clicks && r.recheck.clicks.opened)), clicked: !!(r.recheck.clicks && r.recheck.clicks.clicked) } : null });
 
 // Records from before 0.5.12 said only "suspicious, below the move rules": shown with what made them
 // suspicious (the rule checks' score, the AI's), from the record itself, with today's thresholds.
@@ -70,7 +72,7 @@ const DEMO_PROJECT = 'demo-project';
 const POLICY_TRIES = 5, POLICY_LOCK_MS = 10 * 60 * 1000;
 // What a policy change is for, in Activity's words (a wrong project ID, 0.5.30).
 const POLICY_WHAT = { mode: 'the mode', aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', aiScansInside: 'whether the AI reads inside mail',
-    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', suspiciousLabel: 'the Suspicious label', brakePerHour: 'the brake', timeZone: 'the time zone',
+    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', suspiciousLabel: 'the Suspicious label', recheck: 're-checking delivered mail', brakePerHour: 'the brake', timeZone: 'the time zone',
     allowDomains: 'the allowlisted domains', allowAddresses: 'the allowlisted addresses', retentionDays: 'how long records are kept' };
 // The project ID a policy change must be confirmed with ('' when the dashboard doesn't know it).
 const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
@@ -355,14 +357,43 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      campaigns: A.campaigns(records, now, n).slice(0, 5), alerts: (await store.listEvents(now - 7 * A.DAY)).slice(0, 10),
                      brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode,
                      // The phishing lists that missed their download (0.5.22): the overview's banner.
-                     missedLists: await missedLists() };
+                     missedLists: await missedLists(),
+                     // Phishing found after delivery, not yet marked seen (0.5.35): the overview's banner.
+                     rechecked: A.recheckAlert(records, now, await store.getState('recheckSeenAt')) };
+        },
+        // Email → Re-checked (0.5.35): the emails found after delivery, by campaign, with every copy; whether
+        // re-checking is on, and Link clicks.
+        'GET /api/rechecked': async (q) => {
+            const { records } = await load(q);
+            const cl = await service.clickLogs();
+            return { groups: A.rechecked(records, Date.now(), nDays(q)), recheck: !!cfg.recheck, recheckDays: cfg.recheckDays, mode: cfg.mode,
+                     clickLogs: { on: !!cl.on, admin: cl.admin || '' }, seenAt: await store.getState('recheckSeenAt'), queued: ((await store.getState('recheckQueue')) || []).length };
+        },
+        // "Mark as seen": the banners on the Overview and Messages go until something new is found.
+        'POST /api/rechecked/seen': async (q, body, admin) => {
+            await store.setState('recheckSeenAt', Date.now());
+            await service.adminNotice('rechecked', `${admin.email} marked the re-checked mail as seen.`);
+            return { seenAt: await store.getState('recheckSeenAt') };
+        },
+        // Settings → Link clicks (0.5.35; off by default): Gmail's logs for the re-checked mail.
+        'GET /api/clicks': async () => ({ clickLogs: await service.clickLogs(), health: await store.getState('clickLogsHealth'), test: await store.getState('clickLogsTest'),
+            projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null, directoryAdmin: cfg.directoryAdmin || '' }),
+        'POST /api/clicks': async (q, body, admin) => {
+            const on = body.on === true;
+            const bad = await projectCheck(admin, body, `Link clicks (turn ${on ? 'on' : 'off'})`);
+            if (bad) return bad;
+            return service.setClickLogs(on, body.admin, admin.email);
+        },
+        'POST /api/clicks/test': async (q, body, admin) => {
+            if (!once(`clicks-test|${admin.email}`, 10 * 1000)) return { error: 'Tested less than 10 seconds ago.', status: 429 };
+            return service.testClickLogs(body.admin, admin.email);
         },
         'GET /api/campaigns': async (q) => { const { records } = await load(q); return { campaigns: A.campaigns(records, Date.now(), nDays(q)) }; },
         'GET /api/users': async (q) => { const { records } = await load(q); return { users: A.users(records, Date.now(), nDays(q)) }; },
         'GET /api/messages': async (q) => {
             const { records } = await load(q);
             const list = A.filterRecords(records, { user: q.get('user') || '', campaign: q.get('campaign') || '', action: q.get('action') || '', state: q.get('state') || '', q: q.get('q') || '', since: since(q) });
-            return { total: list.length, messages: list.slice(0, 500).map(brief) };
+            return { total: list.length, messages: list.slice(0, 500).map(brief), rechecked: A.recheckAlert(records, Date.now(), await store.getState('recheckSeenAt')) };
         },
         // An email's record, with the mode now (whether confirming it as phishing also moves it).
         'GET /api/message': async (q) => { const r = await store.getRecord(String(q.get('key') || '')); return r ? { message: withPlainWhy(r, cfg), mode: cfg.mode } : { error: 'not found', status: 404 }; },
@@ -381,7 +412,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const mb = await mailboxes();
             // (the list, for Settings → Mailboxes only: ?mailboxes=1)
             const listed = q && q.get && q.get('mailboxes') ? await store.listWatched(500) : null;
-            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, aiScansInside: cfg.aiScansInside, suspiciousLabel: cfg.suspiciousLabel, suspiciousLabelName: cfg.suspiciousLabelName, brakePerHour: cfg.brakePerHour,
+            return { mode: cfg.mode, aiThreshold: cfg.aiThreshold, aiSuspicious: cfg.aiSuspicious, moveOnRules: cfg.moveOnRules, aiMovesInside: cfg.aiMovesInside, aiScansInside: cfg.aiScansInside, suspiciousLabel: cfg.suspiciousLabel, suspiciousLabelName: cfg.suspiciousLabelName, recheck: cfg.recheck, recheckDays: cfg.recheckDays, brakePerHour: cfg.brakePerHour,
                      brakeLimit: await service.brakeLimit(), campaignHoldAfter: cfg.campaignHoldAfter, alertEmail: cfg.alertEmail || '',
                      orgDomains: cfg.orgDomains, pilotGroups: cfg.pilotGroups, pilotOu: cfg.pilotOu, pilotUsers: cfg.pilotUsers.length, allowDomains: cfg.allowDomains, allowAddresses: cfg.allowAddresses.length,
                      retentionDays: cfg.retentionDays, storeSubjects: cfg.storeSubjects, storeAiQuotes: cfg.storeAiQuotes, movedLabel: cfg.movedLabel,
@@ -703,7 +734,9 @@ async function main() {
             // the made-up emails themselves, for the retraining export
             // the made-up directory, for the colleague-name check
             userNames: async () => directoryNames(staff),
-            raw: async (u, id) => { const b = raws.get(id); if (!b) throw Object.assign(new Error('not found'), { status: 404 }); return { id, threadId: `t-${id}`, labelIds: ['INBOX'], historyId: null, internalDate: Date.now(), raw: b }; } };
+            raw: async (u, id) => { const b = raws.get(id); if (!b) throw Object.assign(new Error('not found'), { status: 404 }); return { id, threadId: `t-${id}`, labelIds: ['INBOX'], historyId: null, internalDate: Date.now(), raw: b }; },
+            // Settings → Link clicks's Test: a made-up day of an admin's Gmail log (0.5.35)
+            gmailEvents: async () => require('./demo/seed').demoLogEvents(Date.now()) };
         console.log('DEMO mode: made-up data, no Google access.');
     } else {
         const { DelegatedAuth } = require('./gmail/auth');

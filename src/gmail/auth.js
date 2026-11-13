@@ -9,7 +9,9 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPES = {
     gmail: 'https://www.googleapis.com/auth/gmail.modify',
     directory: 'https://www.googleapis.com/auth/admin.directory.user.readonly',
-    groupMembers: 'https://www.googleapis.com/auth/admin.directory.group.member.readonly'
+    groupMembers: 'https://www.googleapis.com/auth/admin.directory.group.member.readonly',
+    // Gmail's logs (Admin SDK Reports API), only when Settings → Link clicks is turned on (0.5.35).
+    reports: 'https://www.googleapis.com/auth/admin.reports.audit.readonly'
 };
 
 class DelegatedAuth {

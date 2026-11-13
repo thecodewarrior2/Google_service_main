@@ -20,7 +20,8 @@ Admins ──Identity-Aware Proxy──▶ spruce-admin (Cloud Run, ROLE=admin):
 
 Cloud Scheduler ──(OIDC)──▶ worker /tasks/renew-watches (daily; a watch lasts 7 days)
                            ──▶ worker /tasks/sync-feeds (hourly: the health check, the phishing lists
-                                once a day for everyone, the cleanup of what TTL doesn't delete)
+                                once a day for everyone, re-checks of delivered mail, the cleanup of what
+                                TTL doesn't delete)
 
 worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
        ··▶ safebrowsing.googleapis.com    OFF by default (Settings → Safe Browsing): link addresses, no #part;
@@ -163,6 +164,16 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   - An admin's own move back is noted on the record first, so it isn't counted as the user's.
 - **Records only for what matters.** Clean mail is counted per day, not recorded, which keeps Firestore
   small and private.
+- **Re-checking delivered mail (0.5.35) without recording clean mail.** An email left in the Inbox keeps, on
+  its `seen` marker (the write that marks it checked, so no extra write), up to 24 one-way hashes of its link
+  sites and sender (`src/recheck.js`). A list's download reports what is new since its previous copy
+  (`feeds.sync`); the hourly job hashes those entries and asks Firestore for the markers holding any of them
+  (`array-contains-any`, 30 at a time, on Firestore's automatic single-field index), queues them
+  (`state/recheckQueue`, at most 3,000), and checks them in full within its time (40 s; the rest the next
+  hour), 12 at a time, through the same decision and brakes as on arrival. Suspicious records an hour and a
+  day old are queued the same way. With Settings → Link clicks on, the Admin SDK Reports API's Gmail log
+  events of each re-checked copy's recipient (opened, link clicked) are read as an admin with the Reports
+  privilege, filtered by `event_info.mail_event_type`, and matched to the email by its Message-ID.
 
 ## Platform notifications and outside shares
 

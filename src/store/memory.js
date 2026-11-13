@@ -49,6 +49,19 @@ class MemoryStore {
         if (!this.seenIds.has(k) && this.seenIds.size > 200000) this.seenIds.delete(this.seenIds.keys().next().value);
         this.seenIds.set(k, v);
     }
+    // The emails whose re-check hashes include any of these (see store/firestore.js).
+    async findIndexed(hashes, sinceMs = 0, limit = 5000) {
+        const want = new Set(hashes), out = [];
+        for (const [k, v] of this.seenIds) {
+            if (!Array.isArray(v.ix) || !v.ix.some(x => want.has(x))) continue;
+            const rx = Number(v.rx) || Number(v.at) || 0;
+            if (rx < sinceMs) continue;
+            const i = k.lastIndexOf('|');
+            out.push({ user: k.slice(0, i), id: k.slice(i + 1), receivedAt: rx, ix: v.ix.slice() });
+            if (out.length >= limit) break;
+        }
+        return out;
+    }
     async saveRecord(rec) { this.records.set(rec.key, JSON.parse(JSON.stringify(Object.assign({}, rec, { updatedAt: Date.now() })))); }
     // Records saved or changed after a time (the dashboard's cache: src/dashboard/cache.js).
     async listRecordsChangedSince(ms, limit = 5000) {

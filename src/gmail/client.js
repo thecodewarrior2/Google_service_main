@@ -6,6 +6,7 @@ const { SCOPES } = require('./auth');
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users';
 const DIRECTORY = 'https://admin.googleapis.com/admin/directory/v1/users';
 const GROUPS = 'https://admin.googleapis.com/admin/directory/v1/groups';
+const REPORTS = 'https://admin.googleapis.com/admin/reports/v1/activity/users';
 const MAX_LISTED = 4000;   // messages listed from a mailbox's history at a time (the rest, next time)
 
 class GoogleApiError extends Error {
@@ -120,6 +121,22 @@ class GmailClient {
             pageToken = r.nextPageToken;
         } while (pageToken);
         return out;
+    }
+    // Gmail's log events for one mailbox (the Admin SDK Reports API, acting as a Workspace admin with the
+    // Reports privilege and the admin.reports.audit.readonly scope; 0.5.35, Settings → Link clicks):
+    // eventName delivery, between two times (Google requires both, at most 30 days apart), with filters
+    // such as event_info.mail_event_type==15. At most max events.
+    async gmailEvents(admin, mailbox, { startTime, endTime, filters = '', max = 3000 } = {}) {
+        const out = [];
+        const start = Math.max(Number(startTime) || 0, Number(endTime) - 30 * 24 * 3600 * 1000 + 60000);
+        let pageToken;
+        do {
+            const r = await this.call(admin, 'GET', `/${encodeURIComponent(mailbox)}/applications/gmail`, { scope: SCOPES.reports, base: REPORTS,
+                query: Object.assign({ eventName: 'delivery', startTime: new Date(start).toISOString(), endTime: new Date(Number(endTime)).toISOString(), maxResults: '1000' }, filters ? { filters } : {}, pageToken ? { pageToken } : {}) });
+            out.push(...(r.items || []));
+            pageToken = r.nextPageToken;
+        } while (pageToken && out.length < max);
+        return out.slice(0, max);
     }
     // Whether an address is in a group, directly or through a group inside it (acting as a Workspace admin).
     async hasMember(admin, groupEmail, email) {

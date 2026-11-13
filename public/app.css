@@ -358,3 +358,13 @@ ul.benefits li { margin: 6px 0; }
 .card.locked .policy-form { opacity: 0.6; }
 ul.plain-list { margin: 0; padding-left: 14px; }
 ul.plain-list li { margin: 2px 0; overflow-wrap: break-word; word-break: normal; }
+
+/* 0.5.35: Email → Re-checked (mail found to be phishing after it was delivered), its banners and marks. */
+.recheck-group.bad { border-color: var(--critical); }
+.recheck-group h2 { display: flex; align-items: center; gap: 2px; overflow-wrap: anywhere; }
+.recheck-kpis { margin: 10px 0 12px; }
+.recheck-kpis .card.kpi { box-shadow: none; }
+.found-later { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.recheck-box.bad { border-left-color: var(--critical); background: var(--critical-soft); }
+.recheck-box b { display: inline-flex; align-items: center; }
+.bad-text { color: var(--critical-text); }

@@ -3,7 +3,8 @@
 // as MemoryStore. Collections:
 //   users/{email}           historyId, watchExpiration, lastNotification
 //   seen/{user|messageId}   messages being or already analyzed: state working (claimed by one instance),
-//                           retry (a try failed) or done (also an older document with no state)
+//                           retry (a try failed) or done (also an older document with no state); for an
+//                           email left in the Inbox, ix (re-check hashes, src/recheck.js) and rx (received)
 //   records/{key}           see store/memory.js
 //   stats/{yyyy-mm-dd}~{i}  counters: scanned, moved, wouldMove, flagged, released, falseAlarms, errors, in
 //                           STAT_SHARDS documents a day (each document takes about one write a second; a
@@ -99,6 +100,23 @@ class FirestoreStore {
     }
     async unclaim(user, id) { await this.seenRef(user, id).set({ state: 'retry' }, { merge: true }); }
     async markSeen(user, id, extra = {}) { const at = Date.now(); await this.seenRef(user, id).set(Object.assign({ at, state: 'done', expireAt: this.expiry(at) }, extra), { merge: true }); }
+    // The emails whose re-check hashes (seen.ix, src/recheck.js) include any of these, received since
+    // sinceMs: [{ user, id, receivedAt, ix }]. Firestore's own single-field index on ix (array-contains-any,
+    // 30 values a query), a few queries at once.
+    async findIndexed(hashes, sinceMs = 0, limit = 5000) {
+        const out = new Map(), parts = [];
+        for (let i = 0; i < hashes.length; i += 30) parts.push(hashes.slice(i, i + 30));
+        for (let i = 0; i < parts.length && out.size < limit; i += 5) {
+            const got = await Promise.all(parts.slice(i, i + 5).map(p => this.col('seen').where('ix', 'array-contains-any', p).limit(limit).get()));
+            for (const q of got) for (const d of q.docs) {
+                const v = d.data(), rx = Number(v.rx) || Number(v.at) || 0;
+                if (rx < sinceMs || out.has(d.id) || out.size >= limit) continue;
+                const k = d.id.lastIndexOf('|');
+                out.set(d.id, { user: d.id.slice(0, k), id: d.id.slice(k + 1), receivedAt: rx, ix: v.ix || [] });
+            }
+        }
+        return [...out.values()];
+    }
     async saveRecord(rec) { await this.col('records').doc(safeId(rec.key)).set(Object.assign({}, rec, { updatedAt: Date.now(), expireAt: this.expiry(Number(rec.processedAt) || Date.now()) })); }
     // Records saved or changed after a time, oldest change first (the dashboard's cache).
     async listRecordsChangedSince(ms, limit = 5000) {
