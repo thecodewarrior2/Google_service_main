@@ -68,6 +68,10 @@ const CHECK_MAX_BYTES = 10 * 1024 * 1024;
 // few wrong ones in a row lock it for a while.
 const DEMO_PROJECT = 'demo-project';
 const POLICY_TRIES = 5, POLICY_LOCK_MS = 10 * 60 * 1000;
+// What a policy change is for, in Activity's words (a wrong project ID, 0.5.30).
+const POLICY_WHAT = { mode: 'the mode', aiThreshold: 'the AI move threshold', aiSuspicious: 'the AI suspicious line', aiScansInside: 'whether the AI reads inside mail',
+    aiMovesInside: 'whether the AI alone moves inside mail', safeBrowsing: 'Google Safe Browsing (on or off)', brakePerHour: 'the brake', timeZone: 'the time zone',
+    allowDomains: 'the allowlisted domains', allowAddresses: 'the allowlisted addresses', retentionDays: 'how long records are kept' };
 // The project ID a policy change must be confirmed with ('' when the dashboard doesn't know it).
 const expectedProject = (cfg) => cfg.project || (cfg.demo ? DEMO_PROJECT : '');
 
@@ -285,13 +289,26 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
     let exporting = false;   // one retraining export at a time (it reads up to 100 emails from Gmail)
     // Wrong project IDs (and email addresses) typed per admin, on the policy and Update: five in 10 minutes lock both.
     const wrongIds = new Map();
+    const lockedNoted = new Map();
     const wrong = {
         locked: (who) => (wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS).length >= POLICY_TRIES,
-        add: (who) => {
+        // A wrong project ID or email address (0.5.30): each try noted in What admins did, with what it was for
+        // (never what was typed: someone could paste something private by mistake). Not emailed; the fifth
+        // within POLICY_LOCK_MS locks changes from that account, and that is an alert (0.5.29): it may not have
+        // been them.
+        add: async (who, what = 'a setting', mistake = 'Google Cloud project ID') => {
             const tries = [...(wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS), Date.now()];
             wrongIds.set(who, tries);
-            // Locked (0.5.29): an alert, since it may not have been them.
-            if (tries.length === POLICY_TRIES && service && service.alert) service.alert('lockout', `${who} typed a wrong Google Cloud project ID or email address ${POLICY_TRIES} times within ${Math.round(POLICY_LOCK_MS / 60000)} minutes: changes from that account are locked for ${Math.round(POLICY_LOCK_MS / 60000)} minutes. If it wasn't them, someone may be using their signed-in session: ask them, and sign them out of Google (Admin console → Users → Sign out).`).catch(() => {});
+            const mins = Math.round(POLICY_LOCK_MS / 60000);
+            await store.addEvent({ kind: 'denied', admin: true, by: who, text: `${who} typed a wrong ${mistake} to change ${what} (try ${tries.length} of ${POLICY_TRIES} within ${mins} minutes): nothing was changed.${tries.length === POLICY_TRIES ? ` Changes from this account are locked for ${mins} minutes.` : ''}` }).catch(() => {});
+            if (tries.length === POLICY_TRIES && service && service.alert) await service.alert('lockout', `${who} typed a wrong Google Cloud project ID or email address ${POLICY_TRIES} times within ${mins} minutes: changes from that account are locked for ${mins} minutes. If it wasn't them, someone may be using their signed-in session: ask them, and sign them out of Google (Admin console → Users → Sign out). Status → Activity → What admins did lists each try.`).catch(() => {});
+        },
+        // A try while locked (0.5.30): noted once per lock, so repeated tries can't flood Activity.
+        lockedTry: async (who, what = 'a setting') => {
+            const lock = (wrongIds.get(who) || [])[0];
+            if (lockedNoted.get(who) === lock) return;
+            lockedNoted.set(who, lock);
+            await store.addEvent({ kind: 'denied', admin: true, by: who, text: `${who} tried to change ${what} while locked after ${POLICY_TRIES} wrong entries: refused (more tries during this lock aren't noted).` }).catch(() => {});
         },
         clear: (who) => wrongIds.delete(who)
     };
@@ -315,11 +332,11 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         return Object.assign(await k.status(), { on: !!cfg.safeBrowsing, working: await safeBrowsingOn() });
     };
     // The project ID typed in for a change (as for the policy): null when right, else the answer to give.
-    const projectCheck = (admin, body) => {
+    const projectCheck = async (admin, body, what) => {
         const expected = expectedProject(cfg);
         if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)), then try again.', status: 409 };
-        if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
-        if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) { wrong.add(admin.email); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
+        if (wrong.locked(admin.email)) { await wrong.lockedTry(admin.email, what); return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 }; }
+        if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) { await wrong.add(admin.email, what); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
         wrong.clear(admin.email);
         return null;
     };
@@ -390,7 +407,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         // version destroyed, Safe Browsing turned off). The project ID typed in, as for the policy.
         'POST /api/safe-browsing/key': async (q, body, admin) => {
             if (!sbKey()) return { error: 'Safe Browsing isn\'t available here.', status: 409 };
-            const bad = projectCheck(admin, body);
+            const bad = await projectCheck(admin, body, 'the Safe Browsing key');
             if (bad) return bad;
             if (!once(`sb-key:${admin.email}`)) return { error: 'Saved a moment ago.', status: 429 };
             const key = String(body.apiKey || '').trim();
@@ -405,7 +422,7 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         },
         'POST /api/safe-browsing/remove': async (q, body, admin) => {
             if (!sbKey()) return { error: 'Safe Browsing isn\'t available here.', status: 409 };
-            const bad = projectCheck(admin, body);
+            const bad = await projectCheck(admin, body, 'the Safe Browsing key (remove it)');
             if (bad) return bad;
             if (!once(`sb-key:${admin.email}`)) return { error: 'Changed a moment ago.', status: 429 };
             if (cfg.safeBrowsing) await service.setPolicy('safeBrowsing', false, admin.email);
@@ -531,9 +548,10 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             if (!POLICY_KEYS.includes(key)) return { error: 'Choose a setting to change.', status: 400 };
             const expected = expectedProject(cfg);
             if (!expected) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Upgrade from Cloud Shell once (bash deploy/update.sh (or, from an unzipped new version, bash deploy/upgrade.sh)), then try again.', status: 409 };
-            if (wrong.locked(admin.email)) return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 };
+            const what = POLICY_WHAT[key] || `the setting ${key}`;
+            if (wrong.locked(admin.email)) { await wrong.lockedTry(admin.email, what); return { error: 'Too many wrong project IDs. Try again in 10 minutes.', status: 429 }; }
             if (String(body.projectId || '').trim().toLowerCase() !== expected.toLowerCase()) {
-                wrong.add(admin.email);
+                await wrong.add(admin.email, what);
                 return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 };
             }
             wrong.clear(admin.email);

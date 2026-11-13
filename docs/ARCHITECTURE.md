@@ -94,7 +94,8 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
   default: Google charges for it), Cloud Monitoring also emails when Gmail's notifications wait in Pub/Sub over
   30 minutes.
 - **Audit trail (0.5.29).** Activity is kept `AUDIT_DAYS` (a year by default), apart from the email records;
-  admins' downloads of the email list or of Activity, and their first visit to the dashboard each day, are
+  admins' downloads of the email list or of Activity, their first visit to the dashboard each day, and every
+  wrong project ID or email address (what it was for and which try, never what was typed; 0.5.30) are
   noted too. `GET /api/activity` takes any period kept, a kind and words to look for; `/api/activity.csv`
   downloads it (noted). With `AUDIT_LOG=on` (off by default) each entry is also a structured log line
   (`spruceAudit`), which a sink routes to the log bucket `spruce-audit`, kept `AUDIT_LOG_DAYS`. The hourly `spruce-sync-feeds` job runs a

@@ -111,11 +111,20 @@ test('the dashboard: CSV downloads and opening it are recorded; Activity over a 
         assert.ok((await mine()).some(e => e.kind === 'export' && /downloaded 1 Activity entry as CSV \(last 365 days, filtered\)/.test(e.text)));
         // Five wrong project IDs: locked, and an alert.
         const post = (b) => fetch(`${base}/api/policy`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: JSON.stringify(b) });
-        for (let i = 0; i < 5; i++) assert.equal((await post({ key: 'mode', value: 'monitor', projectId: `wrong-${i}` })).status, 403);
-        assert.equal((await post({ key: 'mode', value: 'monitor', projectId: 'maple-mail-protection' })).status, 429, 'locked');
-        await new Promise(r => setTimeout(r, 50));
+        for (let i = 0; i < 5; i++) assert.equal((await post({ key: i < 3 ? 'mode' : 'allowDomains', value: 'monitor', projectId: `wrong-project-${i}` })).status, 403);
+        for (let i = 0; i < 3; i++) assert.equal((await post({ key: 'mode', value: 'monitor', projectId: 'maple-mail-protection' })).status, 429, 'locked');
         assert.deepEqual(warned.map(w => w.spruceAlert), ['lockout']);
         assert.match(warned[0].message, /^demo-admin@example\.org typed a wrong Google Cloud project ID or email address 5 times within 10 minutes/);
+        // 0.5.30: every wrong try in What admins did (not emailed), what it was for, never what was typed; tries
+        // while locked noted once.
+        const denied = (await mine()).filter(e => e.kind === 'denied').sort((a, b) => a.at - b.at).map(e => e.text);
+        assert.deepEqual(denied.slice(0, 5).map(t => (/\(try (\d) of 5 within 10 minutes\)/.exec(t) || [])[1]), ['1', '2', '3', '4', '5']);
+        assert.match(denied[0], /^demo-admin@example\.org typed a wrong Google Cloud project ID to change the mode \(try 1 of 5 within 10 minutes\): nothing was changed\.$/);
+        assert.match(denied[4], /to change the allowlisted domains \(try 5 of 5 within 10 minutes\): nothing was changed\. Changes from this account are locked for 10 minutes\.$/);
+        assert.equal(denied.length, 6, 'five tries, and one note for the three tries while locked');
+        assert.match(denied[5], /^demo-admin@example\.org tried to change the mode while locked after 5 wrong entries: refused/);
+        assert.ok(!JSON.stringify(await store.listEvents(0, { limit: 10000 })).includes('wrong-project'), 'what was typed is never kept');
+        assert.equal((await (await fetch(`${base}/api/activity?days=7&kind=alert`)).json()).events.filter(e => e.kind === 'denied').length, 0, 'a wrong try isn\'t an alert');
     } finally { await new Promise(r => srv.close(r)); }
 });
 
@@ -127,4 +136,22 @@ test('AUDIT_LOG: each Activity entry is also written as a log line (for the spru
     assert.equal(lines.length, 1);
     assert.equal(cfgOf().auditLog, false, 'off by default');
     assert.equal(cfgOf({ AUDIT_LOG: 'true' }).auditLog, true);
+});
+
+test('0.5.30: a wrong project ID or email address on Settings → Update is noted too, never what was typed', async () => {
+    const cfg = loadConfig({ DEMO: '1', MODE: 'monitor', ORG_DOMAINS: ORG });
+    const store = new MemoryStore();
+    const service = new Service({ cfg, store, gmail: {}, log: { error() {}, warn() {} } });
+    const srv = http.createServer(createApp({ cfg, store, service }));
+    await new Promise(r => srv.listen(0, r));
+    const post = (b) => fetch(`http://127.0.0.1:${srv.address().port}/api/update`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'spruce-dashboard' }, body: JSON.stringify(b) });
+    try {
+        assert.equal((await post({ agree: true, projectId: 'demo-project', email: 'someone.else@maple-schools.example', version: '9.9.9' })).status, 403);
+        assert.equal((await post({ agree: true, projectId: 'not-this-one', email: 'demo-admin@example.org', version: '9.9.9' })).status, 403);
+        const texts = (await store.listEvents(0)).filter(e => e.kind === 'denied').map(e => e.text).sort();
+        assert.deepEqual(texts, [
+            'demo-admin@example.org typed a wrong Google Cloud project ID to change the version installed (an update to 9.9.9) (try 2 of 5 within 10 minutes): nothing was changed.',
+            'demo-admin@example.org typed a wrong email address (not the one they are signed in with) to change the version installed (an update to 9.9.9) (try 1 of 5 within 10 minutes): nothing was changed.']);
+        assert.ok(!JSON.stringify(await store.listEvents(0)).match(/someone\.else|not-this-one/));
+    } finally { await new Promise(r => srv.close(r)); }
 });

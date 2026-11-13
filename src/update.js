@@ -112,9 +112,11 @@ async function startUpdate({ cfg, store, releases, scheduler, service, admin, bo
     if (body.agree !== true) return { error: 'Tick "I agree" to update. Nothing was changed.', status: 400 };
     const project = expectedProject(cfg);
     if (!project) return { error: 'This dashboard doesn\'t know its Google Cloud project (GOOGLE_CLOUD_PROJECT). Run bash deploy/install.sh once, then try again.', status: 409 };
-    if (wrong.locked(admin.email)) return { error: 'Too many wrong answers. Try again in 10 minutes.', status: 429 };
-    if (String(body.projectId || '').trim().toLowerCase() !== project.toLowerCase()) { wrong.add(admin.email); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
-    if (String(body.email || '').trim().toLowerCase() !== String(admin.email || '').toLowerCase()) { wrong.add(admin.email); return { error: 'That isn\'t the email address you are signed in with. Nothing was changed.', status: 403 }; }
+    // (each wrong entry noted in Activity, 0.5.30; what was typed never)
+    const what = `the version installed (an update to ${String(body.version || 'the newest approved version').slice(0, 20)})`;
+    if (wrong.locked(admin.email)) { if (wrong.lockedTry) await wrong.lockedTry(admin.email, what); return { error: 'Too many wrong answers. Try again in 10 minutes.', status: 429 }; }
+    if (String(body.projectId || '').trim().toLowerCase() !== project.toLowerCase()) { await wrong.add(admin.email, what); return { error: 'That isn\'t the Google Cloud project ID of this service. Nothing was changed.', status: 403 }; }
+    if (String(body.email || '').trim().toLowerCase() !== String(admin.email || '').toLowerCase()) { await wrong.add(admin.email, what, 'email address (not the one they are signed in with)'); return { error: 'That isn\'t the email address you are signed in with. Nothing was changed.', status: 403 }; }
     wrong.clear(admin.email);
     const info = await updateInfo({ cfg, store, releases, cloudrun });
     // (refused here too, whatever the page showed: a manual install waiting, or anything else)

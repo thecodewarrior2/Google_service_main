@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.30: Every wrong project ID or email address is noted in Activity
+
+- Each wrong Google Cloud project ID (Settings → Policy, Allowlist, Safe Browsing, Update) or wrong email
+  address (Settings → Update) is noted in Status → Activity → **What admins did**: who, what they were
+  changing, and which try it was ("try 2 of 5 within 10 minutes"). Never what was typed: someone could paste
+  something private into the box by mistake. Not emailed.
+- The fifth within 10 minutes still locks changes from that account, and that is an alert (emailed, 0.5.29).
+  A try while locked is noted once per lock, so repeated tries can't flood Activity.
+- Tests: `test/audit.test.js`.
+
 ## 0.5.29: What was missed: more alerts, a longer and searchable Activity, and two optional extras
 
 **New alerts** (emailed, at most once a day while it lasts):

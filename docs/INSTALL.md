@@ -258,7 +258,7 @@ When it finishes, it prints the **dashboard address**.
   upgrade runs `install.sh`, which sets up Secret Manager for the key.
 - **Audits: Status → Activity.** Every alert, every admin's action (policy and allowlist changes, decisions on
   emails and campaigns, updates, the Safe Browsing key, downloads of the email list or of Activity, opening the
-  dashboard, once a day each) and every error, kept a year (`AUDIT_DAYS`, 30 to 1,825 days; the email records
+  dashboard, once a day each; every wrong project ID or email address, with which try it was) and every error, kept a year (`AUDIT_DAYS`, 30 to 1,825 days; the email records
   themselves are kept `RETENTION_DAYS`). Choose the period, a kind, words to look for, and **Download CSV**
   for an auditor. Two options Google charges for, both **off by default** (`deploy/settings.env`, then
   `bash deploy/upgrade.sh` or `install.sh`; the installer says what each costs):
