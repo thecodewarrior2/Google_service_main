@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.39: Settings → Link clicks says why Google refused, and what to do
+
+- **Test, and the `click-logs` alert,** now explain Google's refusal instead of showing its raw answer:
+  "not authorized to read activity records" means the admin's role lacks the **Reports** privilege (with where
+  to tick it: Admin console → Account → Admin roles → the role → Privileges → Admin console privileges →
+  Reports; the directory admin's role is "SPRUCE group reader"); a token refused means the
+  `admin.reports.audit.readonly` scope isn't on the domain-wide delegation entry.
+- The page and docs/INSTALL.md say that the directory admin filled in by default needs that privilege first.
+- Tests: `test/recheck.test.js`.
+
 ## 0.5.38: Settings → Update says when GitHub was asked, and Check again asks it now
 
 The Update page keeps GitHub's answer (the newest approved version) 10 minutes, and didn't say so: a version

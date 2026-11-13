@@ -89,7 +89,10 @@ email and whether it had been opened.
    ```
 
 3. On the dashboard, **Settings → Link clicks**: type an admin account with the **Reports** privilege (a
-   super admin has it; the service only reads with it), **Test**, then **Turn on** with the project ID.
+   super admin has it; the service only reads with it), **Test**, then **Turn on** with the project ID. To use
+   the directory admin (step 2, filled in by default), give its role the privilege first: Admin console →
+   Account → Admin roles → **SPRUCE group reader** → Privileges → Admin console privileges → tick **Reports** →
+   Save. Without it, Google answers "not authorized to read activity records", and Test says so.
 
 Logs can take a few hours to show a click: each re-checked email is looked at again every 3 hours, 4 times.
 A click found is an alert (docs/ALERTS.md, "A link was clicked").

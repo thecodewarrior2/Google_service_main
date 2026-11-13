@@ -147,9 +147,11 @@ Mail is still checked; one source of evidence is missing until it comes back.
   Gmail's logs about re-checked mail.
 - **What it means for mail:** nothing for the checks. Email → Re-checked can't say who clicked a link in
   mail found to be phishing after delivery; it still says who got it and whether it was opened.
-- **Usually:** the scope `https://www.googleapis.com/auth/admin.reports.audit.readonly` isn't on the
-  service's domain-wide delegation entry, the admin typed on Settings → Link clicks lost the Reports
-  privilege, or the Workspace edition has no Gmail logs in the Reports API.
+- **Usually:** the admin typed on Settings → Link clicks doesn't have the Reports privilege (Google: "not
+  authorized to read activity records"; for the directory admin, tick Reports on its SPRUCE group reader
+  role), the scope `https://www.googleapis.com/auth/admin.reports.audit.readonly` isn't on the service's
+  domain-wide delegation entry, or the Workspace edition has no Gmail logs in the Reports API. The alert says
+  which, and what to do.
 - **What to do:** Settings → Link clicks → Test says what Google answered. docs/INSTALL.md, "Link clicks".
   Emailed at most once a day.
 

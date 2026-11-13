@@ -237,3 +237,25 @@ test('suspicious mail is checked again an hour and a day after it arrived', asyn
     assert.deepEqual([r.state, r.recheck.outcome, r.recheck.source, r.recheck.round, r.laterChecks], ['moved', 'moved', 'later', 2, 2]);
     assert.match(r.why, /checked again a day after it arrived/);
 });
+
+test('0.5.39: Link clicks\' Test explains Google\'s refusal: the Reports privilege missing, or the scope', async () => {
+    const t = setup();
+    const { GoogleApiError } = require('../src/gmail/client');
+    t.gmail.gmailEvents = async () => { throw new GoogleApiError(401, '{ "error": { "code": 401, "message": "Access denied. You are not authorized to read activity records." } }', `GET /spruce-directory%40${ORG}/applications/gmail`); };
+    let r = await t.svc.testClickLogs(`spruce-directory@${ORG}`, `it@${ORG}`);
+    assert.equal(r.ok, false);
+    assert.match(r.why, /spruce-directory@maple-schools\.example isn't allowed to read Google's activity reports: its admin role doesn't have the Reports privilege/);
+    assert.match(r.fix, /Admin roles → the role .* \(the directory admin's is "SPRUCE group reader"\) → Privileges → Admin console privileges → tick Reports/);
+    assert.equal((await t.store.getState('clickLogsTest')).why, r.why);
+    t.gmail.gmailEvents = async () => { throw new Error(`token for spruce-directory@${ORG}: HTTP 401 {"error":"unauthorized_client"} (is domain-wide delegation set up for https://www.googleapis.com/auth/admin.reports.audit.readonly?)`); };
+    r = await t.svc.testClickLogs(`spruce-directory@${ORG}`, `it@${ORG}`);
+    assert.match(r.why, /scope admin\.reports\.audit\.readonly isn't on its domain-wide delegation entry/);
+    assert.match(r.fix, /Manage Domain Wide Delegation .* add https:\/\/www\.googleapis\.com\/auth\/admin\.reports\.audit\.readonly/);
+    // The hourly look says the same in its alert.
+    await t.svc.setClickLogs(true, `spruce-directory@${ORG}`, `it@${ORG}`);
+    await t.store.saveRecord({ key: `ana@${ORG}|m1`, user: `ana@${ORG}`, messageId: 'm1', rfc822MessageId: 'x@y.example', processedAt: t.clock.get(), receivedAt: t.clock.get(), action: 'move', state: 'moved', sender: { address: 'a@b.example' }, recheck: { at: t.clock.get(), outcome: 'moved' } });
+    t.gmail.gmailEvents = async () => { throw new GoogleApiError(401, 'Access denied. You are not authorized to read activity records.', 'GET /x'); };
+    await t.svc.followClicks();
+    const alert = (await t.store.listEvents(0)).find(e => e.kind === 'click-logs');
+    assert.match(alert.text, /isn't allowed to read Google's activity reports.*tick Reports/);
+});

@@ -1780,6 +1780,7 @@
             testBtn.disabled = true; testOut.textContent = 'Reading the last day of this admin\'s own Gmail log…';
             try {
                 const o = await api('/api/clicks/test', { method: 'POST', body: { admin: admin.value } });
+                if (!o.ok && o.why) { testOut.textContent = ''; testOut.append(h('b', { class: 'bad-text', text: `${o.why} ` }), h('span', { text: o.fix || '' })); return; }
                 testOut.textContent = !o.ok ? `Google refused: ${o.error}` : !o.events ? 'Google answered, with no events for the last day (no mail read, or this edition has no Gmail logs in the Reports API).'
                     : o.named ? `Working: ${num(o.events)} events in the last day, ${num(o.named)} naming their email. Clicks can be matched to emails.` : `Google answered with ${num(o.events)} events, but none names its email: clicks can't be matched to emails in this domain.`;
             } catch (e) { testOut.textContent = `Couldn't test: ${e.message}`; }
@@ -1811,7 +1812,7 @@
                 h('ol', { class: 'steps' },
                     h('li', {}, h('b', { text: 'A Google Workspace edition with Gmail logs in the Reports API ' }), '(Gmail log events, not in every edition). To check: Admin console → Reporting → Audit and investigation → Gmail log events; if it is there and shows events, the logs exist. The Test button above says what Google answers.'),
                     h('li', {}, h('b', { text: 'One more scope on the service\'s domain-wide delegation: ' }), h('code', { text: 'https://www.googleapis.com/auth/admin.reports.audit.readonly' }), '. Admin console → Security → Access and data control → API controls → Manage Domain Wide Delegation → the service\'s client ID → Edit, add it to the line, Authorize (docs/INSTALL.md, "Link clicks").'),
-                    h('li', {}, h('b', { text: 'An admin account with the Reports privilege ' }), '(a super admin has it), typed above: the service reads the logs with its rights. It reads only; nothing is changed.'),
+                    h('li', {}, h('b', { text: 'An admin account with the Reports privilege ' }), '(a super admin has it), typed above: the service reads the logs with its rights. It reads only; nothing is changed. The directory admin filled in above doesn\'t have it until you tick Reports on its role: Admin console → Account → Admin roles → SPRUCE group reader → Privileges → Admin console privileges → Reports.'),
                     h('li', {}, 'Test, then Turn on (with the project ID). Changes are noted in Status → Activity → What admins did.')))];
     }
 

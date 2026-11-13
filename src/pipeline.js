@@ -112,6 +112,20 @@ function campaignOf(senderDomain, subject, user) {
     return { key, label: `${senderDomain}: ${s || '(no subject)'}`.slice(0, 160) };
 }
 
+// What Google refusing Gmail's logs means, and what to do (0.5.39; Settings → Link clicks): { why, fix }.
+// "not authorized to read activity records": the admin's role lacks the Reports privilege; a token refused:
+// the scope isn't on the domain-wide delegation entry.
+function reportsProblem(e, admin) {
+    const msg = String((e && e.message) || e || '');
+    if (/token for .*(unauthorized_client|access_denied|invalid_grant)|domain-wide delegation set up/i.test(msg)) return {
+        why: 'Google didn\'t give the service access to Gmail\'s logs: the scope admin.reports.audit.readonly isn\'t on its domain-wide delegation entry (or the account doesn\'t exist).',
+        fix: 'Admin console → Security → Access and data control → API controls → Manage Domain Wide Delegation → the service\'s client ID → Edit: add https://www.googleapis.com/auth/admin.reports.audit.readonly to the line, then Authorize. Test again in a few minutes.' };
+    if (/not authorized to read activity records|HTTP 40[13]\b/i.test(msg)) return {
+        why: `${admin} isn't allowed to read Google's activity reports: its admin role doesn't have the Reports privilege.`,
+        fix: `Admin console → Account → Admin roles → the role ${admin} has (the directory admin's is "SPRUCE group reader") → Privileges → Admin console privileges → tick Reports → Save. Or type a super admin's address instead. Test again in a few minutes (role changes take a little while).` };
+    return { why: `Google answered: ${msg.replace(/\s+/g, ' ').slice(0, 200)}`, fix: 'docs/INSTALL.md, "Link clicks".' };
+}
+
 // The new entries of the lists' downloads, taken out of feeds.sync's answer (they don't go into the
 // hourly job's response or the dashboard's): [{ name, kind, entries }].
 function takeAdded(out) {
@@ -1449,10 +1463,10 @@ class Service {
                 checked++;
                 await this.store.updateRecord(r.key, { recheck: Object.assign({}, r.recheck, { clicks: c }) });
                 if (c.clicked) clicked.push(Object.assign({}, r, { clickedAt: c.clickedAt }));
-            } catch (e) { failed = String((e && e.message) || e).slice(0, 300); break; }
+            } catch (e) { const p = reportsProblem(e, cl.admin); failed = `${p.why} ${p.fix}`; break; }
         }
         await this.store.setState('clickLogsHealth', { at: now, ok: !failed, error: failed, checked });
-        if (failed) await this.alertDaily('click-logs', `Gmail's logs couldn't be read for re-checked mail (Settings → Link clicks, as ${cl.admin}): ${failed}. Usually the admin.reports.audit.readonly scope is missing from the domain-wide delegation, or the admin lacks the Reports privilege. More: docs/ALERTS.md, "Gmail's logs couldn't be read".`);
+        if (failed) await this.alertDaily('click-logs', `Gmail's logs couldn't be read for re-checked mail (Settings → Link clicks, as ${cl.admin}): ${failed} More: docs/ALERTS.md, "Gmail's logs couldn't be read".`);
         if (clicked.length) {
             const who = clicked.slice(0, 5).map(r => `${r.user} (an email from ${r.sender.address}${r.clickedAt ? `, at ${new Date(r.clickedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''})`);
             await this.alert('recheck-click', `A link was clicked in mail later found to be phishing: ${who.join('; ')}${clicked.length > 5 ? ` and ${clicked.length - 5} more` : ''}. Their password may have been given away: consider resetting it, ending their sessions and checking their sign-ins (Admin console). Dashboard: Email → Re-checked. More: docs/ALERTS.md, "A link was clicked".`, { clicked: clicked.length });
@@ -1479,9 +1493,10 @@ class Service {
         let evs;
         try { evs = await this.gmail.gmailEvents(a, a, { startTime: now - DAY, endTime: now, max: 200 }); }
         catch (e) {
-            const error = String((e && e.message) || e).slice(0, 300);
-            await this.store.setState('clickLogsTest', { at: now, by, admin: a, ok: false, error });
-            return { ok: false, error };
+            const p = reportsProblem(e, a);
+            const error = `${p.why} ${p.fix}`;
+            await this.store.setState('clickLogsTest', { at: now, by, admin: a, ok: false, error, why: p.why, fix: p.fix });
+            return { ok: false, error, why: p.why, fix: p.fix };
         }
         const named = evs.filter(eventHasMessageId).length;
         const t = { at: now, by, admin: a, ok: true, events: evs.length, named };
