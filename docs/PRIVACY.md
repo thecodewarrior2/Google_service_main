@@ -79,6 +79,9 @@ arrived: opened (first time) and link clicked. Only the events naming that email
 whether and when it was first opened and a link clicked, nothing else from the logs.
 
 It also keeps, shared by every instance:
+- **the look-alike watch** (0.5.36): the look-alikes of your domains that exist (name, when found, mail
+  servers and website yes or no, registry age, an admin's mark and who made it), and how far the day's pass
+  has got (`state/lookalikeWatch`);
 - **the phishing lists:** gzipped in Firestore, replaced daily, with each list's last download (when, and the error if it failed: `state/feedHealth`);
 - **registry dates of domains:** 30 days; an unknown one, a day.
 
@@ -154,6 +157,7 @@ can be turned off):
 | **Cloudflare Security DNS** (`security.cloudflare-dns.com`, and `cloudflare-dns.com` to tell a block from a missing domain) | host names: the sites links point to, and the sender's domain. Never paths, addresses or anything else | Cloudflare's resolver privacy commitments (it doesn't sell or keep identifying query data) | `CLOUDFLARE_THREATS` |
 | **Google Safe Browsing** (Lookup API v4). **Off by default:** nothing is sent until an admin saves an API key and turns it on (Settings → Safe Browsing; or `SAFE_BROWSING=true` with `SAFE_BROWSING_KEY`). The key is kept in Secret Manager only, never in Firestore, the logs or the dashboard's answers | link addresses, without the `#…` part, and for one-time links (password resets, sign-in, unsubscribe) without the query string, so tokens never leave | Google's API terms. The Lookup API is for non-commercial use, as a district's own protection is; otherwise use Google's Web Risk API | Settings → Safe Browsing (`SAFE_BROWSING`, `SAFE_BROWSING_KEY`) |
 | **Phishing lists** (OpenPhish, HaGeZi, TweetFeed and Sefinek on GitHub, Phishing Army) | nothing about email: the lists are downloaded once a day and matched in the service | downloads only | `PHISHING_LISTS` |
+| **Cloudflare's public resolver** (`cloudflare-dns.com`), for the look-alike watch (0.5.36) | look-alike names of your own domains, made by the service (about 80 an hour, a pass a day): nothing from any email | Cloudflare's resolver privacy commitments | `LOOKALIKE_WATCH` |
 | **Domain registries** (RDAP, found through IANA's list) | domain names: up to 3 unfamiliar link domains per email and the sender's domain, each at most once a month for the whole district | public registration records | `SITE_AGE` |
 
 **Not sent:**

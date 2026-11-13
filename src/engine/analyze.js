@@ -121,7 +121,10 @@ async function analyze(facts, ctx = {}) {
         ...safe(() => (relay ? (relay.address ? E.senderContextSigns(relay.address, org, !!ctx.firstTime) : []) : E.senderContextSigns(facts.senderAddress, org, !!ctx.firstTime))),
         ...linkSignals(judged),
         ...att.signals,
-        ...net.signals
+        ...net.signals,
+        // A look-alike of the organization's domain that the look-alike watch found registered (0.5.36):
+        // ctx.lookalikes, domain → 'strong' (new, or marked a threat) or 'weak' (there before the watch).
+        ...safe(() => watchedLookalikeSigns(E, facts, judged, ctx.lookalikes))
     ];
     const base = { status: ctx.trusted ? 'trusted' : 'clean', reasons: [], move: false };
     const verdict = E.applyEmailSignals(base, signals) || base;
@@ -129,7 +132,9 @@ async function analyze(facts, ctx = {}) {
     // phishing list has, a sender on a list or blocked, a brand-new look-alike sender domain, or Gmail's
     // DMARC check failing. Rules plus one of these is "strong" evidence (the brakes never hold it).
     const SENDER_CONFIRMS = new Set(['scam-sender-list', 'sender-domain-blocked', 'sender-domain-listed', 'young-lookalike-sender']);
+    const WATCH_CONFIRMS = new Set(['watched-lookalike-sender', 'watched-lookalike-reply-to']);
     const confirmedBy = [
+        signals.some(s => WATCH_CONFIRMS.has(s.kind)) ? 'the sender or the reply address is a newly registered look-alike of your domain' : '',
         judged.some(j => j.network && j.severity === 'danger') ? 'a link is blocked or on a phishing list' : '',
         net.signals.some(s => SENDER_CONFIRMS.has(s.kind)) ? 'the sender is on a list, blocked, or a new look-alike' : '',
         facts.auth && facts.auth.dmarc === 'fail' ? 'Gmail\'s DMARC check failed' : ''
@@ -185,6 +190,30 @@ async function analyze(facts, ctx = {}) {
         // Only for the retraining export (src/training.js), which takes the people out: never stored.
         aiFacts: ctx.keepAiFacts ? aiFacts : undefined
     };
+}
+
+// Mail from, replying to, or linking to a domain the look-alike watch found (src/lookalike.js): new or
+// marked a threat (strong): the sender 5, the reply address 5, a link 4; there before the watch began and
+// not reviewed (weak): 3, 3, 2. The organization's own domains never count.
+function watchedLookalikeSigns(E, facts, judged, lookalikes) {
+    if (!lookalikes || !lookalikes.size) return [];
+    const regOf = (h) => { const x = String(h || '').toLowerCase(); try { return E.registrableDomain(x) || x; } catch (e) { return x; } };
+    const at = (a) => String(a || '').slice(String(a || '').lastIndexOf('@') + 1).toLowerCase();
+    const out = [];
+    const sender = regOf(at(facts.senderAddress));
+    const sw = lookalikes.get(sender);
+    if (sw) out.push(sw === 'strong'
+        ? { weight: 5, kind: 'watched-lookalike-sender', text: `The sender's domain ${sender} imitates your organization's, and was registered recently (the look-alike watch found it; Status → Look-alikes).` }
+        : { weight: 3, kind: 'known-lookalike-sender', text: `The sender's domain ${sender} imitates your organization's (the look-alike watch lists it; it was there before the watch began).` });
+    const reply = (facts.replyTo || []).map(a => regOf(at(a))).find(d => d && d !== sender && lookalikes.get(d));
+    if (reply) out.push(lookalikes.get(reply) === 'strong'
+        ? { weight: 5, kind: 'watched-lookalike-reply-to', text: `Replies go to ${reply}, a recently registered imitation of your organization's domain (the look-alike watch found it).` }
+        : { weight: 3, kind: 'known-lookalike-reply-to', text: `Replies go to ${reply}, an imitation of your organization's domain (the look-alike watch lists it).` });
+    const link = (judged || []).map(j => regOf(hostOf(j.finalUrl || j.url))).find(d => d && d !== sender && lookalikes.get(d));
+    if (link) out.push(lookalikes.get(link) === 'strong'
+        ? { weight: 4, kind: 'watched-lookalike-link', text: `A link goes to ${link}, a recently registered imitation of your organization's domain (the look-alike watch found it).` }
+        : { weight: 2, kind: 'known-lookalike-link', text: `A link goes to ${link}, an imitation of your organization's domain (the look-alike watch lists it).` });
+    return out;
 }
 
 // The people in an email's Reply-To, Cc and To lines (name and address each, as the mail parser read

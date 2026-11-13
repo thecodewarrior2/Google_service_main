@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.36: The look-alike watch
+
+Payroll and vendor fraud often starts with a domain made to pass for the district's own. Now the service looks
+for them (`src/lookalike.js`):
+
+- **Which names:** from `ORG_DOMAINS`, a fixed list: the domain's name with a letter left out, doubled or
+  swapped, or replaced by a look-alike (0/o, 1/l, rn/m, vv/w…), a hyphen taken out, under the usual endings
+  (.com, .org, .net, .us, .info, .co and your own), the forms people expect of a district (`name-k12.org`,
+  `namek12fl.com`, `nameschools.com`, `name-county.org`…), and the name with a role added (`name-payroll.com`,
+  `namehr.org`). Nothing under k12.st.us (only the state registers there). About 300 to 450 names a domain.
+- **How:** each hour the next 80 are asked of Cloudflare's public DNS resolver (`cloudflare-dns.com`): does
+  the name exist (NS), does it have mail servers (MX, a null MX doesn't count) and a website (A). A pass a
+  day. A found one's registry date (RDAP) says how new it is. Only the candidate names are sent, nothing
+  about any email.
+- **The first pass takes stock:** what exists already is listed ("there before the watch"), no alert. A name
+  that appears afterwards, or one there before but registered in the last 30 days, is **new**: an alert
+  (`lookalike`), a red banner on Overview, and a strong sign in mail.
+- **In mail:** from a new look-alike (or one marked a threat): the sender's domain 5, the reply address 5, a
+  link 4, and the sender or reply address is strong evidence (the brakes never hold it). From one there before
+  the watch: 3, 3, 2.
+- **Status → Look-alikes (new):** the watch's progress, each domain found (when, registered, mail servers,
+  website, how it counts), and an admin's mark, with the project ID: **It's ours** (a defensive
+  registration: no sign), **Harmless** (someone else's, unrelated: no sign), **A threat** (strong), **Watch
+  as found**. Marks are noted in Activity. A domain that lapses is shown as gone; registered again, it is new.
+- **`LOOKALIKE_WATCH`** (on by default) turns it off. Nothing new for install.sh.
+- The demo lists four made-up look-alikes, one new.
+- Tests: `test/lookalike.test.js`.
+
 ## 0.5.35: Delivered mail is checked again when a list learns of it; Email → Re-checked; optional link clicks
 
 Phishing sites are often put on a list hours after their email arrived. Now delivered mail is checked again:

@@ -298,6 +298,10 @@
                     h('a', { href: '#/about?show=lists', text: 'Details, and Re-check, on the About page' }), '.')));
         }
         if (d.rechecked) out.push(recheckBanner(d.rechecked));
+        // New look-alikes of your domain, until an admin marks them (0.5.36).
+        if (d.lookalikes && d.lookalikes.length) out.push(h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'),
+            h('div', { class: 'grow' }, h('b', { text: `${d.lookalikes.length === 1 ? 'A domain that imitates yours was' : `${num(d.lookalikes.length)} domains that imitate yours were`} registered: ${d.lookalikes.slice(0, 5).join(', ')}${d.lookalikes.length > 5 ? '…' : ''}.` }),
+                ' Mail from them counts as a strong sign of phishing. The admins were sent an alert. ', h('a', { href: '#/lookalikes', text: 'Details, and marking one as the district\'s own: Status → Look-alikes' }), '.')));
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
@@ -1612,6 +1616,41 @@
             d.groups.length ? d.groups.map(group) : h('section', { class: 'card' }, h('div', { class: 'empty', text: `Nothing was found after delivery in the last ${days} days.` }))];
     }
 
+    // --- Status → Look-alikes (0.5.36) -----------------------------------------------------------------
+    // Domains made to pass for yours, found by the look-alike watch, and an admin's mark on each.
+    async function lookalikes() {
+        const d = await api('/api/lookalikes');
+        const STATUS = { new: ['New: a strong sign in mail', 'moved'], threat: ['A threat: a strong sign', 'moved'], baseline: ['There before the watch: a small sign', 'would'],
+            ours: ['The district\'s own: no sign', 'inbox'], harmless: ['Someone else\'s, harmless: no sign', 'inbox'] };
+        const mark = (e) => {
+            const choices = [['ours', 'It\'s ours'], ['harmless', 'Harmless'], ['threat', 'A threat'], ['watch', 'Watch as found']].filter(([k]) => k !== e.status && !(k === 'watch' && (e.status === 'new' || e.status === 'baseline')));
+            const sel = h('select', { 'aria-label': `Mark ${e.domain}` }, choices.map(([k, l]) => h('option', { value: k, text: l })));
+            return h('div', { class: 'mark-lookalike' }, sel, confirmForm('Mark', '/api/lookalikes/mark', () => ({ domain: e.domain, status: sel.value }), (o) => `${o.entry.domain}: ${(STATUS[o.entry.status] || [o.entry.status])[0]}.`));
+        };
+        const pass = !d.on ? 'Off (LOOKALIKE_WATCH=off).' : !d.candidates ? 'Starting: the first names are asked at the next hourly run.'
+            : `${num(d.candidates)} look-alike names of ${d.orgDomains.join(', ')} are asked of Cloudflare's public DNS once a day, about 80 an hour. ${d.cursor < d.candidates ? `This pass: ${num(d.cursor)} of ${num(d.candidates)} asked.` : `Last full pass ${when(d.lastPassAt)}.`}${d.baselineDone ? '' : ' The first pass takes stock: what exists already is listed without an alert.'}`;
+        const fresh = d.found.filter(e => e.status === 'new' && !e.gone);
+        return [h('h1', { text: 'Look-alike domains' }),
+            h('p', { class: 'sub', text: 'Domains made to pass for yours (a letter left out or swapped, another ending, "-k12" or "schools" added…), found when they are registered: payroll and vendor fraud start with one. Mail from them, replies to them and links to them count as signs.' }),
+            fresh.length ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${fresh.length === 1 ? 'A new look-alike was' : `${num(fresh.length)} new look-alikes were`} registered: ${fresh.map(e => e.domain).join(', ')}.` }),
+                ` Mail from ${fresh.length === 1 ? 'it' : 'them'} is a strong sign. If the district registered ${fresh.length === 1 ? 'it' : 'one'} itself, mark it "It's ours".`)) : null,
+            h('section', { class: 'card' }, h('dl', { class: 'kv' },
+                kvRow('The watch', pass),
+                kvRow('How it counts', 'New (registered since the watch began, or in the last 30 days) or marked a threat: the sender\'s domain 5, the reply address 5, a link 4 (strong evidence). There before the watch: 3, 3, 2. The district\'s own, or harmless: nothing.'),
+                kvRow('What is sent', 'Only the look-alike names, to Cloudflare\'s public resolver (cloudflare-dns.com); a registry\'s date for each one found (RDAP). Nothing about any email.'))),
+            h('section', { class: 'card' }, h('h2', { text: `Found (${num(d.found.length)})` }),
+                d.found.length ? dataTable([
+                    { name: 'Domain', get: e => h('span', { class: 'list-name' }, e.status === 'new' && !e.gone ? alertIcon('New') : null, e.domain) },
+                    { name: 'Found', get: e => when(e.first) },
+                    { name: 'Registered', get: e => (typeof e.ageDays === 'number' ? `${num(e.ageDays)} day${e.ageDays === 1 ? '' : 's'} before it was found` : 'not known') },
+                    { name: 'Mail servers', get: e => (e.mx ? 'Yes' : 'No') },
+                    { name: 'Website', get: e => (e.web ? 'Yes' : 'No') },
+                    { name: 'Counts as', get: e => (e.gone ? `Gone (no longer registered, ${when(e.gone)})` : h('div', {}, pill(STATUS[e.status] || [e.status, '']), e.by ? h('div', { class: 'small muted', text: `marked by ${e.by}, ${when(e.at)}` }) : null)) },
+                    { name: '', get: e => (e.gone ? null : mark(e)) }
+                ], d.found, e => (e.status === 'new' && !e.gone ? 'row-alert' : '')) : h('div', { class: 'empty', text: d.candidates ? 'None of the look-alike names exists.' : 'Nothing asked yet.' })),
+            d.demoProjectId ? h('p', { class: 'small muted', text: `Demo mode: the project ID is ${d.demoProjectId}.` }) : null];
+    }
+
     // --- Settings → Link clicks (0.5.35; optional, off by default) ---------------------------------------
     async function clicksPage() {
         const d = await api('/api/clicks');
@@ -1659,13 +1698,13 @@
     }
 
     // --- Routing ---------------------------------------------------------------------------------
-    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, clicks: clicksPage, update: updatePage, about };
+    const ROUTES = { overview, review, campaigns, users, messages, message, check, rechecked, lookalikes, health, readiness, activity, status, settings, allowlist, mailboxes, summary, retraining, safebrowsing: safeBrowsingPage, clicks: clicksPage, update: updatePage, about };
     // The top tabs: Overview, Email, Status, Settings. Email and Status each have a menu on the left; the
     // pages keep their own addresses (#/review, #/health…), so links to them still work. An email's page
     // and "Check an email" belong to Messages.
     const SECTIONS = {
         email: { label: 'Email', pages: [['review', 'Review'], ['campaigns', 'Campaigns'], ['messages', 'Messages'], ['rechecked', 'Re-checked'], ['users', 'Users']] },
-        status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['activity', 'Activity']] },
+        status: { label: 'Status', pages: [['status', 'Service status'], ['health', 'Model health'], ['readiness', 'Readiness'], ['lookalikes', 'Look-alikes'], ['activity', 'Activity']] },
         settings: { label: 'Settings', pages: [['settings', 'Policy'], ['allowlist', 'Allowlist'], ['mailboxes', 'Mailboxes'], ['summary', 'Weekly summary'], ['retraining', 'Retraining'], ['safebrowsing', 'Safe Browsing'], ['clicks', 'Link clicks'], ['update', 'Update'], ['about', 'About']] }
     };
     const PAGE_OF = { message: 'messages', check: 'messages' };

@@ -103,6 +103,7 @@ It also looks things up (`src/intel/`; `docs/PRIVACY.md` says exactly what is se
 | **Google Safe Browsing**: optional, off by default. An admin adds the API key (kept in Secret Manager) and turns it on in Settings → Safe Browsing | link addresses (no `#…`; one-time links without their query) | a listed link is dangerous |
 | **Phishing lists** (OpenPhish, Phishing Army, HaGeZi Threat Intelligence Feeds, TweetFeed, Sefinek) | nothing: downloaded once a day (a list that misses its download: tried again every 3 hours, a red banner on Overview, an alert to the admins, and Settings → About shows it with a Re-check button), matched in the service | listed links are dangerous; a listed sender address or domain is a sign. TweetFeed (domains researchers reported in the last 30 days) is a community report: a reported link is amber and a sign of 2, never dangerous on its own. Your own domains count only as exact listed links and addresses, never as a whole site or domain |
 | **Site age** (registries, RDAP) | domain names, to their own registry | brand-new link sites and sender domains are signs (stronger with sign-in or payment wording) |
+| **The look-alike watch** (0.5.36; `LOOKALIKE_WATCH`): a pass a day over look-alike names of your domains (a letter left out, swapped or replaced, other endings, `-k12`, `schools`…), Status → Look-alikes | those names only, to Cloudflare's public resolver | a newly registered look-alike is an alert; mail from it, replies to it and links to it are strong signs (one there before the watch: a small sign; one marked as yours: none) |
 
 **Reputation check before a newsletter's link is called dangerous.** A link whose text shows a well-known
 site but goes somewhere else is dangerous, except when it goes through the click tracker of the mail
@@ -255,6 +256,10 @@ Settings each have a menu on the left (a row of buttons above the page on a phon
       default) gives the emails admins marked, read from Gmail at that moment with the people taken
       out, as training examples in the extension's format. Nothing is stored. `docs/RETRAINING.md` says
       how to check the file and train the model with it.
+  - **Look-alikes** (0.5.36): the look-alike watch's progress and each domain found that imitates yours
+    (when, registered, mail servers, website, how it counts in mail), with **It's ours**, **Harmless**, **A
+    threat** and **Watch as found** (each with the project ID, noted in Activity). A new one is a red banner
+    on Overview and an alert.
   - **Readiness:** whether monitor mode has shown enough to switch to enforce mode, as checks:
     - time in monitor mode, emails reviewed, false alarms;
     - staff mail failing DMARC, and the busiest hour against the brake;

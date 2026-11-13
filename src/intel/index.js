@@ -5,6 +5,7 @@ const { createThreats } = require('./threats');
 const { createFeeds } = require('./feeds');
 const { createRdap } = require('./rdap');
 const { createSafeBrowsingKey } = require('./sbkey');
+const { createDnsCheck } = require('../lookalike');
 
 // secrets: Secret Manager for the Safe Browsing key (src/secrets.js), when install.sh set it up
 // (SAFE_BROWSING_SECRET); otherwise the key comes from SAFE_BROWSING_KEY, as before 0.5.23.
@@ -18,6 +19,8 @@ function createIntel({ cfg, store, engine, fetch: fetchImpl, version = '0', log 
         sbKey,
         feeds: cfg.phishingLists ? createFeeds({ http, store, engine, log }) : null,
         rdap: cfg.siteAge ? createRdap({ http, store, engine }) : null,
+        // the look-alike watch's lookups (0.5.36): candidate names only, to Cloudflare's public resolver
+        dnsCheck: cfg.lookalikeWatch ? createDnsCheck({ http }) : null,
         http
     };
 }

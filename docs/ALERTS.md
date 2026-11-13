@@ -200,6 +200,19 @@ Mail is still checked; one source of evidence is missing until it comes back.
   added since (Security → Investigation tool, or Reporting → Audit and investigation). Talk to them: what
   did they type in? Email → Re-checked shows when they clicked.
 
+### A look-alike of your domain (`lookalike`)
+- **When:** the look-alike watch (0.5.36) finds a newly registered domain that imitates yours: a letter left
+  out, doubled, swapped or replaced (`maple-schoo1s.org`), another ending, or a district's usual forms
+  (`hardee-k12.org`, `hardeeschools.com`). One alert per hourly run, for every one found in it. Not for those
+  that existed before the watch's first pass (listed, no alert), unless registered in the last 30 days.
+- **What it means:** someone may be preparing payroll, vendor or "the superintendent asks" fraud. From now
+  on, mail from it, replies sent to it and links to it are strong signs of phishing (they move mail with the
+  rules).
+- **What to do:** dashboard, **Status → Look-alikes**: whether it has mail servers or a website, and when it
+  was registered. If your district registered it (a defensive registration), mark it **It's ours**. Otherwise
+  warn the business office and payroll; consider reporting it to the registrar, and blocking it in Gmail
+  (Admin console → Apps → Gmail → Spam, phishing and malware → Blocked senders).
+
 ### A user moved a flagged email to the Inbox (`user-inbox`, `user-release`)
 - **When:** a user took an email the checks flag into their Inbox, or back out of Spam.
 - **What to do:** make sure it's safe, or confirm it as phishing and warn them.

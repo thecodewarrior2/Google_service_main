@@ -368,3 +368,7 @@ ul.plain-list li { margin: 2px 0; overflow-wrap: break-word; word-break: normal;
 .recheck-box.bad { border-left-color: var(--critical); background: var(--critical-soft); }
 .recheck-box b { display: inline-flex; align-items: center; }
 .bad-text { color: var(--critical-text); }
+
+/* 0.5.36: Status → Look-alikes. */
+.mark-lookalike { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.mark-lookalike select { max-width: 100%; }

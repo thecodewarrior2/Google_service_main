@@ -179,6 +179,14 @@ async function buildDemo({ now = Date.now(), cfg }) {
     // listed its site, and the re-check moved every copy still in an Inbox. Some had been opened, one link
     // clicked (Gmail's logs, Settings → Link clicks on); one copy its reader had archived.
     await seedRechecked({ store, staff, intel, raws, cfg, now, r });
+    // The look-alike watch (0.5.36): four made-up look-alikes found, one new (the payroll lure's domain).
+    const H = 3600e3, lv = require('../lookalike').variantsOf(require('../engine/spruce').load(), [ORG]);
+    await store.setState('lookalikeWatch', { cursor: 240, candidates: lv.length, passes: 9, baselineDone: true, passStartedAt: now - 3 * H, lastPassAt: now - 27 * H, found: {
+        'maple-schools-payroll.example': { domain: 'maple-schools-payroll.example', first: now - 6 * DAY + 4 * H, last: now - 3 * H, mx: true, web: true, ageDays: 1, status: 'new', gone: null },
+        'maple-schools.org': { domain: 'maple-schools.org', first: now - 20 * DAY, last: now - 3 * H, mx: true, web: true, ageDays: 2900, status: 'ours', firstStatus: 'baseline', by: `it.director@${ORG}`, at: now - 19 * DAY, gone: null },
+        'maple-school.com': { domain: 'maple-school.com', first: now - 20 * DAY, last: now - 3 * H, mx: false, web: true, ageDays: 1400, status: 'baseline', gone: null },
+        'mapleschools.net': { domain: 'mapleschools.net', first: now - 20 * DAY, last: now - 3 * H, mx: true, web: true, ageDays: 3650, status: 'harmless', firstStatus: 'baseline', by: `it.director@${ORG}`, at: now - 19 * DAY, gone: null } } });
+    store.events.push({ at: now - 6 * DAY + 4 * H, kind: 'lookalike', alert: true, text: 'A domain that imitates yours was registered: maple-schools-payroll.example (mail servers: yes; a website: yes; registered 1 day ago). Mail from it, replies to it and links to it now count as strong signs of phishing. If the district registered it itself, mark it so: dashboard, Status → Look-alikes. More: docs/ALERTS.md, "A look-alike of your domain".' });
     // (the colleague-name check read the demo directory while the made-up mail was judged: as of now)
     const cn = await store.getState('colleagueNames');
     if (cn) await store.setState('colleagueNames', Object.assign({}, cn, { at: now - 20 * 60 * 1000 }));

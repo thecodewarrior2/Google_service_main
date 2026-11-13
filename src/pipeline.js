@@ -23,6 +23,7 @@ const { looksLikeReply } = require('./engine/replychain');
 const training = require('./training');
 const spruce = require('./engine/spruce');
 const { indexOf: recheckIndex, lookFor, eventNames, eventHasMessageId, eventType } = require('./recheck');
+const { variantsOf: lookalikeVariants, weightOf: lookalikeWeight, NEW_DAYS: LOOKALIKE_NEW_DAYS } = require('./lookalike');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -34,6 +35,8 @@ const MAX_TRIES = 3;
 // at once, and the hourly run's time for them.
 const RECHECK_QUEUE_MAX = 3000, RECHECK_FIND_MAX = 3000, RECHECK_PARALLEL = 12, RECHECK_BUDGET_MS = 40 * 1000;
 const RECHECK_RANK = { none: 0, flag: 1, 'would-move': 2, move: 3 };
+// The look-alike watch (0.5.36): candidates asked per hourly run.
+const LOOKALIKE_BATCH = 80;
 const WHERE_WORDS = { archived: 'archived by its reader', spam: 'in Spam', trash: 'in the Trash', inbox: 'in the Inbox' };
 // How long a claim keeps other instances off a message: longer than a request may run (the worker's
 // timeout is 120 s), so only a claim left by an instance that stopped is taken over.
@@ -480,7 +483,7 @@ class Service {
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
         // Judged for the recipient in the organization, if the email names one; else for the admin.
         const mailbox = (facts.to || []).find(a => this.cfg.orgDomains.includes(a.split('@')[1])) || by;
-        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(mailbox), aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(mailbox), aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap() });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
         const domain = (facts.senderAddress.split('@')[1] || '').toLowerCase();
@@ -555,7 +558,7 @@ class Service {
         if (!msg || !msg.raw || !msg.raw.length) fail(404, 'The email is no longer in the mailbox: its text can\'t be read.');
         const facts = await readMessage(msg.raw);
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, keepAiFacts: true, aiInside: this.aiReadsInside() });
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: false, intel: this.intel, keepAiFacts: true, aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap() });
         const skipped = result.ai && result.ai.skipped;
         const reading = !skipped && result.language.english ? await aiReading(result.aiFacts) : null;
         await this.store.addEvent({ kind: 'check', user: rec.user,
@@ -576,7 +579,7 @@ class Service {
         // The sender counts as new if it was on arrival (by now it isn't, and that would change the rules'
         // score, not the model or the checks): from the arrival's signs, kept with them after a re-scan.
         const firstTime = rec.arrival ? !!rec.arrival.firstTime : (rec.signals || []).some(x => x && x.kind === 'first-time');
-        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(rec.user), aiInside: this.aiReadsInside(),
+        const result = await analyze(facts, { mailbox: rec.user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel, colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(rec.user), aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap(),
             threadSize: await this.threadSizeOf(rec.user, rec.threadId, facts) });
         result.allowlistedUnverified = allowlisted && !verified;
         const decision = decide(result, this.cfg, {});
@@ -674,7 +677,7 @@ class Service {
         const allowlisted = isAllowed(this.cfg, facts.senderAddress), verified = senderVerified(facts);
         const threadSize = await this.threadSizeOf(user, msg.threadId, facts);
         const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime: !!who && !learning && now - first < DAY, intel: this.intel,
-            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), shareReach, aiInside: this.aiReadsInside(), threadSize });
+            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), shareReach, aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap(), threadSize });
         result.allowlistedUnverified = allowlisted && !verified;
         const brake = alreadyMoved ? false : await this.brakeOn(now);
         let decision = decide(result, this.cfg, { brake });
@@ -1180,6 +1183,11 @@ class Service {
             const budget = Math.min(15 * 1000, 90 * 1000 - (Date.now() - started));
             if (budget > 0) { const c = await this.followClicks({ budgetMs: budget }); if (c) out.clicks = c; }
         } catch (e) { this.log.error('link clicks:', e); }
+        // The look-alike watch (0.5.36): the next candidates.
+        try {
+            const budget = Math.min(12 * 1000, 95 * 1000 - (Date.now() - started));
+            if (budget > 0) { const l = await this.lookalikeStep({ budgetMs: budget }); if (l) out.lookalikes = l; }
+        } catch (e) { this.log.error('look-alike watch:', e); }
         // An update from Settings → Update that failed, or stopped (0.5.28): the build records it in Activity;
         // the admins are emailed here, once (the build itself can't send the email).
         try { await this.updateProblems(); } catch (e) { this.log.error('the last update\'s outcome:', e); }
@@ -1331,7 +1339,7 @@ class Service {
         // A new sender on arrival stays one (as for an admin's re-scan); unknown for mail not recorded then.
         const firstTime = before ? (before.arrival ? !!before.arrival.firstTime : (before.signals || []).some(x => x && x.kind === 'first-time')) : false;
         const result = await analyze(facts, { mailbox: user, orgDomains: this.cfg.orgDomains, trusted: allowlisted && verified, firstTime, intel: this.intel,
-            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), aiInside: this.aiReadsInside(), threadSize: await this.threadSizeOf(user, msg.threadId, facts) });
+            colleagues: await this.colleagueNames(), selfNameHash: this.selfNameHash(user), aiInside: this.aiReadsInside(), lookalikes: await this.lookalikeMap(), threadSize: await this.threadSizeOf(user, msg.threadId, facts) });
         result.allowlistedUnverified = allowlisted && !verified;
         let decision = decide(result, this.cfg, { brake: await this.brakeOn() });
         const was = before ? before.action : 'none';
@@ -1479,6 +1487,85 @@ class Service {
         const t = { at: now, by, admin: a, ok: true, events: evs.length, named };
         await this.store.setState('clickLogsTest', t);
         return t;
+    }
+
+    // --- The look-alike watch (0.5.36) ------------------------------------------------------------------
+    // src/lookalike.js says what it does. State (state/lookalikeWatch): { cursor, passStartedAt, passes,
+    // baselineDone, lastPassAt, found: { domain: { domain, first, last, mx, web, ageDays, status, gone,
+    // by, at } } }. status: 'baseline' (there before the watch), 'new' (appeared since, or registered in the
+    // last 30 days), 'threat', 'ours', 'harmless' (an admin's marks).
+    async lookalikeMap() {
+        if (this.lookalikeCache && Date.now() - this.lookalikeCache.at < 5 * 60 * 1000) return this.lookalikeCache.map;
+        const map = new Map();
+        try {
+            const w = await this.store.getState('lookalikeWatch');
+            for (const e of Object.values((w && w.found) || {})) { const k = lookalikeWeight(e); if (k) map.set(e.domain, k); }
+        } catch (e) { /* none this time */ }
+        this.lookalikeCache = { at: Date.now(), map };
+        return map;
+    }
+    // The next candidates (a pass a day), within budgetMs; new look-alikes are an alert.
+    async lookalikeStep({ budgetMs = 12000, batch = LOOKALIKE_BATCH } = {}) {
+        if (!this.cfg.lookalikeWatch || !this.intel || !this.intel.dnsCheck || !this.cfg.orgDomains.length) return null;
+        const started = Date.now(), now = this.now();
+        const w = Object.assign({ cursor: 0, passStartedAt: 0, passes: 0, baselineDone: false, lastPassAt: null, found: {} }, await this.store.getState('lookalikeWatch'));
+        const cands = lookalikeVariants(spruce.load(), this.cfg.orgDomains);
+        if (w.cursor >= cands.length || !w.passStartedAt) {
+            if (w.passStartedAt && now - w.passStartedAt < DAY) return { idle: true };
+            w.cursor = 0; w.passStartedAt = now;
+        }
+        const newly = [];
+        let asked = 0, failed = 0;
+        while (w.cursor < cands.length && asked < batch && Date.now() - started < budgetMs) {
+            const part = cands.slice(w.cursor, Math.min(cands.length, w.cursor + 8, w.cursor + batch - asked));
+            const answers = await Promise.all(part.map(d => this.intel.dnsCheck(d)));
+            for (const [i, d] of part.entries()) {
+                const r = answers[i];
+                if (!r) { failed++; continue; }
+                const e = w.found[d];
+                if (!r.exists) { if (e && !e.gone) e.gone = now; continue; }
+                if (e) {
+                    const back = !!e.gone;
+                    Object.assign(e, { last: now, mx: r.mx, web: r.web, gone: null });
+                    // Gone and registered again: someone else may have it now.
+                    if (back && !['ours'].includes(e.status)) { e.status = 'new'; e.first = now; newly.push(e); }
+                    continue;
+                }
+                const ageDays = this.intel.rdap ? await this.intel.rdap.ageDays(d).catch(() => null) : null;
+                const fresh = typeof ageDays === 'number' && ageDays < LOOKALIKE_NEW_DAYS;
+                const entry = { domain: d, first: now, last: now, mx: r.mx, web: r.web, ageDays: typeof ageDays === 'number' ? ageDays : null, status: w.baselineDone || fresh ? 'new' : 'baseline', gone: null };
+                w.found[d] = entry;
+                if (entry.status === 'new') newly.push(entry);
+            }
+            w.cursor += part.length; asked += part.length;
+        }
+        if (w.cursor >= cands.length) { w.passes = (w.passes || 0) + 1; w.baselineDone = true; w.lastPassAt = now; }
+        w.candidates = cands.length;
+        await this.store.setState('lookalikeWatch', w);
+        this.lookalikeCache = null;
+        if (newly.length) {
+            const words = (e) => `${e.domain} (mail servers: ${e.mx ? 'yes' : 'no'}; a website: ${e.web ? 'yes' : 'no'}${typeof e.ageDays === 'number' ? `; registered ${e.ageDays} day${e.ageDays === 1 ? '' : 's'} ago` : ''})`;
+            await this.alert('lookalike', `${newly.length === 1 ? 'A domain that imitates yours was registered' : `${newly.length} domains that imitate yours were registered`}: ${newly.slice(0, 5).map(words).join('; ')}${newly.length > 5 ? ` and ${newly.length - 5} more` : ''}. `
+                + `Mail from ${newly.length === 1 ? 'it' : 'them'}, replies to ${newly.length === 1 ? 'it' : 'them'} and links to ${newly.length === 1 ? 'it' : 'them'} now count as strong signs of phishing. If the district registered ${newly.length === 1 ? 'it' : 'one'} itself, mark it so: dashboard, Status → Look-alikes. More: docs/ALERTS.md, "A look-alike of your domain".`,
+                { domains: newly.map(e => e.domain).slice(0, 20) });
+        }
+        return { asked, failed, cursor: w.cursor, of: cands.length, found: Object.keys(w.found).length, newly: newly.length };
+    }
+    // An admin's mark on a found look-alike: ours, harmless, threat, or back to watching as found.
+    async markLookalike(domain, status, by) {
+        if (!['ours', 'harmless', 'threat', 'watch'].includes(status)) return { error: 'Choose ours, harmless, threat or watch.', status: 400 };
+        const w = await this.store.getState('lookalikeWatch');
+        const e = w && w.found && w.found[String(domain || '').toLowerCase()];
+        if (!e) return { error: 'That domain isn\'t on the list.', status: 404 };
+        // (what the watch found it as, for "watch it again")
+        if (!e.firstStatus) e.firstStatus = e.status === 'new' || e.status === 'baseline' ? e.status : 'baseline';
+        e.status = status === 'watch' ? e.firstStatus : status;
+        Object.assign(e, { by, at: this.now() });
+        await this.store.setState('lookalikeWatch', w);
+        this.lookalikeCache = null;
+        const words = { ours: 'the district\'s own (no sign in mail)', harmless: 'someone else\'s, harmless (no sign in mail)', threat: 'a threat (a strong sign in mail)', watch: 'watched as found' }[status];
+        await this.adminNotice('lookalike-mark', `${by} marked the look-alike ${e.domain} as ${words}.`);
+        return { entry: e };
     }
 
     // --- The weekly summary email (dashboard Settings; off by default) --------------------------------

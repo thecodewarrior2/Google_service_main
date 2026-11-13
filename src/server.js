@@ -359,7 +359,22 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      // The phishing lists that missed their download (0.5.22): the overview's banner.
                      missedLists: await missedLists(),
                      // Phishing found after delivery, not yet marked seen (0.5.35): the overview's banner.
-                     rechecked: A.recheckAlert(records, now, await store.getState('recheckSeenAt')) };
+                     rechecked: A.recheckAlert(records, now, await store.getState('recheckSeenAt')),
+                     // New look-alikes of your domain an admin hasn't marked (0.5.36): the overview's banner.
+                     lookalikes: Object.values(((await store.getState('lookalikeWatch')) || {}).found || {}).filter(e => e.status === 'new' && !e.gone).map(e => e.domain) };
+        },
+        // Status → Look-alikes (0.5.36): the watch's state and what it found; an admin's mark on one (with the
+        // project ID: "ours" or "harmless" takes a sign away).
+        'GET /api/lookalikes': async () => {
+            const w = (await store.getState('lookalikeWatch')) || {};
+            const found = Object.values(w.found || {}).sort((a, b) => (b.status === 'new') - (a.status === 'new') || (b.first || 0) - (a.first || 0));
+            return { on: !!cfg.lookalikeWatch, orgDomains: cfg.orgDomains, candidates: w.candidates || null, cursor: w.cursor || 0, passes: w.passes || 0, baselineDone: !!w.baselineDone,
+                     passStartedAt: w.passStartedAt || null, lastPassAt: w.lastPassAt || null, found, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null };
+        },
+        'POST /api/lookalikes/mark': async (q, body, admin) => {
+            const bad = await projectCheck(admin, body, `the look-alike ${String(body.domain || '').slice(0, 80)}`);
+            if (bad) return bad;
+            return service.markLookalike(String(body.domain || ''), String(body.status || ''), admin.email);
         },
         // Email → Re-checked (0.5.35): the emails found after delivery, by campaign, with every copy; whether
         // re-checking is on, and Link clicks.

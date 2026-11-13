@@ -93,6 +93,9 @@ function loadConfig(env = process.env) {
         // site or sender an email of the last RECHECK_DAYS days has, and suspicious mail an hour and a day
         // after it arrived.
         recheck: bool(env.RECHECK, true),
+        // The look-alike watch (0.5.36; on by default): look-alikes of ORG_DOMAINS asked of Cloudflare's public
+        // DNS resolver, a pass a day; the new ones are alerts and strong signs in mail.
+        lookalikeWatch: bool(env.LOOKALIKE_WATCH, true),
         recheckDays: Math.min(30, Math.max(1, Math.round(num(env.RECHECK_DAYS, 7)))),
         suspiciousLabelName: env.SUSPICIOUS_LABEL_NAME || 'SPRUCE/Suspicious',
         // Status → Activity (what admins did, alerts, errors) is kept this many days (0.5.29; the email records

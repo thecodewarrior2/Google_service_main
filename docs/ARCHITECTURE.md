@@ -27,6 +27,7 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
        ··▶ safebrowsing.googleapis.com    OFF by default (Settings → Safe Browsing): link addresses, no #part;
                                           its API key in Secret Manager (spruce-safe-browsing-key)
        ──▶ registries (RDAP, via IANA)    domain names, at most once a month each
+       ──▶ cloudflare-dns.com             the look-alike watch: look-alike names of ORG_DOMAINS, a pass a day
        ◀── Firestore blobs/feed_*         the phishing lists, gzipped, shared by every instance
 ```
 
