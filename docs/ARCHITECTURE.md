@@ -81,7 +81,11 @@ worker ──▶ security.cloudflare-dns.com    host names (blocked = 0.0.0.0)
 - **Alerts.** The service logs each alert as a structured line (`spruceAlert`, `message`) and adds it to
   Recent activity. Cloud Monitoring emails them, and any failed Cloud Scheduler job, to `ALERT_EMAIL`
   (log-based alert policies made by `deploy/install.sh`). The hourly `spruce-sync-feeds` job runs a
-  health check: no notification from Gmail for `QUIET_HOURS`, or watches about to end.
+  health check: no notification from Gmail for `QUIET_HOURS`, or watches about to end. It also downloads
+  the phishing lists once a day, and a list whose download failed again 3 hours later
+  (`state/feedHealth` keeps each list's last download); a list that newly fails, and once a day one that
+  keeps failing, is an alert (`list-download`), on Overview until it downloads again, and on Settings →
+  About, whose Re-check (`POST /api/lists/recheck`) downloads it at once.
 - **Mail that skipped the checks.** An email the user moves into the Inbox that the service never
   checked (it went to Spam first) is checked when its Inbox label shows in the history, and never moved.
   After a gap in a mailbox's history, its Inbox since the last notification is checked in batches of 25

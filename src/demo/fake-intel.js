@@ -12,6 +12,7 @@ const LIST_ADDRESSES = { 'lena__a81f22c4e9@freemail.example': 'Sefinek scam-send
 
 const regOf = (h) => String(h || '').toLowerCase().split('.').slice(-2).join('.');
 function createFakeIntel() {
+    let demoListFailed = true;
     return {
         threats: {
             enabled: { cloudflare: true, safeBrowsing: false },        // as deployed: Cloudflare only
@@ -22,8 +23,20 @@ function createFakeIntel() {
             async urlHit(url) { try { return LIST_DOMAINS[regOf(new URL(url).hostname)] || null; } catch (e) { return null; } },
             async domainHit(host) { return LIST_DOMAINS[regOf(host)] || null; },
             async addressHit(a) { return LIST_ADDRESSES[String(a || '').toLowerCase()] || null; },
-            async status() { return [{ id: 'openphish', name: 'OpenPhish community feed', kind: 'url', updated: Date.now() - 5 * 3600e3, count: 412 }, { id: 'phishingarmy', name: 'Phishing Army (extended)', kind: 'domain', updated: Date.now() - 5 * 3600e3, count: 141882 }, { id: 'sefinekemails', name: 'Sefinek scam-sender list', kind: 'address', updated: Date.now() - 5 * 3600e3, count: 23517 }]; },
-            async sync() { return { feeds: [] }; }
+            // Made-up numbers; HaGeZi's last download "failed" (0.5.22), until the About page's Re-check.
+            async status() {
+                const t = Date.now() - 5 * 3600e3;
+                const ok = (id, name, kind, count, extra = {}) => Object.assign({ id, name, kind, confidence: 'list', updated: t, count, lastAttempt: t, error: null, failedSince: null, failures: 0, missed: null }, extra);
+                return [ok('openphish', 'OpenPhish community feed', 'url', 412), ok('phishingarmy', 'Phishing Army (extended)', 'domain', 141882),
+                    demoListFailed ? ok('hagezitif', 'HaGeZi Threat Intelligence Feeds', 'domain', 365120, { updated: Date.now() - 29 * 3600e3, lastAttempt: Date.now() - 2 * 3600e3, error: 'HTTP 503', failedSince: t, failures: 2, missed: 'failed' })
+                        : ok('hagezitif', 'HaGeZi Threat Intelligence Feeds', 'domain', 366027, { updated: Date.now(), lastAttempt: Date.now() }),
+                    ok('tweetfeed', 'TweetFeed (researchers\' reports)', 'domain', 2641, { confidence: 'report' }), ok('sefinekemails', 'Sefinek scam-sender list', 'address', 23517)];
+            },
+            async sync({ retryFailed = false } = {}) {
+                if (!retryFailed || !demoListFailed) return { feeds: [], recovered: [] };
+                demoListFailed = false;
+                return { feeds: [{ id: 'hagezitif', name: 'HaGeZi Threat Intelligence Feeds', count: 366027 }], recovered: ['HaGeZi Threat Intelligence Feeds'] };
+            }
         },
         rdap: { async ageDays(d) { const v = DAYS[regOf(d)]; return typeof v === 'number' ? v : 3000; } }
     };

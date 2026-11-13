@@ -15,6 +15,12 @@ const zlib = require('zlib');
 
 const SYNC_MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;     // at most about once a day
 const RELOAD_CHECK_MS = 30 * 60 * 1000;
+// A list "missed its download" (0.5.22) when its last download failed, or when its copy is older than this
+// (the daily download isn't happening at all). The overview, Settings → About and Status say so, and the
+// admins get an alert.
+const STALE_MS = 48 * 60 * 60 * 1000;
+// Each list's download health, in the store (state): { [id]: { lastAttempt, error, failedSince, failures } }.
+const HEALTH = 'feedHealth';
 
 function createFeeds({ http, store, engine, now = () => Date.now(), log = console }) {
     const E = engine;
@@ -59,12 +65,19 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     }
 
     // The daily task: download each list (unless the shared copy is recent), check it, keep it.
-    async function sync({ force = false } = {}) {
-        const results = [];
+    //   force: every list, even a recent one; retryFailed: also a list whose last download failed, even
+    //   when its copy is recent; only: just these lists (ids). Each list's outcome is kept (HEALTH): a
+    //   failure says since when and how often, and the next success clears it.
+    //   { feeds: [{ id, name, count } | { id, name, skipped } | { id, name, error, newly }], recovered: [names] }
+    async function sync({ force = false, retryFailed = false, only = null } = {}) {
+        const results = [], recovered = [];
+        const health = Object.assign({}, (await store.getState(HEALTH).catch(() => null)) || {});
         for (const feed of E.PHISH_FEEDS) {
+            if (only && !only.includes(feed.id)) continue;
             const name = `feed_${feed.id}`;
             const info = await store.blobInfo(name);
-            if (!force && info && now() - info.updated < SYNC_MIN_INTERVAL_MS) { results.push({ id: feed.id, skipped: 'recent' }); continue; }
+            const prev = health[feed.id] || {};
+            if (!force && !(retryFailed && prev.error) && info && now() - info.updated < SYNC_MIN_INTERVAL_MS) { results.push({ id: feed.id, name: feed.name, skipped: 'recent' }); continue; }
             try {
                 const res = await http.request(feed.url, {}, 60000);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -74,14 +87,22 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
                 if (entries.size < E.PHISH_FEED_MIN_ENTRIES) throw new Error(`only ${entries.size} entries; the previous copy is kept`);
                 const gz = zlib.gzipSync([...entries].sort().join('\n'));
                 await store.putBlob(name, gz, { updated: now(), count: entries.size, name: feed.name, kind: feed.kind });
-                results.push({ id: feed.id, count: entries.size });
+                results.push({ id: feed.id, name: feed.name, count: entries.size });
+                if (prev.error) {
+                    recovered.push(feed.name);
+                    await store.addEvent({ kind: 'lists', text: `${feed.name} downloaded again (${entries.size.toLocaleString('en-US')} entries), after missing its download since ${new Date(prev.failedSince || prev.lastAttempt || now()).toISOString().slice(0, 16).replace('T', ' ')} UTC.` });
+                }
+                health[feed.id] = { lastAttempt: now() };
             } catch (e) {
-                results.push({ id: feed.id, error: String(e.message || e) });
-                await store.addEvent({ kind: 'error', text: `${feed.name} could not be updated (${String(e.message || e).slice(0, 120)}); the previous copy is kept.` });
+                const error = String(e.message || e).slice(0, 160);
+                results.push({ id: feed.id, name: feed.name, error, newly: !prev.error });
+                health[feed.id] = { lastAttempt: now(), error, failedSince: prev.error ? (prev.failedSince || now()) : now(), failures: (prev.error ? (prev.failures || 1) : 0) + 1 };
+                await store.addEvent({ kind: 'error', text: `${feed.name} could not be updated (${error.slice(0, 120)}); the previous copy is kept.` });
             }
         }
+        await store.setState(HEALTH, health).catch(e => log.error && log.error('phishing lists, health:', e));
         lastCheck = 0;                                         // look for the new copy at the next use
-        return { feeds: results };
+        return { feeds: results, recovered };
     }
 
     async function load() {
@@ -132,12 +153,23 @@ function createFeeds({ http, store, engine, now = () => Date.now(), log = consol
     }
     async function domainHit(host) { const s = await ready(); return s ? domainHitIn(s, String(host || '').toLowerCase()) : null; }
     async function addressHit(address) { const s = await ready(); return s ? s.address.get(E.normalizeSenderEntry(address)) : null; }
+    // Each list's state, for the dashboard: its copy (updated, count), its last download (lastAttempt, and
+    // error, failedSince, failures when it failed), and missed: 'failed' (its last download failed), 'stale'
+    // (its copy is older than two days: the daily download isn't happening) or null.
     async function status() {
         const out = [];
-        for (const feed of E.PHISH_FEEDS) { const i = await store.blobInfo(`feed_${feed.id}`); out.push({ id: feed.id, name: feed.name, kind: feed.kind, updated: i ? i.updated : null, count: i ? i.count : 0 }); }
+        const health = (await store.getState(HEALTH).catch(() => null)) || {};
+        for (const feed of E.PHISH_FEEDS) {
+            const i = await store.blobInfo(`feed_${feed.id}`);
+            const hl = health[feed.id] || {};
+            const updated = i ? i.updated : null;
+            const missed = hl.error ? 'failed' : updated && now() - updated > STALE_MS ? 'stale' : null;
+            out.push({ id: feed.id, name: feed.name, kind: feed.kind, confidence: feed.confidence || 'list', home: feed.home || null, updated, count: i ? i.count : 0,
+                lastAttempt: hl.lastAttempt || null, error: hl.error || null, failedSince: hl.error ? (hl.failedSince || hl.lastAttempt || null) : null, failures: hl.error ? (hl.failures || 1) : 0, missed });
+        }
         return out;
     }
     return { sync, ready, urlHit, domainHit, addressHit, status, sanitize, confidenceOf };
 }
 
-module.exports = { createFeeds, SYNC_MIN_INTERVAL_MS };
+module.exports = { createFeeds, SYNC_MIN_INTERVAL_MS, STALE_MS };

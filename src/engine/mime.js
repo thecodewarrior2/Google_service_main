@@ -66,7 +66,10 @@ async function readMessage(raw) {
         layout: read.layout,
         pictures: read.pictures,
         links: read.links,
-        attachments: (mail.attachments || []).map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0 }))
+        // (Not the AMP version of the body, text/x-amp-html, that Google's share and comment notifications carry
+        // beside the HTML one: it is the email itself, not a file, 0.5.22.)
+        attachments: (mail.attachments || []).filter(a => !(String(a.contentType || '').toLowerCase() === 'text/x-amp-html' && !a.filename))
+            .map(a => ({ name: String(a.filename || ''), type: String(a.contentType || ''), size: a.size || 0 }))
     };
 }
 

@@ -60,7 +60,7 @@ For every other email it keeps only a daily count (emails checked) and the messa
 judge the same email twice.
 
 It also keeps, shared by every instance:
-- **the phishing lists:** gzipped in Firestore, replaced daily;
+- **the phishing lists:** gzipped in Firestore, replaced daily, with each list's last download (when, and the error if it failed: `state/feedHealth`);
 - **registry dates of domains:** 30 days; an unknown one, a day.
 
 And:

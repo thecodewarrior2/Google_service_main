@@ -330,3 +330,13 @@ ol.reading li.weighed > span:first-child { background: var(--warning-soft); bord
 .in-context { border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .in-context .ctx.muted { color: var(--muted); font-size: 13px; }
 .in-context .ctx.weighed > span:first-child { background: var(--warning-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; margin-right: 8px; }
+
+/* 0.5.22: a phishing list that missed its download: the red alert icon, and its row highlighted. */
+.alert-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--critical); color: #fff; font-weight: 700; font-size: 12px; line-height: 1; vertical-align: -3px; margin-right: 6px; }
+.alert > .alert-icon { margin-top: 1px; }
+tr.row-alert > td { background: var(--critical-soft); }
+tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
+.list-name { display: flex; align-items: center; }
+.list-problem { color: var(--critical-text); margin-top: 2px; max-width: 46ch; }
+.card.has-alert { border-color: var(--critical); }

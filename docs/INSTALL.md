@@ -238,6 +238,11 @@ When it finishes, it prints the **dashboard address**.
     - **Resume, and move those to Spam** moves the emails left in the Inbox while it was on;
     - **Resume, and leave them in the Inbox** doesn't.
   - Moving clear phishing (rules plus outside confirmation) never pauses for a campaign.
+- **A phishing list that missed its download** (an alert, and a red banner on Overview). The checks keep
+  using its previous copy, and it is tried again every 3 hours. **Settings → About** highlights it with
+  what went wrong and since when; **Re-check the lists now** downloads it again at once. A list host that
+  is down for a day is common and harmless; one failing for days usually means the list moved (its
+  project's page says where), which needs a new version of the service.
 - **A new version:** see "Upgrading to a new version" below.
 
 ## Upgrading to a new version

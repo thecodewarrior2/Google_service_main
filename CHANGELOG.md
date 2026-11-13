@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.22: A phishing list that misses its download is shown, alerted and re-checked
+
+- **Each list's last download is kept** (`state/feedHealth`: when, the error, since when it fails and how
+  often; `src/intel/feeds.js`). A list "missed its download" when its last download failed, or when its
+  copy is over two days old (the daily download isn't happening). The previous copy is still used, as before.
+- **Tried again every 3 hours:** the hourly job downloads a list that missed its download again (only that
+  one) 3 hours after the failed attempt, instead of the next day.
+- **Overview:** a red banner names the lists that missed their download, with a link to Settings → About.
+- **Settings → About:** the lists now have their own card. A list that missed its download is highlighted,
+  with a red alert icon, what went wrong, since when, how many tries, and which copy is in use. A new
+  **Last download** column says when each list was last downloaded and whether it worked. **Re-check the
+  lists now** downloads again every list that missed its download or isn't up to date; one downloaded
+  within the day is left as it is (at most once a minute; noted in Activity).
+- **The admins are alerted** (`list-download`: Recent activity, and emailed to `ALERT_EMAIL`, the admin
+  group by default, like the other alerts): when a list newly misses its download, and once a day while
+  one keeps failing. A list that downloads again is noted in Activity.
+- **Status → Service status** names the lists that missed their download.
+- **An email's AMP version isn't an attachment.** Google's share and comment notifications carry
+  `text/x-amp-html` beside the HTML version; the email's Details listed it under Attachments. (It never
+  counted in the checks.) The share in the report that prompted it (a colleague's Drive share, "the sender
+  uses the name of someone in your organization", rules score 4 on 0.5.14) has been judged by the
+  sharer's own Reply-To address since 0.5.16; a test with Google's text, AMP and HTML versions now covers it.
+- Tests: `test/lists.test.js`; `test/notifications.test.js`.
+
 ## 0.5.21: Two more phishing lists, updated once a day: HaGeZi and TweetFeed
 
 - **HaGeZi Threat Intelligence Feeds** (medium version: about 366,000 phishing, malware and scam domains

@@ -243,7 +243,11 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         if (service.intel && service.intel.feeds) {
             const lists = await service.intel.feeds.status().catch(() => []);
             const oldest = Math.min(...lists.map(l => l.updated || 0));
-            add('lists', lists.length > 0 && oldest > now - 2 * 24 * 3600 * 1000, lists.length && oldest ? `The phishing lists were updated ${Math.round((now - oldest) / 3600000)} hours ago at the oldest.` : 'The phishing lists haven\'t been downloaded yet.', 'Activity → Errors shows why a download failed.');
+            const missed = lists.filter(l => l.missed);
+            add('lists', lists.length > 0 && !!oldest && !missed.length,
+                missed.length ? `${missed.map(l => l.name).join(', ')} missed ${missed.length === 1 ? 'its' : 'their'} download${missed.some(l => l.error) ? ` (${missed.filter(l => l.error).map(l => l.error).join('; ')})` : ''}; the previous copy is used meanwhile.`
+                    : lists.length && oldest ? `The phishing lists were updated ${Math.round((now - oldest) / 3600000)} hours ago at the oldest.` : 'The phishing lists haven\'t been downloaded yet.',
+                'Settings → About: each list\'s state, and Re-check. Activity → Errors shows every failed download.');
         }
         // (install.sh always sets it, to the admin group by default: empty means ALERT_EMAIL=off, a choice)
         add('alerts', true, cfg.alertEmail ? `Alerts are emailed to ${cfg.alertEmail}.` : 'Alerts aren\'t emailed (ALERT_EMAIL=off): they show in Status → Activity.');
@@ -263,7 +267,13 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
         add: (who) => wrongIds.set(who, [...(wrongIds.get(who) || []).filter(t => Date.now() - t < POLICY_LOCK_MS), Date.now()]),
         clear: (who) => wrongIds.delete(who)
     };
-    const once = (key) => { const t = lastAction.get(key) || 0; if (Date.now() - t < ACTIONS_GAP_MS) return false; lastAction.set(key, Date.now()); return true; };
+    const once = (key, gap = ACTIONS_GAP_MS) => { const t = lastAction.get(key) || 0; if (Date.now() - t < gap) return false; lastAction.set(key, Date.now()); return true; };
+    // The phishing lists that missed their download, for the overview: [{ id, name, missed, error, failedSince, updated }].
+    const missedLists = async () => {
+        if (!service.intel || !service.intel.feeds) return [];
+        const lists = await service.intel.feeds.status().catch(() => []);
+        return lists.filter(l => l.missed).map(l => ({ id: l.id, name: l.name, missed: l.missed, error: l.error, failedSince: l.failedSince, updated: l.updated }));
+    };
 
     const api = {
         'GET /api/overview': async (q) => {
@@ -271,7 +281,9 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
             const n = nDays(q), now = Date.now();
             return { summary: A.summary(records, stats, now, n), trend: A.trend(records, stats, now, n), topReasons: A.topReasons(records, now, n).slice(0, 8),
                      campaigns: A.campaigns(records, now, n).slice(0, 5), alerts: (await store.listEvents(now - 7 * A.DAY)).slice(0, 10),
-                     brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode };
+                     brake: await brakeInfo(records), heldCampaigns: await heldCampaigns(records), mode: cfg.mode,
+                     // The phishing lists that missed their download (0.5.22): the overview's banner.
+                     missedLists: await missedLists() };
         },
         'GET /api/campaigns': async (q) => { const { records } = await load(q); return { campaigns: A.campaigns(records, Date.now(), nDays(q)) }; },
         'GET /api/users': async (q) => { const { records } = await load(q); return { users: A.users(records, Date.now(), nDays(q)) }; },
@@ -309,6 +321,12 @@ function createApp({ cfg, store, service, scheduler = null, cloudrun = null, rel
                      policy, projectKnown: !!expectedProject(cfg), demoProjectId: cfg.demo ? DEMO_PROJECT : null,
                      checks: { cloudflare: cfg.cloudflareThreats, safeBrowsing: cfg.safeBrowsing && !!cfg.safeBrowsingKey, phishingLists: cfg.phishingLists, siteAge: cfg.siteAge },
                      lists: service.intel && service.intel.feeds ? await service.intel.feeds.status() : [] };
+        },
+        // Settings → About's Re-check (0.5.22): the lists that missed their download, or aren't up to date, are
+        // downloaded again now. At most once a minute (two admins, or a double click).
+        'POST /api/lists/recheck': async (q, body, admin) => {
+            if (!once('lists-recheck', 60 * 1000)) return { error: 'The lists were re-checked less than a minute ago.', status: 429 };
+            return service.recheckLists(admin.email);
         },
         'POST /api/release': async (q, body, admin) => service.release(String(body.key || ''), admin.email),
         // move: phishing still in the Inbox is moved to Spam too (enforce mode).

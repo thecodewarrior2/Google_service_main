@@ -221,11 +221,14 @@
         svg.append(s('text', { class: 'thresh-label', x: tx - 6, y: T - 2, 'text-anchor': 'end' }, `Moves at ${Math.round(threshold * 100)}%`));
         return svg;
     }
-    function dataTable(cols, rows) {
+    // rowClass: a row's class (or ''), for a row that needs attention.
+    function dataTable(cols, rows, rowClass = null) {
         return h('div', { class: 'table-wrap' }, h('table', {},
             h('thead', {}, h('tr', {}, cols.map(c => h('th', { class: c.num ? 'num' : '', text: c.name })))),
-            h('tbody', {}, rows.map(r => h('tr', {}, cols.map(c => h('td', { class: c.num ? 'num' : '' }, c.get(r))))))));
+            h('tbody', {}, rows.map(r => h('tr', { class: (rowClass && rowClass(r)) || '' }, cols.map(c => h('td', { class: c.num ? 'num' : '' }, c.get(r))))))));
     }
+    // The red alert icon, beside something that needs an admin (a phishing list that missed its download).
+    const alertIcon = (label) => h('span', { class: 'alert-icon', role: 'img', 'aria-label': label, title: label, text: '!' });
     // A table whose rows open something (mouse or keyboard).
     function clickTable(cols, rows, open, empty = 'Nothing in this period.') {
         if (!rows.length) return h('div', { class: 'empty', text: empty });
@@ -273,6 +276,14 @@
             h('div', { class: 'grow' }, h('b', { text: `Moving is paused for ${d.heldCampaigns.length} campaign${d.heldCampaigns.length === 1 ? '' : 's'}, waiting for your decision.` }),
                 ' Many copies were moved on evidence nothing outside the email confirms, so its other copies are left in the Inbox, like any email not moved. Open one to confirm it as phishing (every copy is moved to Spam) or dismiss it as a false alarm (the moved ones go back to the Inbox).',
                 h('ul', { class: 'held-list' }, d.heldCampaigns.slice(0, 5).map(c => h('li', {}, h('a', { href: `#/messages?${q({ campaign: c.campaign })}`, text: c.label }), ` (${num(c.held)} left in the Inbox)`))))));
+        // A phishing list that missed its download (0.5.22): until it downloads again; the details on About.
+        if (d.missedLists && d.missedLists.length) {
+            const ml = d.missedLists, one = ml.length === 1;
+            out.push(h('div', { class: 'alert critical lists-alert', role: 'alert' }, alertIcon('Alert'),
+                h('div', { class: 'grow' }, h('b', { text: `${one ? 'A phishing list' : `${num(ml.length)} phishing lists`} missed ${one ? 'its' : 'their'} download: ${ml.map(l => l.name).join(', ')}.` }),
+                    ` The checks still use ${one ? 'its' : 'their'} previous copy, and ${one ? 'it is' : 'they are'} tried again every 3 hours; the admins were sent an alert. `,
+                    h('a', { href: '#/about?show=lists', text: 'Details, and Re-check, on the About page' }), '.')));
+        }
         if (d.mode !== 'enforce') out.push(h('div', { class: 'alert warning' }, h('span', { class: 'icon', 'aria-hidden': 'true', text: '👁' }),
             h('div', { class: 'grow' }, h('b', { text: 'Monitor mode.' }), ' Nothing is moved: emails the policy would move are only recorded, so you can measure false alarms first.')));
         const movedBack = `${num(sm.released)} moved back (${pct(sm.releaseRate, 1)}): ${num(sm.released - (sm.userReleased || 0))} by admins, ${num(sm.userReleased || 0)} by users`;
@@ -727,7 +738,7 @@
 
     // --- Settings, in pages (a menu on the left): Policy, Allowlist, Mailboxes, Weekly summary, Retraining, About
     async function settingsData(query = '') { const d = await api(`/api/settings${query}`); showMode(d.mode); return d; }
-    const kvRow = (k, v) => [h('dt', { text: k }), h('dd', { text: v })];
+    const kvRow = (k, v) => [h('dt', { text: k }), v instanceof Node ? h('dd', {}, v) : h('dd', { text: v })];
     async function settings() {   // Policy
         const d = await settingsData();
         const allowed = ((d.policy && d.policy.allowDomains && d.policy.allowDomains.value) || d.allowDomains || []).length;
@@ -777,9 +788,34 @@
         const d = await settingsData();
         return [h('h1', { text: 'Retraining' }), trainingSettingCard(d)];
     }
-    async function about() {
+    async function about(q) {
         const d = await settingsData();
         const yes = (b) => (b ? 'Yes' : 'No');
+        const lists = d.lists || [];
+        const missed = lists.filter(l => l.missed);
+        // A list's name, with the red alert icon and what happened when it missed its download.
+        const listName = (l) => {
+            if (!l.missed) return l.name;
+            const what = l.missed === 'failed'
+                ? `Missed its download${l.failures > 1 ? ` ${num(l.failures)} times` : ''} since ${when(l.failedSince)}: ${l.error}. ${l.updated ? `The copy from ${when(l.updated)} is still used.` : 'It has no copy yet, so it isn\'t used.'}`
+                : `Not updated since ${when(l.updated)}: the daily download isn't happening (Status shows the hourly job). Its copy is still used.`;
+            return h('div', {}, h('div', { class: 'list-name' }, alertIcon(`Alert: ${l.name} missed its download`), h('b', { text: l.name })), h('div', { class: 'small list-problem', text: what }));
+        };
+        const recheck = h('button', { class: missed.length ? 'btn primary' : 'btn', type: 'button',
+            onclick: postButton('/api/lists/recheck', () => ({}), (o) => {
+                const f = o.feeds || [], got = f.filter(r => r.count != null).length, bad = f.filter(r => r.error);
+                return bad.length ? `Still missing: ${bad.map(r => `${r.name} (${r.error})`).join('; ')}.` : got ? `Downloaded ${num(got)} list${got === 1 ? '' : 's'}; every list is up to date.` : 'Every list is up to date (downloaded within the day).';
+            }) }, 'Re-check the lists now');
+        const listsCard = h('section', { class: `card spaced${missed.length ? ' has-alert' : ''}`, id: 'lists' },
+            h('div', { class: 'card-head' }, h('div', {}, h('h2', { text: 'Phishing lists' }),
+                h('div', { class: 'sub', text: 'Downloaded once a day for the whole organization and matched here; nothing about an email is sent. A list that misses its download keeps its previous copy and is tried again every 3 hours.' })), d.checks && d.checks.phishingLists ? recheck : null),
+            missed.length ? h('div', { class: 'alert critical', role: 'alert' }, alertIcon('Alert'), h('div', { class: 'grow' }, h('b', { text: `${missed.length === 1 ? '1 list' : `${num(missed.length)} lists`} missed ${missed.length === 1 ? 'its' : 'their'} download (highlighted below).` }),
+                ' Re-check downloads them again now; the alert was emailed to the admins.')) : null,
+            lists.length ? dataTable([{ name: 'List', get: listName }, { name: 'Kind', get: l => (({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind) + (l.confidence === 'report' ? ' (reports: a caution)' : '') },
+                { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') },
+                { name: 'Last download', get: l => (l.lastAttempt ? `${when(l.lastAttempt)}: ${l.error ? 'failed' : 'OK'}` : '—') }], lists, l => (l.missed ? 'row-alert' : ''))
+                : h('div', { class: 'empty', text: d.checks && d.checks.phishingLists ? 'Not downloaded yet: the hourly job downloads them within the hour.' : 'The phishing lists are off (PHISHING_LISTS=off).' }));
+        if (q && q.get && q.get('show') === 'lists') setTimeout(() => { if (listsCard.isConnected) listsCard.scrollIntoView({ block: 'start' }); }, 0);
         return [h('h1', { text: 'About' }), h('p', { class: 'sub', text: 'What this service runs, what it keeps, and what it looks up.' }),
             h('section', { class: 'card' }, h('h2', { text: 'Version and records' }), h('dl', { class: 'kv' },
                 kvRow('Version', d.version || ''),
@@ -792,10 +828,10 @@
                 h('dl', { class: 'kv' },
                     kvRow('Cloudflare Security', d.checks && d.checks.cloudflare ? 'On: link sites and sender domains' : 'Off'),
                     kvRow('Google Safe Browsing', d.checks && d.checks.safeBrowsing ? 'On: links (no #part; one-time links without their query)' : 'Off (Cloudflare only for now)'),
-                    kvRow('Phishing lists', d.checks && d.checks.phishingLists ? 'On: downloaded once a day, matched here' : 'Off'),
+                    kvRow('Phishing lists', d.checks && d.checks.phishingLists ? (missed.length ? h('span', {}, alertIcon('Alert'), ` On; ${num(missed.length)} missed ${missed.length === 1 ? 'its' : 'their'} download (below)`) : 'On: downloaded once a day, matched here (below)') : 'Off'),
                     kvRow('Site age', d.checks && d.checks.siteAge ? 'On: up to 3 unfamiliar link sites and the sender\'s domain' : 'Off'),
-                    kvRow('Short links', 'Not looked up (no outside unshortening service)')),
-                d.lists && d.lists.length ? dataTable([{ name: 'List', get: l => l.name }, { name: 'Kind', get: l => ({ url: 'phishing links', domain: 'phishing sites', address: 'scam senders' })[l.kind] || l.kind }, { name: 'Entries', num: true, get: l => num(l.count) }, { name: 'Updated', get: l => (l.updated ? when(l.updated) : 'not yet') }], d.lists) : null)];
+                    kvRow('Short links', 'Not looked up (no outside unshortening service)'))),
+            listsCard];
     }
 
     // --- Keeping the page up to date --------------------------------------------------------------

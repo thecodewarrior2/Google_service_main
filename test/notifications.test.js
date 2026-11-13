@@ -154,3 +154,24 @@ test('0.5.17: Google Classroom from a personal account (gmail.com…) is flagged
     assert.ok(!r.signals.some(s => s.kind === 'classroom-personal'));
     assert.equal(platformNotification(await readMessage(classroom({ body: '<p>x</p>' })), [ORG]).invitation, true);
 });
+
+test('0.5.22: a colleague\'s Drive share as Google sends it (text, AMP and HTML versions): nothing found, and the AMP version is no attachment', async () => {
+    // The shape of the 0.5.14 false alarm: "Name (via Google Docs)" <drive-shares-dm-noreply@google.com>, judged
+    // since 0.5.16 by the Reply-To Google sets from the sharer's account (a colleague's, here). Made-up people.
+    const b = 'b1_share';
+    const raw = Buffer.from([`From: "Dana Morales (via Google Docs)" <drive-shares-dm-noreply@google.com>`, `Reply-To: "Dana Morales" <dana.morales@${ORG}>`, `To: ${USER}`,
+        'Subject: Document shared with you: "Board deliverables for the Friday meeting"', 'Message-ID: <autogen-java-0000@google.com>', GOOGLE,
+        'MIME-Version: 1.0', `Content-Type: multipart/alternative; boundary="${b}"`, '',
+        `--${b}`, 'Content-Type: text/plain; charset="UTF-8"', '', `Dana Morales shared a document. Dana Morales (dana.morales@${ORG}) has invited you to view the following document: Board deliverables for the Friday meeting`, '',
+        `--${b}`, 'Content-Type: text/x-amp-html; charset="UTF-8"', '', '<!doctype html><html amp4email><head><meta charset="utf-8"><script async src="https://cdn.ampproject.org/v0.js"></script></head><body><p>Dana Morales shared a document</p></body></html>', '',
+        `--${b}`, 'Content-Type: text/html; charset="UTF-8"', '', `<p>Dana Morales shared a document</p><p>Dana Morales (dana.morales@${ORG}) has invited you to view the following document:</p><p><a href="https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit">Open</a></p>`, '',
+        `--${b}--`, ''].join('\r\n'));
+    const facts = await readMessage(raw);
+    assert.deepEqual(facts.attachments, [], 'the AMP version is the email, not a file');
+    const r = await judge(raw, { firstTime: true });
+    assert.deepEqual(kinds(r), [], 'no "colleague\'s name on an outside address", no "outside your organization"');
+    assert.equal(decide(r, enforce, {}).action, 'none');
+    // A real file is still one.
+    const withFile = Buffer.from(raw.toString().replace(`--${b}--`, `--${b}\r\nContent-Type: text/x-amp-html; name="page.html"\r\nContent-Disposition: attachment; filename="page.html"\r\n\r\n<p>x</p>\r\n--${b}--`));
+    assert.equal((await readMessage(withFile)).attachments.length, 1);
+});

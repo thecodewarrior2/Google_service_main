@@ -23,6 +23,7 @@ const training = require('./training');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
+const LIST_RETRY_MS = 3 * HOUR;   // a phishing list that missed its download is tried again this often (0.5.22)
 const MAX_TRIES = 3;
 // How long a claim keeps other instances off a message: longer than a request may run (the worker's
 // timeout is 120 s), so only a claim left by an instance that stopped is taken over.
@@ -1025,12 +1026,42 @@ class Service {
         if (!this.intel || !this.intel.feeds) out = { health, skipped: 'phishing lists are off' };
         else {
             const last = Number(await this.store.getState('feedsAttemptedAt')) || 0;
-            if (this.now() - last < 20 * HOUR) out = { health, skipped: 'checked within the day' };
-            else { await this.store.setState('feedsAttemptedAt', this.now()); out = Object.assign({ health }, await this.intel.feeds.sync()); }
+            const retried = Number(await this.store.getState('feedsRetriedAt')) || 0;
+            if (this.now() - last >= 20 * HOUR) { await this.store.setState('feedsAttemptedAt', this.now()); out = Object.assign({ health }, await this.intel.feeds.sync()); }
+            // A list that missed its download is tried again every 3 hours (only that one), not a day later.
+            else if (this.now() - Math.max(last, retried) >= LIST_RETRY_MS && (await this.intel.feeds.status()).some(l => l.missed === 'failed')) {
+                await this.store.setState('feedsRetriedAt', this.now());
+                out = Object.assign({ health, retry: true }, await this.intel.feeds.sync({ retryFailed: true }));
+            } else out = { health, skipped: 'checked within the day' };
+            if (out.feeds) { try { await this.listsAlert(out.feeds); } catch (e) { this.log.error('phishing lists, alert:', e); } }
         }
         const budgetMs = Math.min(30 * 1000, 90 * 1000 - (Date.now() - started));
         if (budgetMs > 0) { try { out.purged = await this.purge({ budgetMs }); } catch (e) { out.purged = { error: String(e.message || e).slice(0, 200) }; } }
         return out;
+    }
+
+    // A list that missed its download (0.5.22): an alert (Recent activity, and emailed to ALERT_EMAIL, the
+    // admins by default), when a list newly fails, and once a day while one keeps failing; the overview says
+    // so until it downloads again. (A list downloading again is noted in Activity by feeds.js.)
+    async listsAlert(results) {
+        const failed = (results || []).filter(r => r.error);
+        if (!failed.length) return false;
+        const last = Number(await this.store.getState('listsAlertAt')) || 0;
+        if (!failed.some(r => r.newly) && this.now() - last < DAY) return false;
+        await this.store.setState('listsAlertAt', this.now());
+        const n = failed.length;
+        await this.alert('list-download', `${n === 1 ? 'A phishing list' : `${n} phishing lists`} missed ${n === 1 ? 'its' : 'their'} download: ${failed.map(r => `${r.name} (${r.error})`).join('; ')}. `
+            + `The previous copy is still used, and the download is tried again every 3 hours. Dashboard: Settings → About shows each list's state, with a Re-check button.`);
+        return true;
+    }
+    // An admin's "Re-check" (Settings → About): every list that missed its download, or isn't up to date, is
+    // downloaded again now; one downloaded within the day is left as it is (the projects publish them for free).
+    async recheckLists(by) {
+        if (!this.intel || !this.intel.feeds) return { error: 'The phishing lists are off (PHISHING_LISTS=off).', status: 400 };
+        const out = await this.intel.feeds.sync({ retryFailed: true });
+        const got = out.feeds.filter(r => r.count != null), failed = out.feeds.filter(r => r.error);
+        await this.store.addEvent({ kind: 'lists', text: `${by} re-checked the phishing lists: ${got.length ? `${got.map(r => r.name).join(', ')} downloaded` : 'none needed a download'}${failed.length ? `; ${failed.map(r => r.name).join(', ')} still missed ${failed.length === 1 ? 'its' : 'their'} download` : ''}.` });
+        return { feeds: out.feeds, recovered: out.recovered || [], lists: await this.intel.feeds.status() };
     }
 
     // --- The weekly summary email (dashboard Settings; off by default) --------------------------------

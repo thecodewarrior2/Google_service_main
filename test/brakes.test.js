@@ -234,7 +234,7 @@ test('the hourly health check: alerts once a day when Gmail has gone quiet, or w
     assert.equal(alerts.filter(a => a.spruceAlert === 'watch-expiring').length, 1);
     assert.equal(cfg.quietHours, 12);
     // The phishing lists: tried at most once a day (the hourly job runs the health check each time).
-    svc.intel = { feeds: { sync: async () => ({ feeds: ['downloaded'] }) } };
+    svc.intel = { feeds: { sync: async () => ({ feeds: ['downloaded'] }), status: async () => [] } };
     assert.deepEqual((await svc.syncFeeds()).feeds, ['downloaded']);
     assert.equal((await svc.syncFeeds()).skipped, 'checked within the day');
 });
